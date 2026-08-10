@@ -153,6 +153,10 @@ const SYSTEM_ENV_KEYS_WIN = [
   "PATH", "Path", "SystemRoot", "ComSpec", "PATHEXT", "TEMP", "TMP",
   "windir", "SystemDrive", "USERPROFILE", "NUMBER_OF_PROCESSORS",
 ];
+// 用户 CLI 配置路径指针透传:「本机 Codex」路线需要继承用户自己的 codex 登录态。
+// CODEX_HOME 只是配置目录指针、不是机密,不违背“沙箱 env 不带托管凭据”的初衷。
+// 实证(260811 用户机):CODEX_HOME 指向自定义盘符时,未透传会导致沙箱内 codex 误报未登录。
+const USER_CLI_ENV_KEYS = ["CODEX_HOME"];
 // 代理变量透传:lark-cli 是 Go net/http 二进制,认 HTTP(S)_PROXY、尊重 NO_PROXY、不读 ALL_PROXY
 // (实测:只设 ALL_PROXY=死端口仍直连成功=没走它,只设 HTTPS_PROXY=死端口才失败;旧注释"只认 ALL_PROXY"是反的)。
 // ALL_PROXY 仍透传以兼容其它工具/老版本。需代理的网络环境靠这些变量出网。
@@ -212,7 +216,7 @@ export function resolveNodeRuntimePathPlacement(): NodeRuntimePathPlacement {
 export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   const systemKeys = process.platform === "win32" ? SYSTEM_ENV_KEYS_WIN : SYSTEM_ENV_KEYS_POSIX;
-  for (const key of [...systemKeys, ...PROXY_ENV_KEYS]) {
+  for (const key of [...systemKeys, ...USER_CLI_ENV_KEYS, ...PROXY_ENV_KEYS]) {
     if (process.env[key]) env[key] = process.env[key];
   }
   // 产品级 CLI 目录前置进 PATH(Windows 用 ; 分隔,其余用 :)

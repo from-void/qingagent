@@ -95,6 +95,25 @@ describe("sessionWorkspaceDirName 路径安全", () => {
 });
 
 describe("buildSandboxEnv 最小环境", () => {
+  it.each(["win32", "linux"] as const)(
+    "%s 分支仅在宿主设置时透传 CODEX_HOME",
+    (platform) => {
+      const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      const savedCodexHome = process.env.CODEX_HOME;
+      try {
+        process.env.CODEX_HOME = platform === "win32" ? "D:\\codex-home" : "/opt/codex-home";
+        expect(buildSandboxEnv().CODEX_HOME).toBe(process.env.CODEX_HOME);
+
+        delete process.env.CODEX_HOME;
+        expect(buildSandboxEnv().CODEX_HOME).toBeUndefined();
+      } finally {
+        platformSpy.mockRestore();
+        if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
+        else process.env.CODEX_HOME = savedCodexHome;
+      }
+    },
+  );
+
   it("带必需系统变量+代理,不继承宿主业务变量或托管凭据", () => {
     process.env.SOME_HOST_SECRET = "leak-me";
     process.env.PLATFORM_API_SECRET = "t-1";

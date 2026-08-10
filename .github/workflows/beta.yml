@@ -60,20 +60,23 @@ jobs:
       - name: build desktop
         run: pnpm build:desktop
 
-      - name: publish beta artifacts
+      - name: publish macOS artifacts (signed + notarized)
+        if: matrix.name == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # 用 tag(去掉前导 v)作 app 版本:package.json 恒为 0.1.0,但 beta 构建的
-          # 产物/发布 tag 应是 0.1.0-beta.1,否则 electron-builder 按 package version 发到
-          # v0.1.0、app 版本也错(影响 allowPrerelease/更新通道)。extraMetadata 只改构建产物。
           VERSION="${GITHUB_REF_NAME#v}"
-          pnpm --filter @qingagent/desktop exec electron-builder \
-            ${{ matrix.electron_builder_args }} \
-            --publish always \
-            -c.publish.provider=github \
-            -c.publish.owner=from-void \
-            -c.publish.repo=qingagent \
-            -c.publish.releaseType=prerelease \
-            -c.extraMetadata.version="$VERSION"
+          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} --publish always -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent -c.publish.releaseType=prerelease -c.extraMetadata.version="$VERSION"
+
+      - name: publish Linux artifacts
+        if: matrix.name == 'linux'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} --publish always -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent -c.publish.releaseType=prerelease -c.extraMetadata.version="$VERSION"
 
   # Windows 安装器在 ubuntu runner 上用 wine 交叉构建(不再用 windows-latest)。
   # 实测定论:免费 2 核 windows runner 压不完整包 solid-LZMA(30-75min 超时),但同一 payload

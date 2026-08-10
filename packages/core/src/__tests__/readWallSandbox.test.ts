@@ -2,6 +2,16 @@ import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("@qingagent/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@qingagent/db")>();
+  return {
+    ...actual,
+    // 本文件最后两例专测隔离装配失败,显式固定为「每次询问」档。
+    getAppSetting: vi.fn(async (key: string) => key === "security_bypass_mode"
+      ? JSON.stringify({ enabled: false, enabledAt: null })
+      : actual.getAppSetting(key)),
+  };
+});
 import {
   __resetIsolationCacheForTest,
   __resetSessionWorkspaceCacheForTest,

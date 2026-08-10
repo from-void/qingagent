@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "@mastra/core/workspace";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +22,19 @@ import {
 } from "../confirm/commandConfirmation.js";
 import { issueApprovalProof } from "../confirm/approvalProof.js";
 import type { SessionState } from "../session/sessionState.js";
+import {
+  __resetBypassModeForTest,
+  __setBypassModeCacheForTest,
+} from "../security/bypassMode.js";
+
+beforeEach(() => {
+  // 本文件专测命令工具本体与确认 proof,显式固定在「每次询问」档。
+  __setBypassModeCacheForTest(false);
+});
+
+afterEach(() => {
+  __resetBypassModeForTest();
+});
 
 interface GatedExecuteInput {
   command: string;

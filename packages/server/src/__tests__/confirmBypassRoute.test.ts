@@ -1,6 +1,6 @@
 // 确认卡上的「以后不用再问我」:勾选并批准后当场全局生效;没勾就什么都不变。
 //
-// 默认形态(不勾)必须一如既往:卡照弹、命令照确认。这里同时锁住"勾了才生效"和
+// 已经出现确认卡时,不勾选就只批准本次、全局档位不变。这里同时锁住"勾了才生效"和
 // "串卡/未声明的卡不能借这条路关掉询问"。
 
 import { Hono } from "hono";
@@ -100,7 +100,7 @@ async function postDecision(
 }
 
 describe("确认卡「以后不用再问我」路由", () => {
-  it("默认形态:不勾选就只批准本次，全局开关一动不动", async () => {
+  it("不勾选就只批准本次，全局开关一动不动", async () => {
     const harness = makeHarness();
     const response = await postDecision(harness, {});
 

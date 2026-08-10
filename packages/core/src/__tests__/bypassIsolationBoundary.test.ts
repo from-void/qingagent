@@ -1,7 +1,7 @@
-// 「以后不用再问我」全局开关的**边界验证**(只验证,不改默认)。
+// 「以后不用再问我」全局开关的**边界验证**。
 //
 // 这套用例回答四个问题,任何一条不成立都必须先修实现再谈别的:
-// ① 关闭时(默认)仍按平台隔离装配,seatbelt/bwrap 照旧生效;
+// ① 显式关闭时仍按平台隔离装配,seatbelt/bwrap 照旧生效;
 // ② 开启后变成无隔离,且已有会话立即换形态(不是"下次新会话才生效");
 // ③ 关闭后立即回到隔离;
 // ④ 两种状态下都不会扩大到整个系统钥匙串 / 浏览器数据 / 整个 HOME。
@@ -37,6 +37,7 @@ vi.mock("../security/bypassMode.js", async (importOriginal) => {
 
 const {
   __resetBypassModeForTest,
+  __setBypassModeCacheForTest,
   isBypassEnabled,
 } = await import("../security/bypassMode.js");
 const { applyBypassMode } = await import("../security/bypassModeControl.js");
@@ -92,6 +93,8 @@ beforeEach(() => {
   invalidateSessionWorkspaceSpy.mockClear();
   setBypassModeSpy.mockClear();
   __resetBypassModeForTest();
+  // 本文件专测隔离边界,显式固定在「每次询问」后再切换。
+  __setBypassModeCacheForTest(false);
   __resetIsolationCacheForTest();
   process.env.QINGAGENT_SANDBOX_ISOLATION = "bwrap";
 });
@@ -104,7 +107,7 @@ afterEach(async () => {
 });
 
 describe("bypass 边界①②③:隔离形态切换", () => {
-  it("关闭时(默认)仍为平台隔离,读墙按标准档", () => {
+  it("显式关闭时仍为平台隔离,读墙按标准档", () => {
     expect(isBypassEnabled()).toBe(false);
     expect(resolveEffectiveIsolation()).toBe(resolveIsolation());
     expect(resolveEffectiveIsolation()).toBe("bwrap");
@@ -138,7 +141,7 @@ describe("bypass 边界①②③:隔离形态切换", () => {
 
 describe("bypass 边界④:两种状态都不得扩大到钥匙串 / 浏览器数据 / 整个 HOME", () => {
   it.each([
-    { label: "关闭(默认)", enabled: false, expectedMode: "standard" as const },
+    { label: "关闭", enabled: false, expectedMode: "standard" as const },
     { label: "开启", enabled: true, expectedMode: "wide" as const },
   ])("linux · $label:keyring 与浏览器数据始终 deny,HOME 不进 allow", async ({ enabled, expectedMode }) => {
     const options = await readWallFixture("linux");
@@ -158,7 +161,7 @@ describe("bypass 边界④:两种状态都不得扩大到钥匙串 / 浏览器�
   });
 
   it.each([
-    { label: "关闭(默认)", enabled: false },
+    { label: "关闭", enabled: false },
     { label: "开启", enabled: true },
   ])("darwin · $label:系统钥匙串与浏览器数据始终 deny", async ({ enabled }) => {
     const options = await readWallFixture("darwin");

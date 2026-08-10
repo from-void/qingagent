@@ -327,8 +327,8 @@ export function createConfirmRoutes(
       try {
         bypassEnabled = (await applyBypass(true)).enabled;
       } catch {
-        // 开关没存上不影响本次操作;用户下次仍会看到确认卡,自己再勾一次即可。
-        console.error("[security-bypass] 保存「以后不用再问我」失败，维持默认形态");
+        // 开关没存上不影响本次操作;维持切换前的已知档位,不伪报已保存。
+        console.error("[security-bypass] 保存「以后不用再问我」失败，维持当前档位");
       }
     }
     return c.json({

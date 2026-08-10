@@ -27,8 +27,8 @@ const updateSecuritySchema = z.object({
 
 const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command", "send", "connect"]);
 
-// 「以后不用再问我」的常驻控制点就在这一页:用户随时能看到自己现在处于哪一档,
-// 也能一键改回默认(改回后立刻恢复弹确认卡与隔离执行,已有会话即时生效)。
+// 全局确认档的常驻控制点就在这一页:用户随时能看到自己现在处于哪一档,
+// 也能显式改为「每次询问」(改后立刻恢复弹确认卡与隔离执行,已有会话即时生效)。
 const updateBypassSchema = z.object({ enabled: z.boolean() }).strict();
 
 interface SecuritySettingsRoutesDependencies {
@@ -79,10 +79,10 @@ export function createSecuritySettingsRoutes(
     };
     // 共享条目随设置一起返回:安全页只发一次请求,读失败也不拖垮整页。
     const credentialShare = await listCredentialShare().catch(() => []);
-    // 读失败按默认形态(仍在询问)呈现,不能因为一次读失败就告诉用户"已关闭询问"。
+    // 读失败必须与 260811 新默认一致,否则设置页会显示「每次询问」而执行侧实际直接放行。
     const bypass: SecurityBypassState = await readBypass()
       .then((snapshot) => ({ enabled: snapshot.enabled, enabledAt: snapshot.enabledAt }))
-      .catch(() => ({ enabled: false, enabledAt: null }));
+      .catch(() => ({ enabled: true, enabledAt: null }));
     const body: SecuritySettingsResponse = {
       bypass,
       categories: [

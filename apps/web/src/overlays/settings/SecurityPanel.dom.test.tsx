@@ -20,7 +20,7 @@ vi.mock("../../system/ToastProvider", () => ({
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-function response(body: unknown, status = 200): Response {
+function rawResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
@@ -33,12 +33,24 @@ const categories = [
   { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
   { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
 ];
+const askBypass = { enabled: false, enabledAt: null };
+
+function response(body: unknown, status = 200): Response {
+  const explicitAskFixture = body && typeof body === "object" &&
+      Array.isArray((body as { categories?: unknown }).categories) &&
+      !("bypass" in body)
+    ? { ...body, bypass: askBypass }
+    : body;
+  return rawResponse(explicitAskFixture, status);
+}
 
 async function renderPanel() {
   const fetchMock = vi.fn<typeof fetch>()
-    .mockResolvedValueOnce(response({ categories }))
+    .mockResolvedValueOnce(response({ categories, bypass: askBypass }))
     .mockImplementation(async (input, init) => {
-      if (!init?.method || init.method === "GET") return response({ categories });
+      if (!init?.method || init.method === "GET") {
+        return response({ categories, bypass: askBypass });
+      }
       const kind = String(input).split("/").at(-1) as
         | "install" | "command" | "send" | "connect";
       const body = JSON.parse(String(init.body)) as {
@@ -146,8 +158,8 @@ describe("SecurityPanel", () => {
     expect(css).toMatch(/\.security-description\{[^}]*font-size:11\.5px/);
   });
 
-  // 总开关的常驻控制点:状态看得见、一键能改回,改回即恢复默认形态。
-  it("默认形态下这一行显示「每次询问」，不显示已关闭的说明", async () => {
+  // 总开关的常驻控制点:状态看得见,显式改为每次询问后完整恢复确认与隔离。
+  it("显式每次询问档显示「每次询问」，不显示已关闭的说明", async () => {
     await renderPanel();
 
     const row = host!.querySelector<HTMLElement>('[data-wf="SecurityBypassRow"]')!;
@@ -155,8 +167,17 @@ describe("SecurityPanel", () => {
     expect(row.textContent).toContain("执行命令前是否询问");
     expect(bypassSelect().textContent).toContain("每次询问");
     expect(host!.querySelector("#security-bypass-effect")).toBeNull();
-    // 默认形态下四类仍然可改
+    // 每次询问档下四类仍然可改
     expect(categorySelect("安装软件").disabled).toBe(false);
+  });
+
+  it("响应缺少 bypass 时按新默认显示「不再询问」", async () => {
+    await renderWithFetch(vi.fn<typeof fetch>().mockResolvedValue(
+      rawResponse({ categories }),
+    ));
+
+    expect(bypassSelect().textContent).toContain("不再询问");
+    expect(categorySelect("安装软件").disabled).toBe(true);
   });
 
   it("已关闭询问时状态可见，且四类设置标注为暂不生效", async () => {
@@ -173,7 +194,7 @@ describe("SecurityPanel", () => {
     expect(categorySelect("安装软件").disabled).toBe(true);
   });
 
-  it("一键改回默认:发出关闭请求并提示已恢复询问与隔离", async () => {
+  it("改为每次询问:发出关闭请求并提示恢复询问与隔离", async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({
         categories,
@@ -195,7 +216,7 @@ describe("SecurityPanel", () => {
     ).toBe("off");
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({
       tone: "success",
-      message: "已恢复默认：这些操作会先问你一句，命令也重新隔离执行。",
+      message: "已改为每次询问：这些操作会先问你一句，命令也重新隔离执行。",
     }));
   });
 

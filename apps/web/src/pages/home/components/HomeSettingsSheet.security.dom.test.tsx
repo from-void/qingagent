@@ -44,6 +44,8 @@ describe("HomeSettingsSheet 安全页", () => {
         }), { status: 200 });
       }
       return new Response(JSON.stringify({
+        // 本例专测分类档下拉,显式关闭总免询问档后分类设置才生效。
+        bypass: { enabled: false, enabledAt: null },
         categories: [
           { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
           { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"], present: true, grantId: "grant-command", version: 1 },

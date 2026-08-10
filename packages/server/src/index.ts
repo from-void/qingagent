@@ -61,7 +61,8 @@ const {
 } = await import("@qingagent/core");
 
 // 开放端口前预热「以后不用再问我」的全局开关:沙箱装配、工具门禁、系统提示词都同步读
-// 这个缓存,未预热时一律按默认形态(照常弹卡 + 照常隔离)。读失败也保持默认形态。
+// 这个缓存。260811 后未预热与首次读失败都按新默认「不再询问」;若缓存已有显式 false,
+// 读取失败则继续尊重用户的「每次询问」档位。
 await loadBypassMode().catch(() => undefined);
 const { probeBrowserCapability } = await import("@qingagent/doc-render/browser");
 

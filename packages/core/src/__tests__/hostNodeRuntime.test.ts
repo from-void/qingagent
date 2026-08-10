@@ -65,6 +65,9 @@ async function setupRuntimeFixture(options: {
   const paths = await import("../workspace/sandboxPaths.js");
   const shims = await import("../workspace/nodeRuntimeShim.js");
   const workspace = await import("../workspace/sessionWorkspace.js");
+  const bypassMode = await import("../security/bypassMode.js");
+  // fresh 模块图也要显式进入「每次询问」档,本文件验证的是隔离运行时选择。
+  bypassMode.__setBypassModeCacheForTest(false);
 
   // 宿主 Node(占位:用户终端里的那个,身份为 host)。
   writeExecutable(join(hostBinDir, "node"), "#!/bin/sh\necho HOST-NODE\n");

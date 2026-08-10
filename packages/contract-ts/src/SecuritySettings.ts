@@ -28,7 +28,7 @@ export interface SecurityBypassState {
 
 export interface SecuritySettingsResponse {
   categories: SecurityGrantCategory[];
-  /** 当前是否处于「以后不用再问我」。缺省视为未开启(默认形态)。 */
+  /** 当前是否处于「以后不用再问我」。260811 起缺省视为开启。 */
   bypass?: SecurityBypassState;
   /** 已声明的「与命令行工具共享登录信息」条目;随设置一次取回,不额外多一次请求。 */
   credentialShare?: CredentialShareItem[];

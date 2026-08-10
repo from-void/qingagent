@@ -316,6 +316,8 @@ function makeFetchMock() {
     }
     if (url.includes("/api/v1/settings/security")) {
       return json({
+        // Esc 用例需要打开分类下拉,显式固定为「每次询问」总档。
+        bypass: { enabled: false, enabledAt: null },
         categories: [
           { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
           { kind: "command", label: "同类操作", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },

@@ -79,7 +79,11 @@ const connectorCases = [
 ] as const;
 
 describe("连接账号确认门禁", () => {
-  beforeEach(() => __resetBypassModeForTest());
+  beforeEach(() => {
+    __resetBypassModeForTest();
+    // 本文件专测确认流程,必须显式进入「每次询问」档。
+    __setBypassModeCacheForTest(false);
+  });
   afterEach(() => __resetBypassModeForTest());
 
   function requiresApproval(

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import {
   buildCredentialAccessConfirmSpec,
@@ -14,6 +14,10 @@ import {
 import { issueApprovalProof } from "../confirm/approvalProof.js";
 import { createRequestCredentialAccessTool } from "../tools/requestCredentialAccess.js";
 import { selectEffectiveCredentialPaths } from "../skills/credentialRequests.js";
+import {
+  __resetBypassModeForTest,
+  __setBypassModeCacheForTest,
+} from "../security/bypassMode.js";
 
 const HOME = "/home/tester";
 const invalidateSessionWorkspace = vi.hoisted(() => vi.fn());
@@ -99,9 +103,13 @@ describe("确认卡文案", () => {
 
 describe("按需授权工具", () => {
   beforeEach(() => {
+    // 本组专测确认卡与批准凭证链路,显式固定为「每次询问」档。
+    __setBypassModeCacheForTest(false);
     invalidateSessionWorkspace.mockClear();
     ensureCredentialPathExists.mockClear();
   });
+
+  afterEach(() => __resetBypassModeForTest());
 
   function tool(state: ReturnType<typeof session>, createGrant = vi.fn(async () => undefined)) {
     return {

@@ -5,6 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceTools, Workspace, WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
+vi.mock("@qingagent/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@qingagent/db")>();
+  return {
+    ...actual,
+    // 工作区每次装配都会刷新持久化开关;本文件专测隔离细节,固定为显式「每次询问」。
+    getAppSetting: vi.fn(async (key: string) => key === "security_bypass_mode"
+      ? JSON.stringify({ enabled: false, enabledAt: null })
+      : actual.getAppSetting(key)),
+  };
+});
+import {
+  __resetBypassModeForTest,
+  __setBypassModeCacheForTest,
+} from "../security/bypassMode.js";
 import {
   __resetIsolationCacheForTest,
   __resetSessionWorkspaceCacheForTest,
@@ -23,6 +37,15 @@ import {
 } from "../workspace/sessionWorkspace.js";
 
 // 沙箱 P0:会话级 Workspace 装配——目录命名防穿越/最小 env/隔离解析/实例缓存
+
+beforeEach(() => {
+  // 本文件验证隔离装配细节,不让产品免询问默认隐式改变测试前提。
+  __setBypassModeCacheForTest(false);
+});
+
+afterEach(() => {
+  __resetBypassModeForTest();
+});
 
 describe("sessionWorkspaceDirName 路径安全", () => {
   it("所有 sessionId 统一编码为固定长度的安全目录名", () => {
@@ -242,7 +265,7 @@ describe("高危 env gate 真值口径", () => {
     delete process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
   });
 
-  it("未设时默认关闭未隔离命令与凭据注入", () => {
+  it("每次询问档且 env 未设时关闭未隔离命令与凭据注入", () => {
     delete process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS;
     delete process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
 

@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@qingagent/db", () => ({
   resolveDbUrl: () => "file::memory:",
+  // 本文件验证隔离读墙的跨会话失效,显式固定在「每次询问」档。
+  getAppSetting: vi.fn(async () => JSON.stringify({ enabled: false, enabledAt: null })),
   listCredentialGrants: vi.fn(async () => [...mocks.grants]),
 }));
 

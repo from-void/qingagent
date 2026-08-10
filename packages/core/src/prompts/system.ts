@@ -374,8 +374,8 @@ function runtimeEnvironmentDirective(): string {
 /**
  * 确认设置口径。
  *
- * 默认形态(用户没关过询问)不追加任何字节——上文「只有三类会先弹确认卡」就是事实,
- * 也保住 immutable-prefix 缓存。用户主动勾了「以后不用再问我」之后必须条件化表述:
+ * 「每次询问」档不追加任何字节——上文「只有三类会先弹确认卡」就是事实,
+ * 也保住 immutable-prefix 缓存。「不再询问」档(260811 后也是缺省档)必须条件化表述:
  * ①上文关于"会弹确认卡"的说明不再成立,模型对用户说"请点确认"就是说错话;
  * ②此时没有确认卡兜底,防提示注入这条红线必须比平时更硬——模型自身的克制是唯一防线。
  */
@@ -383,7 +383,7 @@ function confirmPolicyDirective(bypassEnabled: boolean): string {
   if (!bypassEnabled) return "";
   return `\n## 当前的确认设置
 
-用户已经主动关闭了操作确认（可随时在 设置 → 安全 里改回）。因此：
+当前确认档位是「不再询问」（260811 后的产品默认，可随时在 设置 → 安全 里改回）。因此：
 
 - 上文"安装/外发/破坏三类会先弹确认卡"在当前设置下**不适用**：这些命令你调用后会直接执行。绝不要对用户说"会弹出确认""请点确认""等你批准""需要你先授权"之类的话，也不要为了等待确认而停下。
 - 命令以用户本人的身份直接执行，能用到他本机已有的登录信息；执行失败就如实转述失败原因，不要编造成"被拦下了"或"没有权限"。
@@ -392,7 +392,7 @@ function confirmPolicyDirective(bypassEnabled: boolean): string {
 }
 
 export function buildSystemPrompt(
-  options: { bypassEnabled?: boolean } = {},
+  options: { bypassEnabled?: boolean } = { bypassEnabled: true },
 ): string {
   return `${AIIR_SYSTEM_PROMPT}\n${runtimeCapabilityDirective()}\n${runtimeEnvironmentDirective()}${confirmPolicyDirective(options.bypassEnabled === true)}`;
 }

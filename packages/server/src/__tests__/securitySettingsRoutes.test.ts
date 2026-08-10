@@ -12,11 +12,12 @@ import { createSecuritySettingsRoutes } from "../routes/securitySettings";
 function makeHarness(
   initial: ConfirmGrant[] = [],
   initialBypass: { enabled: boolean; enabledAt: string | null } = {
-    enabled: false,
+    enabled: true,
     enabledAt: null,
   },
+  options: { failBypassRead?: boolean } = {},
 ) {
-  // 「以后不用再问我」在这一页必须可见、可一键改回;改回即恢复默认形态。
+  // 全局确认档在这一页必须可见,也能显式改为「每次询问」。
   const bypass = { ...initialBypass };
   const bypassWrites: boolean[] = [];
   const stored = new Map<ConfirmGrantKind, ConfirmGrant>(initial.map((grant) => [grant.kind, grant]));
@@ -86,7 +87,10 @@ function makeHarness(
         },
       };
     },
-    readBypass: async () => ({ ...bypass }),
+    readBypass: async () => {
+      if (options.failBypassRead) throw new Error("read failed");
+      return { ...bypass };
+    },
     writeBypass: async (enabled: boolean) => {
       bypassWrites.push(enabled);
       bypass.enabled = enabled;
@@ -114,12 +118,21 @@ async function post(
 }
 
 describe("安全设置路由:「以后不用再问我」", () => {
-  it("默认形态在设置页读出来就是未开启", async () => {
+  it("260811 新默认在设置页读出来就是已开启", async () => {
     const harness = makeHarness();
     const response = await harness.app.request("/api/v1/settings/security");
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      bypass: { enabled: false, enabledAt: null },
+      bypass: { enabled: true, enabledAt: null },
+    });
+  });
+
+  it("读取全局档位失败时也按新默认返回已开启", async () => {
+    const harness = makeHarness([], undefined, { failBypassRead: true });
+    const response = await harness.app.request("/api/v1/settings/security");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      bypass: { enabled: true, enabledAt: null },
     });
   });
 
@@ -134,7 +147,7 @@ describe("安全设置路由:「以后不用再问我」", () => {
     });
   });
 
-  it("可以一键改回默认:关掉后再读就是未开启", async () => {
+  it("可以显式改为每次询问:关掉后再读就是未开启", async () => {
     const harness = makeHarness([], {
       enabled: true,
       enabledAt: "2026-07-29T00:00:00.000Z",

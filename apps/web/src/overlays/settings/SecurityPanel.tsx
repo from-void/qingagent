@@ -34,8 +34,8 @@ const categoryDescriptions: Record<SecurityGrantKind, string> = {
   connect: "连接后，青简能读到这个账号里的内容。",
 };
 
-// 「以后不用再问我」的常驻控制点。用户在确认卡上勾过之后,这里就是他唯一能看到
-// 当前状态、也能一键改回默认的地方;改回后立刻恢复弹确认卡,已有会话即时生效。
+// 全局确认档的常驻控制点。260811 起缺省为「不再询问」;用户在这里显式改为
+// 「每次询问」后立刻恢复弹确认卡与隔离,已有会话即时生效。
 const BYPASS_ASK = "ask";
 const BYPASS_NEVER = "never";
 const bypassModeLabels = {
@@ -44,9 +44,10 @@ const bypassModeLabels = {
 } as const;
 
 function parseBypass(value: unknown): SecurityBypassState {
-  if (!value || typeof value !== "object") return { enabled: false, enabledAt: null };
+  if (!value || typeof value !== "object") return { enabled: true, enabledAt: null };
   const input = value as Record<string, unknown>;
-  if (input.enabled !== true) return { enabled: false, enabledAt: null };
+  if (input.enabled === false) return { enabled: false, enabledAt: null };
+  if (input.enabled !== true) return { enabled: true, enabledAt: null };
   return {
     enabled: true,
     enabledAt: typeof input.enabledAt === "string" ? input.enabledAt : null,
@@ -187,7 +188,7 @@ function mergeSettings(
       return previous && previous.version > item.version ? previous : item;
     }),
     // 免询问开关与共享条目都没有版本线,服务端最新一次结果即真值。
-    bypass: incoming.bypass ?? { enabled: false, enabledAt: null },
+    bypass: incoming.bypass ?? { enabled: true, enabledAt: null },
     credentialShare: incoming.credentialShare ?? [],
   };
 }
@@ -282,7 +283,7 @@ export function SecurityPanel() {
       toast.show({
         message: next.enabled
           ? "以后不再询问，命令会直接执行。随时可以在这里改回。"
-          : "已恢复默认：这些操作会先问你一句，命令也重新隔离执行。",
+          : "已改为每次询问：这些操作会先问你一句，命令也重新隔离执行。",
         tone: "success",
       });
     } catch {

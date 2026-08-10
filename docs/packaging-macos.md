@@ -32,8 +32,8 @@ bash apps/desktop/build-mac.sh
 QINGAGENT_MAC_DIST=1 bash apps/desktop/build-mac.sh
 ```
 
-产物：`apps/desktop/release/青简-<版本>-arm64-mac.zip`。mac target 只配了 zip（未签名时 dmg/自更语义误导，见 electron-builder.yml 注释）。
-未签名 app 分发给别人时，对方首次启动需右键→打开，或 `xattr -dr com.apple.quarantine 青简.app`；本机自建不受影响。
+产物：`apps/desktop/release/青简-<版本>-arm64-mac.zip`。本地脚本仍生成未签名测试包；正式版和 Beta 版 tag 由 GitHub Actions 使用 Developer ID Application 签名并完成 Apple notarization。
+本地未签名 app 分发给别人时，对方首次启动需右键→打开，或 `xattr -dr com.apple.quarantine 青简.app`；CI 产物不需要这一步。
 
 ## 3. 失败了看什么（按出现频率排序）
 

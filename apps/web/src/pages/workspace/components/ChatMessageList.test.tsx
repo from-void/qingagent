@@ -369,6 +369,63 @@ describe("ChatMessageList", () => {
     expect(anchors.some((anchor) => /^(?:javascript|data):/u.test(anchor.href))).toBe(false);
   });
 
+  it("站内文件服务图片渲染为带替代文本的 img", async () => {
+    const src = "/api/v1/files/2c918f26-illustration/illustration.svg";
+    await render(<div>{renderSimpleMarkdown(`![太空橘猫 · 梦幻星空](${src})`)}</div>);
+
+    const image = host!.querySelector<HTMLImageElement>("img");
+    expect(image?.getAttribute("src")).toBe(src);
+    expect(image?.getAttribute("alt")).toBe("太空橘猫 · 梦幻星空");
+    expect(image?.parentElement?.classList).toContain("u-thumb");
+    expect(image?.parentElement?.classList).toContain("chat-markdown-image");
+  });
+
+  it("绝对 http 和 https 图片均渲染为 img", async () => {
+    await render(
+      <div>
+        {renderSimpleMarkdown([
+          "![HTTP 图](http://images.example.com/a.png)",
+          "![HTTPS 图](https://images.example.com/b.webp)",
+        ].join("\n"))}
+      </div>,
+    );
+
+    const images = Array.from(host!.querySelectorAll<HTMLImageElement>("img"));
+    expect(images.map((image) => image.getAttribute("src"))).toEqual([
+      "http://images.example.com/a.png",
+      "https://images.example.com/b.webp",
+    ]);
+    expect(images.map((image) => image.getAttribute("alt"))).toEqual(["HTTP 图", "HTTPS 图"]);
+  });
+
+  it("危险或非白名单图片地址回退纯文本且不改变普通相对链接行为", async () => {
+    const markdown = [
+      "![脚本](javascript:alert(1))",
+      "![数据](data:image/png;base64,AAAA)",
+      "![上级](../private/image.png)",
+      "![其它站内路径](/assets/image.png)",
+      "[普通相对链接](/api/v1/files/document)",
+    ].join("\n");
+    await render(<div>{renderSimpleMarkdown(markdown)}</div>);
+
+    expect(host!.querySelector("img")).toBeNull();
+    expect(host!.querySelector("a")).toBeNull();
+    for (const line of markdown.split("\n")) {
+      expect(host?.textContent).toContain(line);
+    }
+  });
+
+  it("未闭合图片语法在流式和完整渲染中都回退纯文本", async () => {
+    const partial = "生成结果：![太空橘猫](";
+    await render(<div>{renderSimpleMarkdown(partial)}</div>);
+
+    expect(host!.querySelector("img")).toBeNull();
+    expect(host?.textContent).toBe(partial);
+    expect(splitStreamingInlineRuns(partial)).toEqual([
+      { kind: "plain", text: partial, start: 0 },
+    ]);
+  });
+
   it("模型连续使用 1. 时按 markdown 规则递增编号并保留子级无序列表", async () => {
     await render(
       <div>

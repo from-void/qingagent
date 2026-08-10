@@ -715,7 +715,8 @@ function getPatchSummaryReviewOutcome(
 /** 聊天正文的内联 markdown run；start 按 Unicode 码点计，供流式动画稳定复用。 */
 export type StreamingInlineRun =
   | { kind: "plain" | "bold" | "code"; text: string; start: number }
-  | { kind: "link"; text: string; href: string; start: number };
+  | { kind: "link"; text: string; href: string; start: number }
+  | { kind: "image"; text: string; src: string; start: number };
 
 type ParsedMarkdownLink = {
   end: number;
@@ -730,6 +731,11 @@ function safeHttpHref(rawHref: string): string | null {
   } catch {
     return null;
   }
+}
+
+function safeImageHref(rawHref: string): string | null {
+  if (rawHref.startsWith("/api/v1/files/")) return rawHref;
+  return safeHttpHref(rawHref);
 }
 
 function unescapeMarkdown(value: string): string {
@@ -752,7 +758,11 @@ function findQuotedTitleEnd(value: string, start: number, quote: string): number
  * href=null 表示语法完整但协议不安全/目标无效；调用方会把整段保留成纯文本，
  * 避免再从 javascript:/data: 目标内部误提取出一个裸 URL。
  */
-function parseMarkdownLinkAt(value: string, start: number): ParsedMarkdownLink | null {
+function parseMarkdownLinkAt(
+  value: string,
+  start: number,
+  validateHref: (rawHref: string) => string | null = safeHttpHref,
+): ParsedMarkdownLink | null {
   if (value[start] !== "[") return null;
 
   let labelEnd = -1;
@@ -821,8 +831,13 @@ function parseMarkdownLinkAt(value: string, start: number): ParsedMarkdownLink |
   return {
     end: cursor + 1,
     text: unescapeMarkdown(value.slice(start + 1, labelEnd)),
-    href: safeHttpHref(href),
+    href: validateHref(href),
   };
+}
+
+function parseMarkdownImageAt(value: string, start: number): ParsedMarkdownLink | null {
+  if (value[start] !== "!" || value[start + 1] !== "[") return null;
+  return parseMarkdownLinkAt(value, start + 1, safeImageHref);
 }
 
 function trimBareUrlEnd(candidate: string): number {
@@ -876,6 +891,22 @@ function splitInlineMarkdownRuns(value: string, optimisticTrailingBold = false):
   };
 
   while (cursor < value.length) {
+    const markdownImage = parseMarkdownImageAt(value, cursor);
+    if (markdownImage) {
+      if (markdownImage.href) {
+        pushPlain(plainStart, cursor);
+        runs.push({
+          kind: "image",
+          text: markdownImage.text,
+          src: markdownImage.href,
+          start: toCharOffset(cursor),
+        });
+        plainStart = markdownImage.end;
+      }
+      cursor = markdownImage.end;
+      continue;
+    }
+
     if (value[cursor] === "`") {
       const end = value.indexOf("`", cursor + 1);
       if (end > cursor + 1) {
@@ -977,6 +1008,7 @@ function parseStandaloneLink(value: string): { title: string; href: string } | n
  * - **bold**
  * - `code`
  * - [text](https://example.com) links and bare http(s) URLs
+ * - ![alt](https://example.com/image.png) and /api/v1/files/ images
  * - Unordered lists (- item / * item)
  * - Ordered lists (1. item)
  * - Newlines
@@ -1104,6 +1136,12 @@ export function renderSimpleMarkdown(text: string) {
             {p.text}
             <span className="ws-link-arrow"> ↗</span>
           </a>,
+        );
+      } else if (p.kind === "image") {
+        els.push(
+          <span key={`${key}-i${i}`} className="u-thumb chat-markdown-image">
+            <img src={p.src} alt={p.text} loading="lazy" />
+          </span>,
         );
       } else {
         els.push(p.text);
@@ -1694,7 +1732,7 @@ const PartView = memo(function PartView({
 
 /**
  * 把"正在流式写入的一行"切成内联 run(0702:流式加粗实时渲染):
- * - 完整的 `**粗**` / `` `码` `` / `[文](url)` / 裸 http(s) URL 立即按样式渲染;
+ * - 完整的 `**粗**` / `` `码` `` / `[文](url)` / `![图](url)` / 裸 http(s) URL 立即按样式渲染;
  * - **尾部未闭合的 `**`** 乐观按加粗渲染——闭合符流到时视觉零跳变,这就是"边写边粗";
  *   (未闭合反引号/半截链接不乐观,保持字面,与成行后 renderInline 的字面行为一致)
  * - `start` 为**可见内容**在原始行里的字符偏移(Array.from 计数,与 StreamingChars 的
@@ -1718,6 +1756,13 @@ function StreamingInlineLine({
   return (
     <>
       {runs.map((run) => {
+        if (run.kind === "image") {
+          return (
+            <span key={`i${run.start}`} className="u-thumb chat-markdown-image">
+              <img src={run.src} alt={run.text} loading="lazy" />
+            </span>
+          );
+        }
         const inner = (
           <StreamingChars text={run.text} baseKey={baseKey + run.start} config={config} />
         );

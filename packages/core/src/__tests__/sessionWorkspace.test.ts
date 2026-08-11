@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceTools, Workspace, WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
+const mockedBypassSetting = vi.hoisted(() => ({ enabled: false }));
 vi.mock("@qingagent/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@qingagent/db")>();
   return {
     ...actual,
-    // 工作区每次装配都会刷新持久化开关;本文件专测隔离细节,固定为显式「每次询问」。
+    // 工作区每次装配都会刷新持久化开关;本文件默认显式「每次询问」,个别档位测试按需切换。
     getAppSetting: vi.fn(async (key: string) => key === "security_bypass_mode"
-      ? JSON.stringify({ enabled: false, enabledAt: null })
+      ? JSON.stringify({ enabled: mockedBypassSetting.enabled, enabledAt: null })
       : actual.getAppSetting(key)),
   };
 });
@@ -26,10 +27,13 @@ import {
   acquireSessionWorkspace,
   allowUnisolatedCommands,
   buildSandboxEnv,
+  buildUserIdentityEnv,
   cleanupSessionWorkspace,
   getSessionWorkspace,
   invalidateSessionWorkspace,
   resolveIsolation,
+  SANDBOX_BIN_DIR,
+  SANDBOX_NODE_RUNTIME_DIR,
   sandboxExtraReadOnlyPaths,
   sessionWorkspaceDir,
   sessionWorkspaceDirName,
@@ -40,6 +44,7 @@ import {
 
 beforeEach(() => {
   // 本文件验证隔离装配细节,不让产品免询问默认隐式改变测试前提。
+  mockedBypassSetting.enabled = false;
   __setBypassModeCacheForTest(false);
 });
 
@@ -202,6 +207,32 @@ describe("buildSandboxEnv 最小环境", () => {
   });
 });
 
+describe("buildUserIdentityEnv 用户本人环境", () => {
+  it("Windows 同步 PATH/Path，并按 host-first 保留用户 PATH、后置产品 Node", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const savedPath = process.env.PATH;
+    const savedTitlePath = process.env.Path;
+    __setBypassModeCacheForTest(true);
+    try {
+      process.env.PATH = "C:\\Users\\tester\\bin";
+      process.env.Path = "D:\\legacy-bin";
+      const env = buildUserIdentityEnv();
+      const pathParts = env.PATH!.split(";");
+
+      expect(env.Path).toBe(env.PATH);
+      expect(pathParts[0]).toBe(SANDBOX_BIN_DIR);
+      expect(pathParts).toContain("C:\\Users\\tester\\bin");
+      expect(pathParts.at(-1)).toBe(SANDBOX_NODE_RUNTIME_DIR);
+    } finally {
+      platformSpy.mockRestore();
+      if (savedPath === undefined) delete process.env.PATH;
+      else process.env.PATH = savedPath;
+      if (savedTitlePath === undefined) delete process.env.Path;
+      else process.env.Path = savedTitlePath;
+    }
+  });
+});
+
 describe("sandboxExtraReadOnlyPaths", () => {
   afterEach(() => {
     delete process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS;
@@ -331,6 +362,20 @@ describe("getSessionWorkspace 装配与缓存", () => {
   });
 
   const opts = { resolveSkillDirs: () => [] as string[] };
+
+  async function readCommandEnv(
+    workspace: Workspace,
+    sessionId: string,
+    keys: string[],
+  ): Promise<Record<string, string | undefined>> {
+    const outputName = ".env-probe.json";
+    const script = `require("node:fs").writeFileSync(${JSON.stringify(outputName)}, JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map((key) => [key, process.env[key]]))))`;
+    const result = await workspace.sandbox!.executeCommand!(process.execPath, ["-e", script]);
+    expect(result.success).toBe(true);
+    return JSON.parse(
+      readFileSync(join(sessionWorkspaceDir(sessionId), outputName), "utf8"),
+    ) as Record<string, string | undefined>;
+  }
 
   function folderSource(basePath: string, overrides: Partial<FolderSourceRecord> = {}): FolderSourceRecord {
     const now = "2026-01-01T00:00:00.000Z";
@@ -483,6 +528,61 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(ws.sandbox).toBeTruthy();
     expect(ws.filesystem).toBeTruthy();
     expect(ws.filesystem?.provider).toBe("composite");
+  });
+
+  it("不再询问 + none 以用户本人环境执行，但剔除产品内部态", async () => {
+    mockedBypassSetting.enabled = true;
+    __setBypassModeCacheForTest(true);
+    process.env.OPENAI_API_KEY = "user-openai-key";
+    process.env.FOO_HOME = "/tmp/user-foo-home";
+    process.env.npm_config_cache = "/tmp/user-npm-cache";
+    process.env.QINGAGENT_AUTH_TOKEN = "product-internal-token";
+    process.env.DATABASE_URL = "file:/tmp/product-internal.db";
+    __resetSessionWorkspaceCacheForTest();
+
+    try {
+      const sessionId = "sess-bypass-user-identity-env";
+      const ws = await getSessionWorkspace(sessionId, opts);
+      const env = await readCommandEnv(ws, sessionId, [
+        "OPENAI_API_KEY",
+        "FOO_HOME",
+        "npm_config_cache",
+        "QINGAGENT_AUTH_TOKEN",
+        "DATABASE_URL",
+        "PATH",
+      ]);
+
+      expect(env.OPENAI_API_KEY).toBe("user-openai-key");
+      expect(env.FOO_HOME).toBe("/tmp/user-foo-home");
+      expect(env.npm_config_cache).toBe("/tmp/user-npm-cache");
+      expect(env.QINGAGENT_AUTH_TOKEN).toBeUndefined();
+      expect(env.DATABASE_URL).toBeUndefined();
+      expect(env.PATH?.split(process.platform === "win32" ? ";" : ":")[0]).toBe(
+        SANDBOX_BIN_DIR,
+      );
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.FOO_HOME;
+      delete process.env.npm_config_cache;
+      delete process.env.QINGAGENT_AUTH_TOKEN;
+      delete process.env.DATABASE_URL;
+    }
+  });
+
+  it("非 bypass 的 none + 显式放行仍使用最小环境", async () => {
+    mockedBypassSetting.enabled = false;
+    __setBypassModeCacheForTest(false);
+    process.env.OPENAI_API_KEY = "must-not-leak";
+    __resetSessionWorkspaceCacheForTest();
+
+    try {
+      const sessionId = "sess-non-bypass-minimal-env";
+      const ws = await getSessionWorkspace(sessionId, opts);
+      const env = await readCommandEnv(ws, sessionId, ["OPENAI_API_KEY"]);
+      expect(env.OPENAI_API_KEY).toBeUndefined();
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
   });
 
   it("none 隔离 + 禁未隔离命令时:不装 sandbox(不暴露命令执行),仍有文件系统", async () => {

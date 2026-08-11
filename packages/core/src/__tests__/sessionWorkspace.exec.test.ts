@@ -1,5 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
+vi.mock("@qingagent/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@qingagent/db")>();
+  return {
+    ...actual,
+    // 本文件验证非 bypass 的显式 none 部署：仍能执行命令，但基础 env 必须最小化。
+    getAppSetting: vi.fn(async (key: string) => key === "security_bypass_mode"
+      ? JSON.stringify({ enabled: false, enabledAt: null })
+      : actual.getAppSetting(key)),
+  };
+});
+import {
+  __resetBypassModeForTest,
+  __setBypassModeCacheForTest,
+} from "../security/bypassMode.js";
 import {
   __resetIsolationCacheForTest,
   __resetSessionWorkspaceCacheForTest,
@@ -12,12 +26,14 @@ import {
 
 describe("会话沙箱真实命令执行", () => {
   beforeEach(() => {
+    __setBypassModeCacheForTest(false);
     __resetSessionWorkspaceCacheForTest();
     __resetIsolationCacheForTest();
     process.env.QINGAGENT_SANDBOX_ISOLATION = "none";
     process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS = "1";
   });
   afterEach(async () => {
+    __resetBypassModeForTest();
     delete process.env.QINGAGENT_SANDBOX_ISOLATION;
     delete process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS;
     await rm(sessionWorkspaceDir("exec-smoke"), { recursive: true, force: true });

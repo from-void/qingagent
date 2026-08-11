@@ -140,6 +140,16 @@
    "cover_template": "poster"
   }
  ],
+ "sessionResources": [
+  {
+   "session_id": "2aa4dc19-a88e-4b09-a44c-06a1d2a89b67",
+   "resource_id": "3b2b2422-18cd-4cd1-aa04-111e50792991",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:58:18.151Z",
+   "updated_at": "2026-08-11T18:58:18.151Z"
+  }
+ ],
  "assetFileIds": [
   "3b2b2422-18cd-4cd1-aa04-111e50792991"
  ]

@@ -43,6 +43,24 @@
   }
  ],
  "derivatives": [],
+ "sessionResources": [
+  {
+   "session_id": "c254d622-836d-4236-a67d-1c2cf19c78f7",
+   "resource_id": "44f9b633-9bff-4f24-ad4b-19c51d418c12",
+   "kind": "generated",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:31:12.728Z",
+   "updated_at": "2026-08-11T18:31:12.728Z"
+  },
+  {
+   "session_id": "c254d622-836d-4236-a67d-1c2cf19c78f7",
+   "resource_id": "aaa6d5aa-da60-4a6d-8f27-7a4108563570",
+   "kind": "generated",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:28:38.458Z",
+   "updated_at": "2026-08-11T18:28:38.458Z"
+  }
+ ],
  "assetFileIds": [
   "44f9b633-9bff-4f24-ad4b-19c51d418c12",
   "aaa6d5aa-da60-4a6d-8f27-7a4108563570"

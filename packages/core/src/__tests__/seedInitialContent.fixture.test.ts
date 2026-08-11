@@ -115,6 +115,16 @@ async function writeMinimalFixture(fixturesDir: string): Promise<void> {
           target_lang: null,
         },
       ],
+      sessionResources: [
+        {
+          session_id: "thread-one",
+          resource_id: "asset-1",
+          kind: "generated",
+          ref_count: 1,
+          created_at: "2026-08-11T18:19:13.198Z",
+          updated_at: "2026-08-11T18:19:53.198Z",
+        },
+      ],
       assetFileIds: ["asset-1"],
     }),
   );
@@ -153,10 +163,15 @@ describe("seedInitialContent fixture v2", () => {
     const derivatives = await client.execute(
       "SELECT doc_id, generated_at, created_at, updated_at FROM document_derivatives",
     );
+    const sessionResources = await client.execute(
+      `SELECT session_id, resource_id, kind, ref_count, created_at, updated_at
+        FROM session_resources`,
+    );
 
     expect(threads.rows).toHaveLength(2);
     expect(documents.rows).toHaveLength(2);
     expect(derivatives.rows).toHaveLength(1);
+    expect(sessionResources.rows).toHaveLength(1);
     expect(threads.rows[1]).toMatchObject({
       id: "thread-one",
       resourceId: "qingagent-user",
@@ -183,6 +198,14 @@ describe("seedInitialContent fixture v2", () => {
     expect(derivatives.rows[0]).toMatchObject({
       doc_id: "doc-derived",
       generated_at: "2025-04-16T01:00:00.000Z",
+      created_at: "2025-04-16T01:00:00.000Z",
+      updated_at: "2025-04-16T01:00:00.000Z",
+    });
+    expect(sessionResources.rows[0]).toMatchObject({
+      session_id: "thread-one",
+      resource_id: "asset-1",
+      kind: "generated",
+      ref_count: 1,
       created_at: "2025-04-16T01:00:00.000Z",
       updated_at: "2025-04-16T01:00:00.000Z",
     });

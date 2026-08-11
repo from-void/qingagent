@@ -27,6 +27,7 @@ interface SeedFixture {
   threads: FixtureRow[];
   documents: FixtureRow[];
   derivatives: FixtureRow[];
+  sessionResources: FixtureRow[];
   assetFileIds: string[];
 }
 
@@ -47,6 +48,7 @@ const IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const THREAD_TIME_COLUMNS = new Set(["createdAt", "updatedAt"]);
 const DOCUMENT_TIME_COLUMNS = new Set(["created_at", "updated_at"]);
 const DERIVATIVE_TIME_COLUMNS = new Set(["generated_at", "created_at", "updated_at"]);
+const SESSION_RESOURCE_TIME_COLUMNS = new Set(["created_at", "updated_at"]);
 const SOURCE_FIXTURES_DIR = fileURLToPath(new URL("./fixtures", import.meta.url));
 
 function resolvePackagedFixturesDir(): string | null {
@@ -109,7 +111,11 @@ function rewriteRowTime(
 }
 
 async function upsertRows(
-  table: "mastra_threads" | "documents" | "document_derivatives",
+  table:
+    | "mastra_threads"
+    | "documents"
+    | "document_derivatives"
+    | "session_resources",
   rows: readonly FixtureRow[],
 ): Promise<void> {
   assertIdentifier(table);
@@ -204,6 +210,12 @@ export async function seedInitialContent(
       "document_derivatives",
       fixture.derivatives.map((row) =>
         rewriteRowTime(row, DERIVATIVE_TIME_COLUMNS, timestamp)
+      ),
+    );
+    await upsertRows(
+      "session_resources",
+      fixture.sessionResources.map((row) =>
+        rewriteRowTime(row, SESSION_RESOURCE_TIME_COLUMNS, timestamp)
       ),
     );
     await copyFixtureAssets(fixturesDir, uploadsDir, fixture.assetFileIds);

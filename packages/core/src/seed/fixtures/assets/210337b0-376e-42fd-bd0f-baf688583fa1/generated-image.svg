@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" role="img">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ec8e3"/>
+      <stop offset="1" stop-color="#cfeaf5"/>
+    </linearGradient>
+    <linearGradient id="atmo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a8d8ea"/>
+      <stop offset="1" stop-color="#d6ecf5"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd75e"/>
+      <stop offset="1" stop-color="#ffb347"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+
+  <text x="48" y="56" font-size="30" fill="#2b2b2b" font-family="sans-serif">瑞利散射：天空为什么是蓝色的？</text>
+
+  
+  <rect x="48" y="96" width="704" height="270" fill="url(#sky)"/>
+
+  
+  <circle cx="150" cy="150" r="42" fill="url(#sun)" stroke="#e0a03a" stroke-width="3"/>
+  <g stroke="#e0a03a" stroke-width="4" stroke-linecap="round">
+    <line x1="150" y1="96" x2="150" y2="82"/>
+    <line x1="150" y1="204" x2="150" y2="218"/>
+    <line x1="96" y1="150" x2="82" y2="150"/>
+    <line x1="204" y1="150" x2="218" y2="150"/>
+    <line x1="112" y1="112" x2="102" y2="102"/>
+    <line x1="188" y1="112" x2="198" y2="102"/>
+    <line x1="112" y1="188" x2="102" y2="198"/>
+    <line x1="188" y1="188" x2="198" y2="198"/>
+  </g>
+  <text x="150" y="158" text-anchor="middle" font-size="16" fill="#7a4d00" font-family="sans-serif">太阳</text>
+
+  
+  <polygon points="192,142 253.33,168.33 253.33,191.67 192,162" fill="#e53935" opacity="0.55"/>
+  <polygon points="253.33,168.33 314.67,194.67 314.67,221.33 253.33,191.67" fill="#fb8c00" opacity="0.55"/>
+  <polygon points="314.67,194.67 376,221 376,251 314.67,221.33" fill="#fdd835" opacity="0.55"/>
+  <polygon points="376,221 437.33,247.33 437.33,280.67 376,251" fill="#43a047" opacity="0.55"/>
+  <polygon points="437.33,247.33 498.67,273.67 498.67,310.33 437.33,280.67" fill="#1e88e5" opacity="0.55"/>
+  <polygon points="498.67,273.67 560,300 560,340 498.67,310.33" fill="#8e24aa" opacity="0.55"/>
+
+  
+  <line x1="196" y1="150" x2="560" y2="300" stroke="#e53935" stroke-width="2.5"/>
+  <line x1="196" y1="150" x2="560" y2="308" stroke="#fb8c00" stroke-width="2.5"/>
+  <line x1="196" y1="150" x2="560" y2="316" stroke="#fdd835" stroke-width="2.5"/>
+  <line x1="196" y1="150" x2="560" y2="324" stroke="#43a047" stroke-width="2.5"/>
+  <line x1="196" y1="150" x2="560" y2="332" stroke="#1e88e5" stroke-width="2.5"/>
+  <line x1="196" y1="150" x2="560" y2="340" stroke="#8e24aa" stroke-width="2.5"/>
+
+  
+  <path d="M48 366 Q400 300 752 366 L752 366 Q400 322 48 366 Z" fill="url(#atmo)" opacity="0.85"/>
+
+  
+  <path d="M48 366 Q400 300 752 366 L752 450 L48 450 Z" fill="#7cb342"/>
+  <path d="M48 366 Q400 300 752 366" fill="none" stroke="#558b2f" stroke-width="4"/>
+
+  
+  <g fill="#ffffff" stroke="#90a4ae" stroke-width="1.5">
+    <circle cx="430" cy="330" r="5"/>
+    <circle cx="470" cy="322" r="5"/>
+    <circle cx="510" cy="332" r="5"/>
+    <circle cx="545" cy="324" r="5"/>
+    <circle cx="585" cy="330" r="5"/>
+    <circle cx="625" cy="322" r="5"/>
+    <circle cx="660" cy="330" r="5"/>
+    <circle cx="695" cy="324" r="5"/>
+  </g>
+
+  
+  <g stroke="#4fc3f7" stroke-width="8" stroke-linecap="round" opacity="0.3">
+    <line x1="430" y1="330" x2="360" y2="300"/>
+    <line x1="430" y1="330" x2="380" y2="360"/>
+    <line x1="430" y1="330" x2="420" y2="290"/>
+    <line x1="470" y1="322" x2="410" y2="280"/>
+    <line x1="470" y1="322" x2="500" y2="280"/>
+    <line x1="510" y1="332" x2="470" y2="292"/>
+    <line x1="510" y1="332" x2="540" y2="292"/>
+    <line x1="545" y1="324" x2="500" y2="286"/>
+    <line x1="545" y1="324" x2="580" y2="286"/>
+    <line x1="585" y1="330" x2="540" y2="292"/>
+    <line x1="585" y1="330" x2="620" y2="292"/>
+    <line x1="625" y1="322" x2="580" y2="286"/>
+    <line x1="625" y1="322" x2="660" y2="286"/>
+    <line x1="660" y1="330" x2="620" y2="292"/>
+    <line x1="660" y1="330" x2="700" y2="292"/>
+    <line x1="695" y1="324" x2="660" y2="288"/>
+    <line x1="695" y1="324" x2="730" y2="288"/>
+  </g>
+  <g stroke="#1e88e5" stroke-width="4" stroke-linecap="round">
+    <line x1="430" y1="330" x2="360" y2="300"/>
+    <line x1="430" y1="330" x2="380" y2="360"/>
+    <line x1="430" y1="330" x2="420" y2="290"/>
+    <line x1="470" y1="322" x2="410" y2="280"/>
+    <line x1="470" y1="322" x2="500" y2="280"/>
+    <line x1="510" y1="332" x2="470" y2="292"/>
+    <line x1="510" y1="332" x2="540" y2="292"/>
+    <line x1="545" y1="324" x2="500" y2="286"/>
+    <line x1="545" y1="324" x2="580" y2="286"/>
+    <line x1="585" y1="330" x2="540" y2="292"/>
+    <line x1="585" y1="330" x2="620" y2="292"/>
+    <line x1="625" y1="322" x2="580" y2="286"/>
+    <line x1="625" y1="322" x2="660" y2="286"/>
+    <line x1="660" y1="330" x2="620" y2="292"/>
+    <line x1="660" y1="330" x2="700" y2="292"/>
+    <line x1="695" y1="324" x2="660" y2="288"/>
+    <line x1="695" y1="324" x2="730" y2="288"/>
+  </g>
+  <g stroke="#8e24aa" stroke-width="2" stroke-linecap="round" opacity="0.8">
+    <line x1="430" y1="330" x2="350" y2="330"/>
+    <line x1="470" y1="322" x2="440" y2="360"/>
+    <line x1="510" y1="332" x2="480" y2="368"/>
+    <line x1="545" y1="324" x2="520" y2="362"/>
+    <line x1="585" y1="330" x2="560" y2="368"/>
+    <line x1="625" y1="322" x2="600" y2="360"/>
+    <line x1="660" y1="330" x2="640" y2="368"/>
+    <line x1="695" y1="324" x2="680" y2="360"/>
+  </g>
+
+  
+  <line x1="560" y1="300" x2="752" y2="300" stroke="#e53935" stroke-width="3"/>
+  <line x1="560" y1="308" x2="752" y2="308" stroke="#fb8c00" stroke-width="3"/>
+  <line x1="560" y1="316" x2="752" y2="316" stroke="#fdd835" stroke-width="3"/>
+
+  
+  <rect x="48" y="392" width="330" height="44" rx="8" fill="#1e88e5"/>
+  <text x="66" y="420" font-size="16" fill="#ffffff" font-family="sans-serif">蓝光：波长短，易散射</text>
+
+  
+  <rect x="422" y="392" width="330" height="44" rx="8" fill="#e53935"/>
+  <text x="440" y="420" font-size="16" fill="#ffffff" font-family="sans-serif">红光：波长长，直穿而过</text>
+</svg>

@@ -42,6 +42,9 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
   - from: ../../packages/core/skills
     to: skills
+  # 首启真实会话 fixture：JSON 行数据与上传资源都在运行时读取，须放在 asar 外。
+  - from: ../../packages/core/src/seed/fixtures
+    to: seed-fixtures
   # Pyodide 运行时:由 build.mjs 按 QINGAGENT_BUNDLE_PYODIDE 暂存到 build/pyodide。
   # flag 关时只含占位文件(安装包体积不变);flag 开时含 ~12MB wasm/stdlib。
   - from: build/pyodide

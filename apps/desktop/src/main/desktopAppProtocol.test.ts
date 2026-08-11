@@ -31,6 +31,17 @@ test("安装产物登记 qingagent 外部协议", () => {
   assert.match(builderConfig, /protocols:\s*[\s\S]*schemes:\s*[\s\S]*- qingagent/);
 });
 
+test("安装产物携带首启真实会话 fixtures", () => {
+  const builderConfig = readFileSync(
+    path.join(__dirname, "../../electron-builder.yml"),
+    "utf8",
+  );
+  assert.match(
+    builderConfig,
+    /from:\s+\.\.\/\.\.\/packages\/core\/src\/seed\/fixtures[\s\S]*?to:\s+seed-fixtures/,
+  );
+});
+
 test("冷启动 session 深链在内容导航就绪前只暂存，就绪后原样直达", () => {
   const sessionUrl = "qingagent://app/#/workspace?session=49a55065-cold-start";
   const navigated: string[] = [];

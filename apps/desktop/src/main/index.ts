@@ -1541,9 +1541,9 @@ async function createWindowOnce() {
 
 // 首启示例内容(分叉骨架):桌面端「一辈子只 seed 一次」。
 // once 门 = userData 下的版本化标记文件;seed 写入本身在 @qingagent/core 里(进程内、幂等)。
-// 失败只记日志、绝不阻塞开窗。版本号便于将来需要换一套示例时另起 v2。
+// 失败只记日志、绝不阻塞开窗。v2 让已有 v1 标记的老用户也补跑一次真实会话 fixture。
 async function maybeSeedInitialContent() {
-  const flagFile = path.join(app.getPath("userData"), ".qingagent-seeded-v1");
+  const flagFile = path.join(app.getPath("userData"), ".qingagent-seeded-v2");
   if (existsSync(flagFile)) return;
   try {
     const { seedInitialContent } = await import("@qingagent/core");

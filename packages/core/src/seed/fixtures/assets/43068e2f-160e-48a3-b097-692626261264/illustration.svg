@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" role="img">
+  <rect x="0" y="0" width="800" height="450" fill="#f7f1e6"/>
+  <text x="48" y="56" font-size="30" fill="#2b2b2b">黄昏为什么是红色的？</text>
+
+  
+  <rect x="48" y="96" width="320" height="270" fill="#ffffff"/>
+  <text x="72" y="132" font-size="20" fill="#2b2b2b">正午</text>
+
+  
+  <rect x="48" y="96" width="320" height="190" fill="#cfeaf5"/>
+  
+  <circle cx="208" cy="150" r="26" fill="#ffd75e" stroke="#e0a03a" stroke-width="3"/>
+  <g stroke="#e0a03a" stroke-width="3" stroke-linecap="round">
+    <line x1="208" y1="116" x2="208" y2="106"/>
+    <line x1="208" y1="184" x2="208" y2="194"/>
+    <line x1="174" y1="150" x2="164" y2="150"/>
+    <line x1="242" y1="150" x2="252" y2="150"/>
+  </g>
+  
+  <line x1="208" y1="176" x2="208" y2="286" stroke="#e53935" stroke-width="3"/>
+  <line x1="208" y1="176" x2="208" y2="286" stroke="#fb8c00" stroke-width="3"/>
+  <line x1="208" y1="176" x2="208" y2="286" stroke="#fdd835" stroke-width="3"/>
+  <line x1="208" y1="176" x2="208" y2="286" stroke="#43a047" stroke-width="3"/>
+  <line x1="208" y1="176" x2="208" y2="286" stroke="#1e88e5" stroke-width="3"/>
+  <line x1="208" y1="176" x2="208" y2="286" stroke="#8e24aa" stroke-width="3"/>
+
+  
+  <path d="M48 286 Q208 268 368 286 L368 286 Q208 274 48 286 Z" fill="#a8d8ea" opacity="0.85"/>
+  
+  <path d="M48 286 Q208 268 368 286 L368 366 L48 366 Z" fill="#7cb342"/>
+  <path d="M48 286 Q208 268 368 286" fill="none" stroke="#558b2f" stroke-width="4"/>
+  
+  <g fill="#2b2b2b">
+    <circle cx="208" cy="330" r="5"/>
+    <line x1="208" y1="335" x2="208" y2="352" stroke="#2b2b2b" stroke-width="3"/>
+    <line x1="196" y1="342" x2="220" y2="342" stroke="#2b2b2b" stroke-width="3"/>
+    <line x1="208" y1="352" x2="200" y2="362" stroke="#2b2b2b" stroke-width="3"/>
+    <line x1="208" y1="352" x2="216" y2="362" stroke="#2b2b2b" stroke-width="3"/>
+  </g>
+  <text x="72" y="392" font-size="14" fill="#2b2b2b">正午：光路短，各色光一起到达</text>
+
+  
+  <rect x="432" y="96" width="320" height="270" fill="#ffffff"/>
+  <text x="456" y="132" font-size="20" fill="#2b2b2b">黄昏</text>
+
+  
+  <rect x="432" y="96" width="320" height="190" fill="#fde3c8"/>
+  
+  <circle cx="700" cy="268" r="24" fill="#ff8a3d" stroke="#e06a1a" stroke-width="3"/>
+  <g stroke="#e06a1a" stroke-width="3" stroke-linecap="round">
+    <line x1="700" y1="236" x2="700" y2="228"/>
+    <line x1="700" y1="300" x2="700" y2="308"/>
+    <line x1="668" y1="268" x2="660" y2="268"/>
+    <line x1="732" y1="268" x2="740" y2="268"/>
+  </g>
+  
+  <line x1="700" y1="268" x2="560" y2="286" stroke="#e53935" stroke-width="3"/>
+  <line x1="700" y1="268" x2="560" y2="286" stroke="#fb8c00" stroke-width="3"/>
+  <line x1="700" y1="268" x2="560" y2="286" stroke="#fdd835" stroke-width="3"/>
+  <line x1="700" y1="268" x2="560" y2="286" stroke="#43a047" stroke-width="3"/>
+  <line x1="700" y1="268" x2="560" y2="286" stroke="#1e88e5" stroke-width="3"/>
+  <line x1="700" y1="268" x2="560" y2="286" stroke="#8e24aa" stroke-width="3"/>
+  
+  <g stroke="#1e88e5" stroke-width="3" stroke-linecap="round">
+    <line x1="620" y1="280" x2="600" y2="262"/>
+    <line x1="620" y1="280" x2="606" y2="296"/>
+    <line x1="620" y1="280" x2="592" y2="280"/>
+    <line x1="650" y1="276" x2="634" y2="258"/>
+    <line x1="650" y1="276" x2="636" y2="292"/>
+    <line x1="650" y1="276" x2="626" y2="276"/>
+  </g>
+  <g stroke="#8e24aa" stroke-width="2.5" stroke-linecap="round" opacity="0.8">
+    <line x1="620" y1="280" x2="604" y2="270"/>
+    <line x1="650" y1="276" x2="638" y2="266"/>
+  </g>
+  
+  <line x1="560" y1="286" x2="560" y2="286" stroke="#e53935" stroke-width="3"/>
+  <line x1="560" y1="286" x2="560" y2="286" stroke="#fb8c00" stroke-width="3"/>
+
+  
+  <path d="M432 286 Q592 268 752 286 L752 286 Q592 274 432 286 Z" fill="#f2c9a0" opacity="0.85"/>
+  
+  <path d="M432 286 Q592 268 752 286 L752 366 L432 366 Z" fill="#7cb342"/>
+  <path d="M432 286 Q592 268 752 286" fill="none" stroke="#558b2f" stroke-width="4"/>
+  
+  <g fill="#2b2b2b">
+    <circle cx="560" cy="330" r="5"/>
+    <line x1="560" y1="335" x2="560" y2="352" stroke="#2b2b2b" stroke-width="3"/>
+    <line x1="548" y1="342" x2="572" y2="342" stroke="#2b2b2b" stroke-width="3"/>
+    <line x1="560" y1="352" x2="552" y2="362" stroke="#2b2b2b" stroke-width="3"/>
+    <line x1="560" y1="352" x2="568" y2="362" stroke="#2b2b2b" stroke-width="3"/>
+  </g>
+  <text x="456" y="392" font-size="14" fill="#2b2b2b">黄昏：光路长，蓝光被散射光，只剩红橙光</text>
+</svg>

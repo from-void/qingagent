@@ -62,6 +62,21 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   assert.doesNotMatch(readStartupShellHtml(source), /https?:\/\//i, "启动壳不得引用外部资源");
 });
 
+test("首启真实会话使用 v2 once 门，失败时不落标记以便下次重试", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const seedStart = source.indexOf("async function maybeSeedInitialContent() {");
+  const seedEnd = source.indexOf("// macOS GPU/渲染实验性开关", seedStart);
+  const seedSource = source.slice(seedStart, seedEnd);
+
+  assert.match(seedSource, /\.qingagent-seeded-v2/);
+  assert.doesNotMatch(seedSource, /\.qingagent-seeded-v1/);
+  assert.ok(
+    seedSource.indexOf("await seedInitialContent()") < seedSource.indexOf("writeFileSync(flagFile"),
+    "只有 seed 成功后才能写 v2 标记",
+  );
+  assert.match(seedSource, /catch \(err\)/, "seed 失败必须被捕获，不能阻塞开窗");
+});
+
 test("Crashpad 在任何 renderer 创建前启用且只写本地", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const mkdirLine = source.indexOf("mkdirSync(crashDumpsDir, { recursive: true })");

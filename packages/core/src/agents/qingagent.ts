@@ -59,6 +59,10 @@ import {
   buildQingagentOutputProcessors,
 } from "./processors.js";
 import { isQingagentToolSearchEnabled } from "./toolSearch.js";
+import {
+  appendSeedBriefingToInstructions,
+  getSeedBriefing,
+} from "../seed/seedBriefing.js";
 // 主 Agent 与工具内层统一使用 AI SDK 5 的 v2 provider；Mastra 自身的 ai v4 peer
 // 由包管理器隔离，provider 统一从 canonical 包导入。
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -298,7 +302,26 @@ export const qingagentAgent = new Agent({
   inputProcessors: buildQingagentInputProcessors,
   outputProcessors: buildQingagentOutputProcessors,
   maxProcessorRetries: 1,
-  instructions: () => buildSystemPrompt({ bypassEnabled: isBypassEnabled() }),
+  instructions: async ({ requestContext }) => {
+    const baseInstructions = buildSystemPrompt({ bypassEnabled: isBypassEnabled() });
+    const sessionId = requestContext.get("sessionId");
+    if (typeof sessionId !== "string" || !sessionId.trim()) return baseInstructions;
+    try {
+      // Mastra 会把动态 instructions 作为 system prompt；固定 briefing 追加在公共
+      // immutable prefix 末尾，不进入消息历史，示例会话内跨轮保持不变。
+      return appendSeedBriefingToInstructions(
+        baseInstructions,
+        await getSeedBriefing(sessionId),
+      );
+    } catch (error) {
+      // 隐藏示例说明是增强上下文，读取失败不应阻断普通开轮。
+      console.warn("[seed] hidden briefing unavailable; continuing without it", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return baseInstructions;
+    }
+  },
   tools: (): ToolsInput => buildQingagentStaticTools(),
   hooks: {
     beforeToolCall: beforeSkillToolCall,

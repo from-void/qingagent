@@ -99,7 +99,7 @@ function createToolHarness(
     simulateBackgroundTimeout?: boolean;
     backgroundWait?: Promise<void>;
     retainWorkspace?: () => () => void;
-    onBackgroundStarted?: (pid: string, ownerToolCallId: string) => void;
+    onBackgroundStarted?: (pid: string, ownerToolCallId: string, startedAt: number) => void;
     onBackgroundExited?: (
       pid: string,
       result: {
@@ -112,6 +112,7 @@ function createToolHarness(
         killed?: boolean;
       },
     ) => void;
+    onBackgroundFinished?: (pid: string) => void;
     backgroundResult?: {
       success: boolean;
       exitCode: number;
@@ -223,6 +224,7 @@ function createToolHarness(
     retainWorkspace: options.retainWorkspace,
     onBackgroundStarted: options.onBackgroundStarted,
     onBackgroundExited: options.onBackgroundExited,
+    onBackgroundFinished: options.onBackgroundFinished,
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
   });
@@ -987,7 +989,11 @@ describe("gated execute_command tool cwd 约束", () => {
     });
 
     expect(spawnCalls[0]?.abortSignal).toBeUndefined();
-    expect(onBackgroundStarted).toHaveBeenCalledWith("12345", "background-owner");
+    expect(onBackgroundStarted).toHaveBeenCalledWith(
+      "12345",
+      "background-owner",
+      expect.any(Number),
+    );
     controller.abort("preemptedByNewMessage");
     await Promise.resolve();
     expect(killCallCount()).toBe(0);
@@ -1019,8 +1025,10 @@ describe("gated execute_command tool cwd 约束", () => {
 
   it("后台 TTL 的权威 wait 结果送入会话事实回调", async () => {
     const onBackgroundExited = vi.fn();
+    const onBackgroundFinished = vi.fn();
     const { tool } = createToolHarness("gated-background-timeout-fact", {
       onBackgroundExited,
+      onBackgroundFinished,
       backgroundResult: {
         success: false,
         exitCode: 124,
@@ -1040,6 +1048,7 @@ describe("gated execute_command tool cwd 约束", () => {
       "12345",
       expect.objectContaining({ timedOut: true, exitCode: 124 }),
     ));
+    expect(onBackgroundFinished).toHaveBeenCalledWith("12345");
   });
 
   it("P2-6 回归:无 timeout 后台 dev 命令不确认，静默套用并展示实际 TTL", async () => {

@@ -133,6 +133,8 @@ export interface SessionState {
   _activeConfirmedToolCallId: string | null;
   /** Runtime-only：后台进程 PID 到启动命令卡 toolCallId 的显式归属索引。 */
   _backgroundCommandOwnerByPid?: Map<string, string>;
+  /** Runtime-only：后台进程 PID 到服务端权威启动时刻(epoch ms)的索引。 */
+  _backgroundCommandStartedAtByPid?: Map<string, number>;
   /** Runtime-only：本会话内由系统终结的后台进程事实；会话关闭即丢弃，不持久化。 */
   _backgroundCommandTombstones?: Map<string, BackgroundCommandTombstone>;
   /** Runtime-only completion promise for the active turn's finally block. Not persisted. */
@@ -327,6 +329,7 @@ export function createSession(
     _abortController: null,
     _activeConfirmedToolCallId: null,
     _backgroundCommandOwnerByPid: new Map(),
+    _backgroundCommandStartedAtByPid: new Map(),
     _backgroundCommandTombstones: new Map(),
     _activeTurnPromise: null,
     _turnOwner: null,

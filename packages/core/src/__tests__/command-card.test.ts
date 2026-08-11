@@ -725,6 +725,7 @@ describe("沙箱命令终端卡", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("process-output-activity");
     const activityAt = Date.now();
+    const processStartedAt = activityAt - 90_000;
     const frames = await collect(processAgentStream(
       streamOf(
         {
@@ -733,6 +734,21 @@ describe("沙箱命令终端卡", () => {
             toolName: "mastra_workspace_get_process_output",
             toolCallId: "read-activity",
             args: { pid: "4242", wait: true },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "read-activity",
+            output: {
+              type: "data-sandbox-process-started",
+              data: {
+                pid: "4242",
+                processStartedAt,
+                toolCallId: "read-activity",
+              },
+            },
           },
         },
         {
@@ -765,7 +781,7 @@ describe("沙箱命令终端卡", () => {
     expect(activitySpec?.status.kind).toBe("running");
     expect(activitySpec?.result).toEqual({
       kind: "genericText",
-      data: JSON.stringify({ outputActivityAt: activityAt }),
+      data: JSON.stringify({ processStartedAt, outputActivityAt: activityAt }),
     });
     expect(findSpec(state, "read-activity")?.result).toEqual(activitySpec?.result);
   });

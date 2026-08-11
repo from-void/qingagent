@@ -43,11 +43,13 @@ function createHarness(
   handle: FakeProcessHandle | undefined,
   waitMaxMs = 20,
   state?: SessionState,
+  getProcessStartedAt?: (pid: string) => number | null,
 ) {
   const workspace = workspaceWithHandle(handle);
   const tool = createBoundedGetProcessOutputTool({
     getWorkspace: async () => workspace,
     waitMaxMs,
+    getProcessStartedAt,
     getMissingProcessNotice: state
       ? (pid) => {
           const tombstone = backgroundCommandTombstone(state, pid);
@@ -84,6 +86,33 @@ afterEach(() => {
 });
 
 describe("bounded get_process_output", () => {
+  it("开始读取输出时下发后台进程的服务端启动时刻", async () => {
+    const processStartedAt = Date.parse("2026-08-11T01:02:03.000Z");
+    const custom = vi.fn(async () => {});
+    const handle = neverSettlingHandle();
+    const { tool } = createHarness(
+      handle,
+      20,
+      undefined,
+      (pid) => pid === handle.pid ? processStartedAt : null,
+    );
+
+    await executeTool(tool, { pid: handle.pid }, {
+      ...toolInvocationOptions,
+      agent: { toolCallId: "process-started-at-read" },
+      writer: { custom, write: vi.fn() },
+    } as never);
+
+    expect(custom).toHaveBeenCalledWith({
+      type: "data-sandbox-process-started",
+      data: {
+        pid: handle.pid,
+        processStartedAt,
+        toolCallId: "process-started-at-read",
+      },
+    });
+  });
+
   it("无授权信号时 wait:true 仍等满上限，再返回当前输出且不杀进程", async () => {
     vi.useFakeTimers();
     const handle = neverSettlingHandle("正在下载 https://example.test/archive.zip\n");

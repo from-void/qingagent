@@ -18,8 +18,10 @@ import {
 import { createGatedExecuteCommandTool } from "../workspace/gatedExecuteCommandTool.js";
 import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
 import {
+  backgroundCommandStartedAt,
   backgroundCommandTombstone,
   backgroundCommandTombstoneNotice,
+  forgetBackgroundCommandStartedAt,
   recordBackgroundCommandTombstone,
   registerBackgroundCommandOwner,
 } from "./backgroundCommand.js";
@@ -1591,19 +1593,23 @@ export function createSessionScopedTools(
         state,
         getWorkspace: getWorkspace!,
         retainWorkspace: workspaceOptions.retainWorkspace,
-        onBackgroundStarted: (pid, ownerToolCallId) => {
-          registerBackgroundCommandOwner(state, pid, ownerToolCallId);
+        onBackgroundStarted: (pid, ownerToolCallId, startedAt) => {
+          registerBackgroundCommandOwner(state, pid, ownerToolCallId, startedAt);
         },
         onBackgroundExited: (pid, result) => {
           if (result.timedOut) {
             recordBackgroundCommandTombstone(state, pid, "runtimeLimit");
           }
         },
+        onBackgroundFinished: (pid) => {
+          forgetBackgroundCommandStartedAt(state, pid);
+        },
       })
     : null;
   const getProcessOutput = state
     ? createBoundedGetProcessOutputTool({
         getWorkspace: getWorkspace!,
+        getProcessStartedAt: (pid) => backgroundCommandStartedAt(state, pid),
         getMissingProcessNotice: (pid) => {
           const tombstone = backgroundCommandTombstone(state, pid);
           return tombstone ? backgroundCommandTombstoneNotice(tombstone) : null;

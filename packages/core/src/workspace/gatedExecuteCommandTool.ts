@@ -82,9 +82,11 @@ export interface GatedExecuteCommandToolOptions {
   /** 后台进程需把 Workspace 租约延长到自身退出。 */
   retainWorkspace?: () => () => void;
   /** 进程成功交付后立即登记到会话现有 PID→owner 索引，不能等 turn 结果帧。 */
-  onBackgroundStarted?: (pid: string, ownerToolCallId: string) => void;
+  onBackgroundStarted?: (pid: string, ownerToolCallId: string, startedAt: number) => void;
   /** 后台 handle 的权威 wait 结果，用于会话事实记账。 */
   onBackgroundExited?: (pid: string, result: Awaited<ReturnType<ProcessHandle["wait"]>>) => void;
+  /** 无论 wait 成功还是异常，后台进程生命周期结束后清理运行时索引。 */
+  onBackgroundFinished?: (pid: string) => void;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
   /** 测试可注入临时产品 CLI 目录；生产默认使用 SANDBOX_BIN_DIR。 */
@@ -472,6 +474,7 @@ export function createGatedExecuteCommandTool({
   retainWorkspace,
   onBackgroundStarted,
   onBackgroundExited,
+  onBackgroundFinished,
   resolveCredentialEnv = resolveManagedCredentialEnv,
   sandboxBinDir,
 }: GatedExecuteCommandToolOptions) {
@@ -638,6 +641,7 @@ export function createGatedExecuteCommandTool({
           };
           abortSignal?.addEventListener("abort", markSpawnAborted);
           let handle: ProcessHandle;
+          const processStartedAt = Date.now();
           try {
             handle = await sandbox.processes!.spawn(input.command, {
               cwd,
@@ -662,16 +666,18 @@ export function createGatedExecuteCommandTool({
           // 检查与移除监听之间没有 await，abort 不能插入这段同步临界区。
           abortSignal?.removeEventListener("abort", markSpawnAborted);
           if (toolCallId) {
-            onBackgroundStarted?.(String(handle.pid), toolCallId);
+            onBackgroundStarted?.(String(handle.pid), toolCallId, processStartedAt);
           }
           // wait 可被轮询工具重复调用；这里只负责在真实退出后释放后台活动引用。
           void handle.wait().then(
             (result) => {
               onBackgroundExited?.(String(handle.pid), result);
-              releaseWorkspace?.();
             },
-            () => releaseWorkspace?.(),
-          );
+            () => undefined,
+          ).finally(() => {
+            onBackgroundFinished?.(String(handle.pid));
+            releaseWorkspace?.();
+          });
           const clampedLabel = timeoutPolicy.clamped ? "，已按后台上限钳制" : "";
           return commandResult({
             success: true,

@@ -25,9 +25,13 @@ export function registerBackgroundCommandOwner(
   state: SessionState,
   pid: string,
   ownerToolCallId: string,
+  startedAt?: number,
 ): void {
   if (!pid || !ownerToolCallId) return;
   (state._backgroundCommandOwnerByPid ??= new Map()).set(pid, ownerToolCallId);
+  if (typeof startedAt === "number" && Number.isFinite(startedAt)) {
+    (state._backgroundCommandStartedAtByPid ??= new Map()).set(pid, startedAt);
+  }
   state._backgroundCommandTombstones?.delete(pid);
 }
 
@@ -36,6 +40,21 @@ export function forgetBackgroundCommandOwner(
   pid: string,
 ): void {
   state._backgroundCommandOwnerByPid?.delete(pid);
+  state._backgroundCommandStartedAtByPid?.delete(pid);
+}
+
+export function forgetBackgroundCommandStartedAt(
+  state: SessionState,
+  pid: string,
+): void {
+  state._backgroundCommandStartedAtByPid?.delete(pid);
+}
+
+export function backgroundCommandStartedAt(
+  state: SessionState,
+  pid: string,
+): number | null {
+  return state._backgroundCommandStartedAtByPid?.get(pid) ?? null;
 }
 
 export function recordBackgroundCommandTombstone(

@@ -54,26 +54,28 @@ function Countdown({ seconds }: { seconds: number }) {
   return <>{left > 0 ? `${left} 秒后发起检查` : "正在检查…"}</>;
 }
 
-const OUTPUT_ACTIVITY_VISIBLE_MS = 5_000;
-
-function outputActivityAt(result: ToolCallResult | null): number | null {
+function processStartedAt(result: ToolCallResult | null): number | null {
   const parsed = parseGenericResultObject(result);
-  const value = parsed?.outputActivityAt;
+  const value = parsed?.processStartedAt;
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/** 等待态只做稳定的秒数更新；stdout 活动提示保留 5 秒，不做闪烁动画。 */
-function ProcessWaitMeta({ activityAt }: { activityAt: number | null }) {
-  const startedAtRef = useRef(Date.now());
+function formatProcessRuntime(elapsedSec: number): string {
+  if (elapsedSec < 60) return `已运行 ${elapsedSec} 秒`;
+  return `已运行 ${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒`;
+}
+
+/** 服务端启动时刻是权威基准；本地挂载时刻只兼容缺字段的老会话回放。 */
+function ProcessWaitMeta({ processStartedAt }: { processStartedAt: number | null }) {
+  const fallbackStartedAtRef = useRef(Date.now());
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(id);
   }, []);
-  const elapsedSec = Math.max(0, Math.floor((now - startedAtRef.current) / 1_000));
-  const hasRecentOutput =
-    activityAt !== null && now >= activityAt && now - activityAt < OUTPUT_ACTIVITY_VISIBLE_MS;
-  return <>{hasRecentOutput ? "仍在输出" : "等待输出"} · 已等待 {elapsedSec} 秒</>;
+  const startedAt = processStartedAt ?? fallbackStartedAtRef.current;
+  const elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1_000));
+  return <>{processStartedAt === null ? `已等待 ${elapsedSec} 秒` : formatProcessRuntime(elapsedSec)}</>;
 }
 
 // —— 工具中文名(= 生产显示名 + renames + 原未映射 3 个) ——
@@ -370,8 +372,7 @@ export function UToolBar({
   const semanticFailed =
     !pending && !running && !failed && !abortedStatus &&
     isToolResultFailure(spec.result, spec.name);
-  // 读取后台进程输出 = 有界等待:左侧保留本次检查倒计时，右侧持续显示已等待时长；
-  // stdout/stderr 流动时短暂切成「仍在输出」，不使用闪烁动画。
+  // 读取后台进程输出 = 有界等待:左侧保留本次检查倒计时，右侧显示进程累计运行时长。
   const isProcOutTool = spec.name === "mastra_workspace_get_process_output";
   const isProcOut = running && isProcOutTool;
   const aborted =
@@ -396,7 +397,7 @@ export function UToolBar({
       (spec.result.data.includes("进程仍在运行") && spec.result.data.includes("未退出"))
     );
   const runningText = isProcOut
-    ? <ProcessWaitMeta activityAt={outputActivityAt(spec.result)} />
+    ? <ProcessWaitMeta processStartedAt={processStartedAt(spec.result)} />
     : "处理中";
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。

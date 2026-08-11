@@ -90,6 +90,46 @@ export async function* handleToolOutputEvent(
         ? outputData.toolCallId
         : null;
 
+  if (output?.type === "data-sandbox-process-started" && toolCallId) {
+    const startedAt = outputData?.processStartedAt;
+    if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) return true;
+    const owner = state.chatHistory.find((message) =>
+      message.parts.some(
+        (part) => part.kind === "toolCall" && part.data.id === toolCallId,
+      ),
+    );
+    const part = owner?.parts.find(
+      (candidate) => candidate.kind === "toolCall" && candidate.data.id === toolCallId,
+    );
+    if (
+      owner &&
+      part?.kind === "toolCall" &&
+      part.data.name === "mastra_workspace_get_process_output" &&
+      part.data.status.kind === "running"
+    ) {
+      let previous: Record<string, unknown> = {};
+      if (part.data.result?.kind === "genericText") {
+        try {
+          const parsed = JSON.parse(part.data.result.data) as unknown;
+          if (isRecord(parsed)) previous = parsed;
+        } catch {
+          // running 卡的普通结果不属于过程元数据，直接覆盖即可。
+        }
+      }
+      const spec: ToolCallSpec = {
+        ...part.data,
+        result: {
+          kind: "genericText",
+          data: JSON.stringify({ ...previous, processStartedAt: startedAt }),
+        },
+      };
+      updateToolCallInChatHistory(state, owner.id, toolCallId, spec);
+      yield toolCallUpdated(owner.id, toolCallId, spec);
+      outcome.producedVisibleFrame = true;
+    }
+    return true;
+  }
+
   if (
     (output?.type === "data-sandbox-stdout" || output?.type === "data-sandbox-stderr") &&
     toolCallId
@@ -113,10 +153,16 @@ export async function* handleToolOutputEvent(
           ? outputData.timestamp
           : Date.now();
       let previousAt = 0;
+      let previous: Record<string, unknown> = {};
       if (part.data.result?.kind === "genericText") {
         try {
-          const previous = JSON.parse(part.data.result.data) as { outputActivityAt?: unknown };
-          if (typeof previous.outputActivityAt === "number") previousAt = previous.outputActivityAt;
+          const parsed = JSON.parse(part.data.result.data) as unknown;
+          if (isRecord(parsed)) {
+            previous = parsed;
+            if (typeof parsed.outputActivityAt === "number") {
+              previousAt = parsed.outputActivityAt;
+            }
+          }
         } catch {
           // running 卡的普通结果不属于活动标记，直接覆盖即可。
         }
@@ -127,7 +173,7 @@ export async function* handleToolOutputEvent(
           ...part.data,
           result: {
             kind: "genericText",
-            data: JSON.stringify({ outputActivityAt: timestamp }),
+            data: JSON.stringify({ ...previous, outputActivityAt: timestamp }),
           },
         };
         updateToolCallInChatHistory(state, owner.id, toolCallId, spec);

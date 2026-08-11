@@ -100,6 +100,7 @@ export const PROCESS_WAIT_MAX_MS = normalizeWaitMaxMs(
 
 export interface BoundedGetProcessOutputToolOptions {
   getWorkspace: () => Promise<Workspace>;
+  getProcessStartedAt?: (pid: string) => number | null;
   getMissingProcessNotice?: (pid: string) => string | null;
   /** 仅供单测注入较短等待上限；生产使用 PROCESS_WAIT_MAX_MS。 */
   waitMaxMs?: number;
@@ -214,6 +215,7 @@ async function safeCustom(
 
 export function createBoundedGetProcessOutputTool({
   getWorkspace,
+  getProcessStartedAt,
   getMissingProcessNotice,
   waitMaxMs: configuredWaitMaxMs = PROCESS_WAIT_MAX_MS,
 }: BoundedGetProcessOutputToolOptions) {
@@ -251,6 +253,17 @@ Use this after starting a background command with execute_command (background: t
 
         const writer = context?.writer as SandboxWriter | undefined;
         const toolCallId = context?.agent?.toolCallId;
+        const processStartedAt = getProcessStartedAt?.(pid);
+        if (
+          typeof processStartedAt === "number" &&
+          Number.isFinite(processStartedAt) &&
+          toolCallId
+        ) {
+          await safeCustom(writer, {
+            type: "data-sandbox-process-started",
+            data: { pid, processStartedAt, toolCallId },
+          });
+        }
         if (handle.command) {
           await writer?.custom({
             type: "data-sandbox-command",

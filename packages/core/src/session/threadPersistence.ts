@@ -2026,6 +2026,7 @@ export async function loadSessionFromThread(
     _abortController: null,
     _activeConfirmedToolCallId: null,
     _backgroundCommandOwnerByPid: new Map(),
+    _backgroundCommandStartedAtByPid: new Map(),
     _backgroundCommandTombstones: new Map(),
     _activeTurnPromise: null,
     _turnOwner: null,

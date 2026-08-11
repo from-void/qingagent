@@ -43,6 +43,32 @@
   }
  ],
  "derivatives": [],
+ "sessionResources": [
+  {
+   "session_id": "bab094a9-15ac-4ce7-91c7-fcbc80493970",
+   "resource_id": "210337b0-376e-42fd-bd0f-baf688583fa1",
+   "kind": "generated",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:13:39.422Z",
+   "updated_at": "2026-08-11T18:13:39.422Z"
+  },
+  {
+   "session_id": "bab094a9-15ac-4ce7-91c7-fcbc80493970",
+   "resource_id": "2b400c69-6a39-4a6e-8097-a73f27f01b25",
+   "kind": "generated",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:12:02.544Z",
+   "updated_at": "2026-08-11T18:12:02.544Z"
+  },
+  {
+   "session_id": "bab094a9-15ac-4ce7-91c7-fcbc80493970",
+   "resource_id": "43068e2f-160e-48a3-b097-692626261264",
+   "kind": "generated",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:14:45.336Z",
+   "updated_at": "2026-08-11T18:14:45.336Z"
+  }
+ ],
  "assetFileIds": [
   "210337b0-376e-42fd-bd0f-baf688583fa1",
   "2b400c69-6a39-4a6e-8097-a73f27f01b25",

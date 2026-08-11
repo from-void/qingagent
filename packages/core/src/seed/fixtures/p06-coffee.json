@@ -43,6 +43,16 @@
   }
  ],
  "derivatives": [],
+ "sessionResources": [
+  {
+   "session_id": "f880c600-9f15-461f-931e-8868f5c6fc0f",
+   "resource_id": "53b27c2a-2b73-4a46-8419-78d5bb4a37f9",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-11T18:18:15.738Z",
+   "updated_at": "2026-08-11T18:18:15.738Z"
+  }
+ ],
  "assetFileIds": [
   "53b27c2a-2b73-4a46-8419-78d5bb4a37f9"
  ]

@@ -314,6 +314,7 @@ export {
   __browserFolderBridgeStatsForTest,
   __resetBrowserFolderBridgeForTest,
   buildSandboxEnv,
+  buildUserIdentityEnv,
   getBrowserFolderBridgeClientFolderIds,
   getBrowserFolderBridgePendingRequest,
   invalidateSessionWorkspace,

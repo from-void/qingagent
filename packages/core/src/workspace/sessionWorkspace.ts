@@ -4,7 +4,8 @@
 // - 每个会话(=每篇文档)一个 Workspace:私有读写目录 + 技能目录只读共享;
 //   命令执行(execute_command)工作目录锁定在会话目录,会话间互不可见。
 // - 隔离后端按平台自适应:Linux→bwrap(已安装才用)/macOS→seatbelt/Windows→none。
-//   none 时仍有 workingDirectory+最小 env+超时三层兜底。
+//   none 时仍有 workingDirectory+超时兜底；仅「不再询问」档按用户本人环境执行，
+//   非 bypass 的显式未隔离部署仍维持最小 env。
 // - 三端共用:desktop(Electron)嵌的是同一个 Hono server,本模块一处生效。
 // - 失败兜底:任何装配异常回退到全局技能 Workspace(qingagentWorkspace),
 //   保证沙箱永远不把主链拖死。
@@ -110,10 +111,11 @@ export function __resetIsolationCacheForTest(): void {
 /**
  * 本次装配真正使用的隔离形态。
  *
- * 处于「不再询问」档时(260811 后也是缺省档),命令按无隔离装配、以用户本人身份执行——
- * 这正是这个开关存在的原因:隔离层会把用户本机已有的登录态(钥匙串/凭据文件)挡在
- * 外面,第三方命令行工具因此用不了。resolveIsolation() 保持"平台探测"的纯粹语义,
- * 诊断面板等只关心宿主能力的调用方继续读它。
+ * 处于「不再询问」档时(260811 后也是缺省档),命令按无隔离装配、以用户本人身份
+ * (含完整用户环境)直接执行——这正是这个开关存在的原因:隔离层与最小 env 都会挡住
+ * 用户本机已有的登录态；CODEX_HOME 透传只修了一个路径指针个案，按档位选择 env 才是
+ * 产品化根治。「每次询问」则是防御档，继续使用真隔离 + 最小 env。
+ * resolveIsolation() 保持"平台探测"的纯粹语义,诊断面板等只关心宿主能力的调用方继续读它。
  */
 export function resolveEffectiveIsolation(): ResolvedIsolation {
   return isBypassEnabled() ? "none" : resolveIsolation();
@@ -180,6 +182,11 @@ function shouldBypassProxyForFeishu(): boolean {
   return process.env.QINGAGENT_SANDBOX_FEISHU_NO_PROXY !== "0";
 }
 
+// 用户身份环境以宿主 process.env 为底，但产品进程注入的内部状态不属于用户身份，
+// 也不能随着任意命令外泄。前缀规则覆盖所有内部开关/token；数据库连接串单列拒绝。
+const USER_IDENTITY_ENV_DENY_PREFIXES = ["QINGAGENT_"];
+const USER_IDENTITY_ENV_DENYLIST = new Set(["DATABASE_URL"]);
+
 /** 产品自带 Node 运行时在沙箱 PATH 上的站位。 */
 export type NodeRuntimePathPlacement =
   /** 排在宿主 PATH **之前**:沙箱内的 `node` 一律用产品自带运行时。 */
@@ -210,6 +217,44 @@ export function resolveNodeRuntimePathPlacement(): NodeRuntimePathPlacement {
   return resolveCredentialWallMode() === "wide" ? "host-first" : "runtime-first";
 }
 
+/**
+ * 给命令环境装配产品 CLI 与 Node 运行时 PATH。
+ * 产品 CLI 始终优先；Node 运行时按安全档位/显式配置站在宿主 PATH 前或后。
+ */
+function applyProductPath(env: NodeJS.ProcessEnv): void {
+  const sep = process.platform === "win32" ? ";" : ":";
+  const basePath = env.PATH ?? env.Path ?? "";
+  const runtimeFirst = resolveNodeRuntimePathPlacement() === "runtime-first";
+  const productPath = [
+    SANDBOX_BIN_DIR,
+    ...(runtimeFirst ? [SANDBOX_NODE_RUNTIME_DIR] : []),
+    ...(basePath ? [basePath] : []),
+    ...(runtimeFirst ? [] : [SANDBOX_NODE_RUNTIME_DIR]),
+  ].join(sep);
+  env.PATH = productPath;
+  // Windows 的环境变量名大小写不敏感，但各 CLI/运行时读取习惯不同，保持两种写法同步。
+  if (process.platform === "win32") env.Path = productPath;
+}
+
+/** 有代理时把飞书官方域名并入 NO_PROXY，并同步大小写写法。 */
+function mergeFeishuNoProxy(env: NodeJS.ProcessEnv): void {
+  const hasProxy = !!(
+    env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY ||
+    env.https_proxy || env.http_proxy || env.all_proxy
+  );
+  if (!hasProxy || !shouldBypassProxyForFeishu()) return;
+
+  const existing = [env.NO_PROXY, env.no_proxy]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(",")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const merged = Array.from(new Set([...existing, ...FEISHU_NO_PROXY_SUFFIXES])).join(",");
+  env.NO_PROXY = merged;
+  env.no_proxy = merged;
+}
+
 /** 沙箱进程 env:最小化——只带必需系统变量(按平台)+代理,绝不继承宿主全量环境或托管凭据。
  *  PATH 前置产品级 SANDBOX_BIN_DIR,让沙箱优先用产品自带/锁版本的 CLI(lark-cli 等);
  *  产品自带 Node 运行时单独成目录,按 resolveNodeRuntimePathPlacement 决定排在宿主前还是后。 */
@@ -219,40 +264,36 @@ export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
   for (const key of [...systemKeys, ...USER_CLI_ENV_KEYS, ...PROXY_ENV_KEYS]) {
     if (process.env[key]) env[key] = process.env[key];
   }
-  // 产品级 CLI 目录前置进 PATH(Windows 用 ; 分隔,其余用 :)
-  const sep = process.platform === "win32" ? ";" : ":";
-  const basePath = env.PATH ?? env.Path ?? "";
-  // Node 运行时目录单独站位:宿主优先档放到 PATH 末尾,只当"宿主没有 Node"时的兜底,
-  // 绝不劫持用户自己的 Node CLI;产品优先档维持在最前(与 bin 目录同侧)。
-  const runtimeFirst = resolveNodeRuntimePathPlacement() === "runtime-first";
-  const prefixedPath = [
-    SANDBOX_BIN_DIR,
-    ...(runtimeFirst ? [SANDBOX_NODE_RUNTIME_DIR] : []),
-    ...(basePath ? [basePath] : []),
-    ...(runtimeFirst ? [] : [SANDBOX_NODE_RUNTIME_DIR]),
-  ].join(sep);
-  env.PATH = prefixedPath;
-  if (process.platform === "win32") env.Path = prefixedPath;
+  applyProductPath(env);
   if (effectiveHome && process.platform !== "win32") env.HOME = effectiveHome;
   // 包管理器缓存改写进沙箱可写区,避免 npx/npm 去写只读的 ~/.npm 而被写墙打死。
   Object.assign(env, packageManagerCacheEnv());
   // 飞书域名并入 NO_PROXY:lark-cli 走代理连飞书会被不稳定的翻墙上游间歇 reset(实测),直连飞书稳定。
   // 仅在确实设了代理时才需要,可被 QINGAGENT_SANDBOX_FEISHU_NO_PROXY=0 关闭(给"飞书必须经代理"的环境)。
-  const hasProxy = !!(
-    env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY ||
-    env.https_proxy || env.http_proxy || env.all_proxy
-  );
-  if (hasProxy && shouldBypassProxyForFeishu()) {
-    const existing = [env.NO_PROXY, env.no_proxy]
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .join(",")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const merged = Array.from(new Set([...existing, ...FEISHU_NO_PROXY_SUFFIXES])).join(",");
-    env.NO_PROXY = merged;
-    env.no_proxy = merged; // 大小写都给,Go 与各工具识别习惯不一
+  mergeFeishuNoProxy(env);
+  return env;
+}
+
+/**
+ * 「不再询问」+ none 档的命令环境：按用户本人身份完整继承宿主 shell 环境。
+ *
+ * 260811 实证表明 CODEX_HOME 只是个案；API key、DBus/keyring 地址、自定义 HOME 指针、
+ * 用户追加 PATH 都属于用户已有登录态，不能靠逐项白名单补洞。这里只剔除产品自身注入的
+ * QINGAGENT_* 内部态与 DATABASE_URL，再叠加产品 CLI/Node PATH 和既有飞书 NO_PROXY 规则。
+ * 该档没有写墙，包管理器应继续使用用户自己的缓存，因此不调用 packageManagerCacheEnv()。
+ */
+export function buildUserIdentityEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      USER_IDENTITY_ENV_DENYLIST.has(key) ||
+      USER_IDENTITY_ENV_DENY_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      delete env[key];
+    }
   }
+  applyProductPath(env);
+  mergeFeishuNoProxy(env);
   return env;
 }
 
@@ -308,7 +349,7 @@ export function shouldInjectCredentials(): boolean {
 
 /** isolation=none(无文件系统隔离,如 Windows/未装 bwrap)时是否仍暴露命令执行。
  *  默认关闭,要求服务端形态必须有真隔离才暴露命令;两条补回通道:
- *  ①全局处于「不再询问」——此时命令本就以用户本人身份直接执行,
+ *  ①全局处于「不再询问」——此时命令本就以用户本人身份(含完整用户环境)直接执行,
  *    再不暴露 execute_command 等于把这个开关做成空转;
  *  ②部署方显式设 QINGAGENT_ALLOW_UNISOLATED_COMMANDS=1(桌面主进程用它补回本地命令能力)。 */
 export function allowUnisolatedCommands(): boolean {
@@ -842,7 +883,11 @@ async function buildSessionWorkspace(
                 SANDBOX_PACKAGE_CACHE_DIR,
               ],
             },
-            env: buildSandboxEnv(),
+            // 260811 档位语义：仅「不再询问」造成的 none 才按用户本人身份带完整环境；
+            // 非 bypass 的 none（部署方显式放行）仍是防御边界，继续使用最小白名单。
+            env: isolation === "none" && isBypassEnabled()
+              ? buildUserIdentityEnv()
+              : buildSandboxEnv(),
             timeout: SANDBOX_TIMEOUT_MS,
           });
     } catch (error) {

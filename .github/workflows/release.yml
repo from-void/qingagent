@@ -68,6 +68,12 @@ jobs:
       - name: verify release tag
         run: ./scripts/release.sh verify-tag "$RELEASE_TAG"
 
+      # electron-builder 只打包不编译:dist/main 必须先由 build:desktop 产出,
+      # 否则 afterPack 资源校验直接报「桌面主进程 bundle 缺失」。此步曾在改上传
+      # 方式时被误删,导致 v0.1.4 首次构建失败——不要再删。
+      - name: build desktop
+        run: pnpm build:desktop
+
       - name: publish macOS artifacts (signed + notarized)
         if: matrix.name == 'mac'
         env:

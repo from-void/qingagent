@@ -136,6 +136,8 @@ jobs:
     name: release-windows
     runs-on: ubuntu-latest
     needs: build
+    # 三平台独立发布:mac 公证挂掉不该拖累 windows 包(release 对象由下方步骤自行确保)。
+    if: ${{ !cancelled() }}
     defaults:
       run:
         shell: bash
@@ -166,6 +168,15 @@ jobs:
 
       - name: verify release tag
         run: ./scripts/release.sh verify-tag "$RELEASE_TAG"
+
+      # windows 现在不再等 mac/linux 全成,release 对象自行幂等确保(与 build job 同款)。
+      - name: ensure release exists
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo from-void/qingagent \
+              --title "青简 $RELEASE_TAG" --generate-notes || \
+              gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null
+          fi
 
       - name: build windows installer (wine cross-build)
         run: bash apps/desktop/build-win-installer.sh "${RELEASE_TAG#v}"

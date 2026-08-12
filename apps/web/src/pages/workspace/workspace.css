@@ -923,15 +923,23 @@
   }
   @keyframes au-pulse{0%,100%{opacity:1}50%{opacity:.5}}
   #view-workspace .au-x{
-    width:22px;height:22px;border:0;border-radius:0;background:transparent;cursor:pointer;
-    color:var(--ink-3);font-size:18px;line-height:1;
+    width:22px;height:22px;box-sizing:border-box;padding:0;border:0;border-radius:0;background:transparent;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3);font:18px/1 var(--font-zh-serif);
   }
   #view-workspace .au-x:hover{background:var(--bg-hover);color:var(--ink-1)}
-  #view-workspace .au-x:focus-visible{outline:1px solid var(--mark);outline-offset:2px}
+  #view-workspace .au-x:focus-visible{outline:1px solid var(--mark);outline-offset:-1px}
+  #view-workspace .auq-tabs-wrap{position:relative;min-width:0}
   #view-workspace .auq-tabs{
     display:flex;gap:6px;padding:6px 15px 9px;overflow-x:auto;scrollbar-width:none;
   }
   #view-workspace .auq-tabs::-webkit-scrollbar{display:none}
+  #view-workspace .auq-tabs-edge{
+    position:absolute;top:0;bottom:0;width:24px;z-index:2;pointer-events:none;
+    opacity:0;transition:opacity .2s ease;
+  }
+  #view-workspace .auq-tabs-edge[data-show="true"]{opacity:1}
+  #view-workspace .auq-tabs-edge-left{left:0;background:linear-gradient(90deg,var(--bg-canvas),transparent)}
+  #view-workspace .auq-tabs-edge-right{right:0;background:linear-gradient(90deg,transparent,var(--bg-canvas))}
   #view-workspace .auq-tab{
     flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:4px 9px;
     border:1px solid var(--line-1);border-radius:0;background:transparent;color:var(--ink-3);

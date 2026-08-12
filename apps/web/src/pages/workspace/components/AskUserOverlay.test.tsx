@@ -142,7 +142,7 @@ describe("AskUserOverlay", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("打开后聚焦浮层内部，卸载时恢复原焦点", async () => {
+  it("打开后聚焦当前题首个选项而非关闭按钮，卸载时恢复原焦点", async () => {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.textContent = "打开问卷";
@@ -150,7 +150,8 @@ describe("AskUserOverlay", () => {
     trigger.focus();
 
     await renderOverlay(focusSpec);
-    expect(document.activeElement).toBe(host?.querySelector(".au-x"));
+    expect(document.activeElement).toBe(host?.querySelector('input[type="radio"]'));
+    expect(document.activeElement).not.toBe(host?.querySelector(".au-x"));
 
     act(() => {
       root?.unmount();
@@ -158,6 +159,16 @@ describe("AskUserOverlay", () => {
     });
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
+  });
+
+  it("当前题没有选项时初始聚焦自定义输入框", async () => {
+    await renderOverlay({
+      ...navigationSpec,
+      id: "ask-text-focus",
+      questions: [navigationSpec.questions[2]!],
+    });
+
+    expect(document.activeElement).toBe(host?.querySelector(".au-text"));
   });
 
   it("单题时不渲染问题导航、题号前缀与进度计数", async () => {
@@ -234,6 +245,108 @@ describe("AskUserOverlay", () => {
     expect(document.activeElement).toBe(host?.querySelectorAll(".auq-tab")[1]);
   });
 
+  it("浮层级键盘支持上下循环、数字直选与 Enter 选中", async () => {
+    await renderOverlay(focusSpec);
+    const options = host!.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    const other = host!.querySelector<HTMLInputElement>(".au-other")!;
+
+    expect(document.activeElement).toBe(options[0]);
+    await keyDown(options[0]!, "ArrowDown");
+    expect(document.activeElement).toBe(options[1]);
+    await keyDown(options[1]!, "ArrowDown");
+    expect(document.activeElement).toBe(other);
+    await keyDown(other, "ArrowDown");
+    expect(document.activeElement).toBe(options[0]);
+    await keyDown(options[0]!, "ArrowUp");
+    expect(document.activeElement).toBe(other);
+
+    options[0]!.focus();
+    await keyDown(options[0]!, "2");
+    expect(options[1]?.checked).toBe(true);
+    options[0]!.focus();
+    await keyDown(options[0]!, "Enter");
+    expect(options[0]?.checked).toBe(true);
+  });
+
+  it("浮层级左右键切题，但文本输入框保留左右移动", async () => {
+    await renderOverlay(navigationSpec);
+    const firstOption = host!.querySelector<HTMLInputElement>('input[type="radio"]')!;
+
+    await keyDown(firstOption, "ArrowRight");
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("选择要点");
+    await keyDown(document.activeElement as HTMLElement, "ArrowLeft");
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("选择文风");
+
+    await click(host!.querySelectorAll<HTMLButtonElement>(".auq-tab")[2]!);
+    const textInput = host!.querySelector<HTMLInputElement>(".au-text")!;
+    textInput.focus();
+    await keyDown(textInput, "ArrowLeft");
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("还有什么");
+    expect(document.activeElement).toBe(textInput);
+  });
+
+  it("自定义输入 Enter 确认后前进，IME 组合期间 Enter 不前进", async () => {
+    const onSubmit = vi.fn();
+    await renderOverlay({
+      ...navigationSpec,
+      id: "ask-custom-enter",
+      questions: [navigationSpec.questions[0]!, navigationSpec.questions[2]!],
+    }, onSubmit);
+    const other = host!.querySelector<HTMLInputElement>(".au-other")!;
+    await inputText(other, "用自己的文风");
+
+    await keyDown(other, "Enter");
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("还有什么");
+
+    const textInput = host!.querySelector<HTMLInputElement>(".au-text")!;
+    await inputText(textInput, "补充内容");
+    await act(async () => {
+      textInput.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    });
+    await keyDown(textInput, "Enter");
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("还有什么");
+    expect(onSubmit).not.toHaveBeenCalled();
+    await act(async () => {
+      textInput.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+    await keyDown(textInput, "Enter");
+    expect(onSubmit).toHaveBeenCalledWith({
+      "q-style": { chosen: [], freeText: "用自己的文风" },
+      "q-note": { chosen: [], freeText: "补充内容" },
+    });
+  });
+
+  it("不再渲染上一题和下一题按钮", async () => {
+    await renderOverlay(navigationSpec);
+
+    const buttonLabels = Array.from(host!.querySelectorAll("button"), (button) => button.textContent?.trim());
+    expect(buttonLabels).not.toContain("上一题");
+    expect(buttonLabels).not.toContain("下一题");
+  });
+
+  it("Ctrl/Cmd+Enter 仅在所有题已答时提交", async () => {
+    const onSubmit = vi.fn();
+    await renderOverlay(navigationSpec, onSubmit);
+
+    await keyDown(host!.querySelector<HTMLInputElement>('input[type="radio"]')!, "Enter", { ctrlKey: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
+    await click(host!.querySelectorAll<HTMLButtonElement>(".auq-tab")[1]!);
+    await click(host!.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    await click(host!.querySelectorAll<HTMLButtonElement>(".auq-tab")[2]!);
+    const textInput = host!.querySelector<HTMLInputElement>(".au-text")!;
+    await inputText(textInput, "补充内容");
+    await keyDown(textInput, "Enter", { metaKey: true });
+
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(onSubmit).toHaveBeenCalledWith({
+      "q-style": { chosen: ["plain"], freeText: null },
+      "q-points": { chosen: ["data"], freeText: null },
+      "q-note": { chosen: [], freeText: "补充内容" },
+    });
+  });
+
   it("单选后 350ms 自动前进到下一道未答题", async () => {
     vi.useFakeTimers();
     await renderOverlay(navigationSpec);
@@ -245,6 +358,7 @@ describe("AskUserOverlay", () => {
     });
     expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("选择要点");
     expect(host?.querySelector('.auq-tab[data-answered="true"]')?.textContent).toContain("文风");
+    expect(document.activeElement).toBe(host?.querySelector('input[type="checkbox"]'));
   });
 
   it("自动前进等待期间手动跳题后不再抢回当前题", async () => {
@@ -419,7 +533,7 @@ describe("AskUserOverlay", () => {
     expect(inputs[0]?.tabIndex).toBe(0);
     expect(inputs[1]?.tabIndex).toBe(-1);
     inputs[0]!.focus();
-    await act(async () => inputs[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    await act(async () => inputs[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
     expect(document.activeElement).toBe(inputs[1]);
     expect(workspace.querySelector('[data-preview-key="sharp"]')?.getAttribute("data-active")).toBe("true");
     await act(async () => inputs[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
@@ -441,7 +555,7 @@ describe("AskUserOverlay", () => {
     inputs[0]!.focus();
     await act(async () => {
       inputs[0]!.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "ArrowRight",
+        key: "ArrowDown",
         bubbles: true,
       }));
     });
@@ -514,6 +628,31 @@ async function render(element: ReactNode, parent: HTMLElement = document.body): 
 async function click(element: HTMLElement): Promise<void> {
   await act(async () => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+async function keyDown(
+  element: HTMLElement,
+  key: string,
+  init: KeyboardEventInit = {},
+): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    }));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  });
+}
+
+async function inputText(input: HTMLInputElement, value: string): Promise<void> {
+  await act(async () => {
+    input.focus();
+    setNativeInputValue(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 

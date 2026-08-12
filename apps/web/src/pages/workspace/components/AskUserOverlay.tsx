@@ -85,6 +85,25 @@ function answersWithSubmitSemantics(
   return out;
 }
 
+function canSubmitAnswers(
+  questions: readonly AskUserQuestion[],
+  answers: AskUserAnswers,
+): boolean {
+  if (questions.length === 0) return false;
+  const requiredReady = questions
+    .filter(isRequiredQuestion)
+    .every((question) => hasMeaningfulAnswer(answers[question.id]));
+  return requiredReady && questions.some((question) => hasMeaningfulAnswer(answers[question.id]));
+}
+
+function isTextEditingElement(
+  target: EventTarget | null,
+): target is HTMLInputElement | HTMLTextAreaElement {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (!(target instanceof HTMLInputElement)) return false;
+  return ["email", "number", "password", "search", "tel", "text", "url"].includes(target.type);
+}
+
 export function AskUserOverlay({
   spec,
   onClose,
@@ -94,12 +113,15 @@ export function AskUserOverlay({
   const overlayRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
+  const focusEntryOnQuestionChangeRef = useRef(false);
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const specIdRef = useRef(spec.id);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<AskUserAnswers>(() => initialAnswers(spec.questions));
   const [customActive, setCustomActive] = useState<Record<string, boolean>>({});
   const [scrollEdge, setScrollEdge] = useState({ top: true, bottom: true });
+  const [tabScrollEdge, setTabScrollEdge] = useState({ left: true, right: true });
   const answersRef = useRef(answers);
   const customActiveRef = useRef(customActive);
   const currentIndexRef = useRef(currentIndex);
@@ -120,6 +142,26 @@ export function AskUserOverlay({
     setScrollEdge((prev) =>
       prev.top === top && prev.bottom === bottom ? prev : { top, bottom },
     );
+  };
+
+  const updateTabScrollEdge = () => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const left = el.scrollLeft <= 1;
+    const right = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+    setTabScrollEdge((previous) =>
+      previous.left === left && previous.right === right ? previous : { left, right },
+    );
+  };
+
+  const getQuestionFocusItems = () => Array.from(
+    overlayRef.current?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+      '[data-au-option="true"], [data-au-custom-input="true"]',
+    ) ?? [],
+  ).filter((element) => !element.disabled);
+
+  const focusQuestionEntry = () => {
+    getQuestionFocusItems()[0]?.focus({ preventScroll: true });
   };
 
   // 同一问卷流式追加问题时保留现有答案；只有 spec.id 变化才开启全新一轮。
@@ -161,11 +203,31 @@ export function AskUserOverlay({
   }, [currentIndex, spec.questions]);
 
   useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) {
+      setTabScrollEdge({ left: true, right: true });
+      return;
+    }
+    updateTabScrollEdge();
+    const activeTab = el.querySelectorAll<HTMLButtonElement>(".auq-tab")[currentIndex];
+    activeTab?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    const raf = requestAnimationFrame(updateTabScrollEdge);
+    if (typeof ResizeObserver === "undefined") {
+      return () => cancelAnimationFrame(raf);
+    }
+    const ro = new ResizeObserver(updateTabScrollEdge);
+    ro.observe(el);
+    for (const tab of Array.from(el.children)) ro.observe(tab);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [currentIndex, spec.questions]);
+
+  useEffect(() => {
     const previousActiveElement =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    overlayRef.current?.querySelector<HTMLElement>(
-      "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])",
-    )?.focus({ preventScroll: true });
+    focusQuestionEntry();
 
     return () => {
       if (previousActiveElement?.isConnected) {
@@ -188,14 +250,16 @@ export function AskUserOverlay({
   const answeredRequiredCount = requiredQuestions.filter((question) =>
     hasMeaningfulAnswer(answersForSubmit[question.id]),
   ).length;
-  const requiredReady = answeredRequiredCount === requiredQuestions.length;
-  const hasAnyMeaningfulAnswer = spec.questions.some((question) =>
-    hasMeaningfulAnswer(answersForSubmit[question.id]),
-  );
   const isLoading = spec.questions.length === 0;
-  const canSubmit = !isLoading && requiredReady && hasAnyMeaningfulAnswer;
+  const canSubmit = canSubmitAnswers(spec.questions, answersForSubmit);
   const currentQuestion = spec.questions[currentIndex] ?? null;
   const hasPreview = currentQuestion?.options.some((option) => Boolean(option.preview?.trim())) ?? false;
+
+  useLayoutEffect(() => {
+    if (!focusEntryOnQuestionChangeRef.current) return;
+    focusEntryOnQuestionChangeRef.current = false;
+    focusQuestionEntry();
+  }, [currentIndex]);
 
   useLayoutEffect(() => {
     if (!hasPreview) {
@@ -241,7 +305,10 @@ export function AskUserOverlay({
       const nextIndex = searchOrder.find((index) =>
         !hasMeaningfulAnswer(submitted[questions[index]!.id]),
       );
-      if (nextIndex !== undefined) setCurrentIndex(nextIndex);
+      if (nextIndex !== undefined) {
+        focusEntryOnQuestionChangeRef.current = true;
+        setCurrentIndex(nextIndex);
+      }
     }, 350);
   };
 
@@ -295,12 +362,20 @@ export function AskUserOverlay({
     }));
   };
 
-  const moveToQuestion = (index: number) => {
+  const moveToQuestion = (index: number, focusEntry = false) => {
     if (autoAdvanceTimerRef.current !== null) {
       window.clearTimeout(autoAdvanceTimerRef.current);
       autoAdvanceTimerRef.current = null;
     }
-    setCurrentIndex(Math.max(0, Math.min(index, spec.questions.length - 1)));
+    const nextIndex = Math.max(0, Math.min(index, spec.questions.length - 1));
+    if (focusEntry) {
+      if (nextIndex === currentIndexRef.current) {
+        focusQuestionEntry();
+      } else {
+        focusEntryOnQuestionChangeRef.current = true;
+      }
+    }
+    setCurrentIndex(nextIndex);
   };
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -321,6 +396,108 @@ export function AskUserOverlay({
     if (canSubmit) onSubmit(answersForSubmit);
   };
 
+  const submitCurrentAnswersIfComplete = (): boolean => {
+    const questions = questionsRef.current;
+    const submitted = answersWithSubmitSemantics(
+      questions,
+      answersRef.current,
+      customActiveRef.current,
+    );
+    const allAnswered = questions.length > 0
+      && questions.every((question) => hasMeaningfulAnswer(submitted[question.id]));
+    if (!allAnswered || !canSubmitAnswers(questions, submitted)) return false;
+    onSubmit(submitted);
+    return true;
+  };
+
+  const advanceFromCustomInput = (qid: string) => {
+    const questions = questionsRef.current;
+    const activeIndex = currentIndexRef.current;
+    if (questions[activeIndex]?.id !== qid) return;
+    if (activeIndex < questions.length - 1) {
+      moveToQuestion(activeIndex + 1, true);
+      return;
+    }
+    if (!submitCurrentAnswersIfComplete()) {
+      requestAnimationFrame(() => {
+        overlayRef.current?.querySelector<HTMLButtonElement>('[data-au-submit="true"]')
+          ?.focus({ preventScroll: true });
+      });
+    }
+  };
+
+  const handleOverlayKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return;
+    const target = event.target;
+    const isComposing = event.key === "Enter"
+      && (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229);
+    if (isComposing) return;
+
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      submitCurrentAnswersIfComplete();
+      return;
+    }
+
+    const textEditing = isTextEditingElement(target);
+    if (
+      event.key === "Enter"
+      && textEditing
+      && target.dataset.auCustomInput === "true"
+    ) {
+      if (target instanceof HTMLTextAreaElement && event.shiftKey) return;
+      if (target.value.trim().length === 0) return;
+      event.preventDefault();
+      const questionId = target.dataset.auQuestionId;
+      if (questionId) advanceFromCustomInput(questionId);
+      return;
+    }
+
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      const items = getQuestionFocusItems();
+      if (items.length === 0) return;
+      event.preventDefault();
+      const activeIndex = items.findIndex((item) => item === document.activeElement);
+      const delta = event.key === "ArrowUp" ? -1 : 1;
+      const nextIndex = activeIndex < 0
+        ? (delta < 0 ? items.length - 1 : 0)
+        : (activeIndex + delta + items.length) % items.length;
+      items[nextIndex]?.focus({ preventScroll: true });
+      return;
+    }
+
+    if (textEditing) return;
+
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      const delta = event.key === "ArrowLeft" ? -1 : 1;
+      moveToQuestion(currentIndexRef.current + delta, true);
+      return;
+    }
+
+    if (
+      /^[1-9]$/.test(event.key)
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+    ) {
+      const option = getQuestionFocusItems()
+        .filter((item) => item.dataset.auOption === "true")[Number(event.key) - 1];
+      if (!option) return;
+      event.preventDefault();
+      option.click();
+      option.focus({ preventScroll: true });
+      return;
+    }
+
+    if (event.key === "Enter" && target instanceof HTMLElement) {
+      const option = target.closest<HTMLElement>('[data-au-option="true"]');
+      if (!option) return;
+      event.preventDefault();
+      option.click();
+    }
+  };
+
   const overlay = (
     <div
       ref={overlayRef}
@@ -332,6 +509,13 @@ export function AskUserOverlay({
       role="dialog"
       aria-modal="true"
       aria-busy={isLoading ? true : undefined}
+      onKeyDown={handleOverlayKeyDown}
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={() => {
+        composingRef.current = false;
+      }}
     >
       <div className="au-head">
         <span className="au-title">
@@ -342,31 +526,41 @@ export function AskUserOverlay({
       </div>
 
       {!isLoading && spec.questions.length > 1 && (
-        <div className="auq-tabs" role="tablist" aria-label="问题导航" ref={tabsRef}>
-          {spec.questions.map((question, index) => {
-            const answered = hasMeaningfulAnswer(answersForSubmit[question.id]);
-            const current = index === currentIndex;
-            return (
-              <button
-                type="button"
-                role="tab"
-                className="auq-tab"
-                key={question.id}
-                aria-selected={current}
-                aria-controls={`auq-panel-${question.id}`}
-                aria-label={`${question.header?.trim() || `第 ${index + 1} 题`}${answered ? "，已回答" : ""}`}
-                tabIndex={current ? 0 : -1}
-                data-current={current ? "true" : "false"}
-                data-answered={answered ? "true" : "false"}
-                onClick={() => moveToQuestion(index)}
-                onKeyDown={(event) => handleTabKeyDown(event, index)}
-              >
-                <span className="auq-tab-index">{String(index + 1).padStart(2, "0")}</span>
-                {question.header?.trim() && <span>{question.header.trim()}</span>}
-                {answered && <span className="qa-check-icon"><CheckIcon size={10} /></span>}
-              </button>
-            );
-          })}
+        <div className="auq-tabs-wrap">
+          <div className="auq-tabs-edge auq-tabs-edge-left" data-show={!tabScrollEdge.left} aria-hidden="true" />
+          <div
+            className="auq-tabs"
+            role="tablist"
+            aria-label="问题导航"
+            ref={tabsRef}
+            onScroll={updateTabScrollEdge}
+          >
+            {spec.questions.map((question, index) => {
+              const answered = hasMeaningfulAnswer(answersForSubmit[question.id]);
+              const current = index === currentIndex;
+              return (
+                <button
+                  type="button"
+                  role="tab"
+                  className="auq-tab"
+                  key={question.id}
+                  aria-selected={current}
+                  aria-controls={`auq-panel-${question.id}`}
+                  aria-label={`${question.header?.trim() || `第 ${index + 1} 题`}${answered ? "，已回答" : ""}`}
+                  tabIndex={current ? 0 : -1}
+                  data-current={current ? "true" : "false"}
+                  data-answered={answered ? "true" : "false"}
+                  onClick={() => moveToQuestion(index)}
+                  onKeyDown={(event) => handleTabKeyDown(event, index)}
+                >
+                  <span className="auq-tab-index">{String(index + 1).padStart(2, "0")}</span>
+                  {question.header?.trim() && <span>{question.header.trim()}</span>}
+                  {answered && <span className="qa-check-icon"><CheckIcon size={10} /></span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="auq-tabs-edge auq-tabs-edge-right" data-show={!tabScrollEdge.right} aria-hidden="true" />
         </div>
       )}
 
@@ -414,6 +608,8 @@ export function AskUserOverlay({
                   <input
                     className="au-other"
                     type="text"
+                    data-au-custom-input="true"
+                    data-au-question-id={currentQuestion.id}
                     placeholder={otherPlaceholder(currentQuestion.kind.kind)}
                     value={answers[currentQuestion.id]?.freeText ?? ""}
                     onChange={(event) => setOtherText(currentQuestion.id, event.target.value)}
@@ -423,6 +619,8 @@ export function AskUserOverlay({
                 <input
                   className="au-text"
                   type="text"
+                  data-au-custom-input="true"
+                  data-au-question-id={currentQuestion.id}
                   placeholder={currentQuestion.placeholder ?? undefined}
                   value={answers[currentQuestion.id]?.freeText ?? ""}
                   onChange={(event) => setOtherText(currentQuestion.id, event.target.value)}
@@ -455,26 +653,6 @@ export function AskUserOverlay({
         <Button variant="ghost" size="small" onClick={onAbort}>手动输入</Button>
         <div className="au-actions">
           {!isLoading && spec.questions.length > 1 && (
-            <>
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={() => moveToQuestion(currentIndex - 1)}
-                disabled={currentIndex === 0}
-              >
-                上一题
-              </Button>
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={() => moveToQuestion(currentIndex + 1)}
-                disabled={currentIndex === spec.questions.length - 1}
-              >
-                下一题
-              </Button>
-            </>
-          )}
-          {!isLoading && spec.questions.length > 1 && (
             <span className="au-progress" aria-label={`已回答 ${answeredRequiredCount} 道必答题，共 ${requiredQuestions.length} 道`}>
               {answeredRequiredCount} / {requiredQuestions.length}
             </span>
@@ -483,6 +661,7 @@ export function AskUserOverlay({
             variant="primary"
             size="small"
             onClick={handleSubmit}
+            data-au-submit="true"
             disabled={!canSubmit}
             title={isLoading ? "问题生成中" : !canSubmit ? "请回答全部必答问题" : undefined}
           >
@@ -598,6 +777,8 @@ function ChoiceQuestionOtherField({
       <input
         className="au-other"
         type="text"
+        data-au-custom-input="true"
+        data-au-question-id={question.id}
         placeholder={otherPlaceholder(question.kind.kind)}
         value={answer.freeText ?? ""}
         data-active={customIsEffective ? "true" : "false"}
@@ -647,22 +828,11 @@ function OptionChip({
       <input
         type={isMulti ? "checkbox" : "radio"}
         name={qid}
+        data-au-option="true"
         checked={checked}
         onFocus={() => onPreviewFocus(option.value)}
         onBlur={() => onPreviewFocus(null)}
         tabIndex={previewFocused ? 0 : -1}
-        onKeyDown={(event) => {
-          if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) return;
-          event.preventDefault();
-          if (event.key === "Enter") {
-            event.currentTarget.click();
-            return;
-          }
-          const inputs = Array.from(event.currentTarget.closest(".auq-options, .au-opts")?.querySelectorAll<HTMLInputElement>('input[type="radio"], input[type="checkbox"]') ?? []);
-          const index = inputs.indexOf(event.currentTarget);
-          const delta = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1;
-          inputs[(index + delta + inputs.length) % inputs.length]?.focus();
-        }}
         onChange={() => isMulti ? onMulti(qid, option.value) : onSingle(qid, option.value)}
       />
       <span className="auq-option-title">{option.label}</span>

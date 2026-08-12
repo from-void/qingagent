@@ -68,6 +68,18 @@ jobs:
       - name: verify release tag
         run: ./scripts/release.sh verify-tag "$RELEASE_TAG"
 
+      # gh release upload 只会传到「已存在」的 release;改用 --publish never + 手动
+      # 上传后没有任何人创建 release 对象("release not found"),这里幂等确保存在。
+      - name: ensure release exists
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null 2>&1; then
+            # mac/linux 两个矩阵行并发到这里会竞态建 release:输掉的一方 create 报
+            # already exists,再 view 确认存在即视为成功。
+            gh release create "$RELEASE_TAG" --repo from-void/qingagent \
+              --title "青简 $RELEASE_TAG" --generate-notes || \
+              gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null
+          fi
+
       # electron-builder 只打包不编译:dist/main 必须先由 build:desktop 产出,
       # 否则 afterPack 资源校验直接报「桌面主进程 bundle 缺失」。此步曾在改上传
       # 方式时被误删,导致 v0.1.4 首次构建失败——不要再删。

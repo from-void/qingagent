@@ -76,7 +76,7 @@ jobs:
             # mac/linux 两个矩阵行并发到这里会竞态建 release:输掉的一方 create 报
             # already exists,再 view 确认存在即视为成功。
             gh release create "$RELEASE_TAG" --repo from-void/qingagent \
-              --title "青简 $RELEASE_TAG" --generate-notes || \
+              --title "$RELEASE_TAG" --generate-notes || \
               gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null
           fi
 
@@ -174,7 +174,7 @@ jobs:
         run: |
           if ! gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --repo from-void/qingagent \
-              --title "青简 $RELEASE_TAG" --generate-notes || \
+              --title "$RELEASE_TAG" --generate-notes || \
               gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null
           fi
 

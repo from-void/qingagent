@@ -1198,6 +1198,15 @@ async function createWindowOnce() {
   const { width: waW, height: waH } = screen.getPrimaryDisplay().workAreaSize;
   const { width: winWidth, height: winHeight } = computeMainWindowSize(waW, waH);
 
+  // win/linux 的窗口与任务栏图标取运行时 png(mac 走 icns,不需要 BrowserWindow icon;
+  // exe 内嵌图标被 signAndEditExecutable:false 跳过,任务栏观感靠这里)。
+  const windowIcon =
+    process.platform === "darwin"
+      ? undefined
+      : app.isPackaged
+        ? path.join(process.resourcesPath, "icon.png")
+        : path.join(__dirname, "../../resources/icon-256.png");
+
   mainWindow = new BrowserWindow({
     width: winWidth,
     height: winHeight,
@@ -1205,6 +1214,7 @@ async function createWindowOnce() {
     minHeight: 600,
     center: true,
     title: "青简",
+    ...(windowIcon ? { icon: windowIcon } : {}),
     autoHideMenuBar: true,
     // 原生底色、启动壳与 Web boot 契约统一为暖纸色，整个导航链路不产生色阶跳变。
     backgroundColor: "#ece4d3",

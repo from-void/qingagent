@@ -136,7 +136,7 @@ export function AboutPanel() {
       {/* —— 主区:居中产品标识 + 唯一「检查更新」按钮 —— */}
       <section className="ab-hero">
         <div className="ab-logo" aria-hidden="true">
-          青
+          <img src="/favicon.svg" alt="" width={56} height={56} draggable={false} />
         </div>
         <div className="ab-name">
           青简 <span className="ab-name-en">qingagent</span>

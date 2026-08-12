@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" role="img">
+  <rect x="0" y="0" width="800" height="450" fill="#f3e2c8"/>
+  <rect x="0" y="0" width="800" height="450" fill="url(#warmGrad)"/>
+  <defs>
+    <linearGradient id="warmGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7d9a8"/>
+      <stop offset="1" stop-color="#ecc99a"/>
+    </linearGradient>
+    <linearGradient id="windowGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2b56b"/>
+      <stop offset="1" stop-color="#e08a4a"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="800" height="450" fill="#f3e2c8"/>
+  <rect x="0" y="0" width="800" height="450" fill="url(#warmGrad)"/>
+  <rect x="520" y="48" width="232" height="252" rx="10" fill="#fdfaf3"/>
+  <rect x="520" y="48" width="232" height="252" rx="10" fill="none" stroke="#c9b98f" stroke-width="3"/>
+  <rect x="536" y="64" width="200" height="220" rx="6" fill="url(#windowGrad)"/>
+  <circle cx="636" cy="150" r="34" fill="#f8c96b" opacity="0.85"/>
+  <line x1="636" y1="150" x2="636" y2="120" stroke="#e8a94f" stroke-width="4"/>
+  <line x1="636" y1="150" x2="660" y2="140" stroke="#e8a94f" stroke-width="4"/>
+  <line x1="636" y1="150" x2="612" y2="140" stroke="#e8a94f" stroke-width="4"/>
+  <line x1="536" y1="284" x2="736" y2="284" stroke="#d8a24a" stroke-width="3"/>
+  <line x1="636" y1="64" x2="636" y2="284" stroke="#d8a24a" stroke-width="3"/>
+  <rect x="120" y="330" width="560" height="42" rx="8" fill="#a97b4f"/>
+  <rect x="120" y="330" width="560" height="14" rx="7" fill="#b98a5c"/>
+  <rect x="200" y="300" width="400" height="34" rx="6" fill="#8a5a33"/>
+  <rect x="150" y="240" width="230" height="66" rx="6" fill="#fdfaf3"/>
+  <line x1="170" y1="262" x2="360" y2="262" stroke="#c9b98f" stroke-width="3"/>
+  <line x1="170" y1="278" x2="330" y2="278" stroke="#d8c9a3" stroke-width="3"/>
+  <line x1="170" y1="292" x2="345" y2="292" stroke="#e0d4b5" stroke-width="3"/>
+  <rect x="150" y="240" width="230" height="66" rx="6" fill="none" stroke="#c9b98f" stroke-width="2"/>
+  <line x1="385" y1="246" x2="385" y2="300" stroke="#b8a06a" stroke-width="3"/>
+  <line x1="385" y1="246" x2="400" y2="300" stroke="#b8a06a" stroke-width="3"/>
+  <rect x="410" y="248" width="16" height="72" rx="4" fill="#d8a24a"/>
+  <polygon points="418,248 418,230 428,230 428,248" fill="#c98f3a"/>
+  <rect x="410" y="248" width="16" height="72" rx="4" fill="none" stroke="#b07d33" stroke-width="2"/>
+  <rect x="470" y="238" width="120" height="92" rx="6" fill="#fdfaf3"/>
+  <rect x="470" y="238" width="120" height="92" rx="6" fill="none" stroke="#c9b98f" stroke-width="2"/>
+  <text x="530" y="278" text-anchor="middle" font-size="18" fill="#8a6a3a" font-family="sans-serif">深夜书房</text>
+  <text x="530" y="304" text-anchor="middle" font-size="14" fill="#a08a5c" font-family="sans-serif">静夜写作</text>
+  <rect x="620" y="252" width="70" height="78" rx="4" fill="#c98f3a"/>
+  <rect x="620" y="252" width="70" height="78" rx="4" fill="none" stroke="#b07d33" stroke-width="2"/>
+  <rect x="632" y="262" width="46" height="58" rx="3" fill="#f8d98c"/>
+  <circle cx="655" cy="290" r="20" fill="#fdf3d0"/>
+  <circle cx="655" cy="290" r="12" fill="#f8c96b"/>
+  <text x="400" y="410" text-anchor="middle" font-size="16" fill="#6b4f2e" font-family="sans-serif">暖色调安静书房 · 一盏灯，一摞书，一杯热茶</text>
+</svg>

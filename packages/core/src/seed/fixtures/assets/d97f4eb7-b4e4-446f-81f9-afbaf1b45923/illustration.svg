@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img">
+  <rect x="0" y="0" width="800" height="600" fill="#f3e2c8"/>
+  <circle cx="400" cy="120" r="150" fill="#f5c96b" opacity="0.55"/>
+  <circle cx="400" cy="120" r="110" fill="#f8d98c" opacity="0.6"/>
+  <rect x="120" y="330" width="560" height="40" rx="8" fill="#a97b4f"/>
+  <rect x="120" y="330" width="560" height="12" rx="6" fill="#b98a5c"/>
+  <rect x="200" y="300" width="400" height="34" rx="6" fill="#8a5a33"/>
+  <rect x="150" y="250" width="230" height="60" rx="6" fill="#fdfaf3"/>
+  <line x1="170" y1="272" x2="360" y2="272" stroke="#c9b98f" stroke-width="3"/>
+  <line x1="170" y1="288" x2="330" y2="288" stroke="#d8c9a3" stroke-width="3"/>
+  <line x1="170" y1="300" x2="345" y2="300" stroke="#e0d4b5" stroke-width="3"/>
+  <rect x="150" y="250" width="230" height="60" rx="6" fill="none" stroke="#c9b98f" stroke-width="2"/>
+  <line x1="385" y1="255" x2="385" y2="305" stroke="#b8a06a" stroke-width="3"/>
+  <line x1="385" y1="255" x2="400" y2="305" stroke="#b8a06a" stroke-width="3"/>
+  <rect x="410" y="258" width="16" height="70" rx="4" fill="#d8a24a"/>
+  <polygon points="418,258 418,240 428,240 428,258" fill="#c98f3a"/>
+  <rect x="410" y="258" width="16" height="70" rx="4" fill="none" stroke="#b07d33" stroke-width="2"/>
+  <rect x="470" y="250" width="120" height="90" rx="6" fill="#fdfaf3"/>
+  <rect x="470" y="250" width="120" height="90" rx="6" fill="none" stroke="#c9b98f" stroke-width="2"/>
+  <text x="530" y="290" text-anchor="middle" font-size="18" fill="#8a6a3a">深夜书房</text>
+  <text x="530" y="314" text-anchor="middle" font-size="14" fill="#a08a5c">静夜写作</text>
+  <rect x="620" y="260" width="70" height="80" rx="4" fill="#c98f3a"/>
+  <rect x="620" y="260" width="70" height="80" rx="4" fill="none" stroke="#b07d33" stroke-width="2"/>
+  <rect x="632" y="270" width="46" height="60" rx="3" fill="#f8d98c"/>
+  <circle cx="655" cy="300" r="20" fill="#fdf3d0"/>
+  <circle cx="655" cy="300" r="12" fill="#f8c96b"/>
+</svg>

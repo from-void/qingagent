@@ -15,6 +15,7 @@ import {
   getDocumentsClient,
   setAppSetting,
 } from "@qingagent/db";
+import { mastra } from "../mastra.js";
 
 type FixtureScalar = string | number | boolean | null;
 type FixtureBlob = { __b64__: string };
@@ -131,6 +132,45 @@ async function upsertRows(
   }
 }
 
+/**
+ * 首页标题默认从 thread metadata.doc 的 H1 派生；只有 titlePinned 才表示权威改名。
+ * fixture 整行搬运无法改写二进制序列化的 metadata，因此导入后通过 Memory API
+ * 把主 thread 行的 title 列值补钉回 metadata，并同步 thread.title。
+ */
+async function pinFixtureThreadTitle(fixture: SeedFixture): Promise<void> {
+  try {
+    const row = fixture.threads.find((thread) => thread.id === fixture.sessionId);
+    const title = row?.title;
+    if (typeof title !== "string") {
+      throw new Error("Seed fixture main thread title is missing");
+    }
+
+    const memory = mastra.getMemory("default");
+    const thread = await memory.getThreadById({ threadId: fixture.sessionId });
+    if (!thread) {
+      throw new Error("Seed fixture main thread was not imported");
+    }
+
+    await memory.saveThread({
+      thread: {
+        ...thread,
+        title,
+        metadata: {
+          ...(thread.metadata ?? {}),
+          title,
+          titlePinned: true,
+        },
+      },
+    });
+  } catch (error) {
+    mastra.getLogger().warn("[seed] 示例标题补钉失败，继续导入其它内容", {
+      piece: fixture.piece,
+      sessionId: fixture.sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function composeBriefing(briefings: FixtureBriefings, piece: string): string {
   const common = briefings._common?.trim();
   const perPiece = briefings[piece]?.trim();
@@ -218,6 +258,7 @@ export async function seedInitialContent(
         rewriteRowTime(row, SESSION_RESOURCE_TIME_COLUMNS, timestamp)
       ),
     );
+    await pinFixtureThreadTitle(fixture);
     await copyFixtureAssets(fixturesDir, uploadsDir, fixture.assetFileIds);
     await setAppSetting(
       `seed_briefing:${fixture.sessionId}`,

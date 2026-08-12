@@ -132,12 +132,12 @@ jobs:
   # Windows 安装器在 ubuntu runner 上用 wine 交叉构建(理由同 build-win-installer.sh:2 核 windows
   # runner 压不完整包 solid-LZMA,Linux 多核 <2min)。needs: build 确保 linux/mac 已建好 release。
   build-windows:
-    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, 'beta') }}
+    # 非 beta 才发正式包;且三平台独立发布——mac 公证挂掉不该拖累 windows 包
+    # (!cancelled() 让本 job 在 build job 失败后照常跑,release 对象由下方步骤自行确保)。
+    if: ${{ !cancelled() && !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, 'beta') }}
     name: release-windows
     runs-on: ubuntu-latest
     needs: build
-    # 三平台独立发布:mac 公证挂掉不该拖累 windows 包(release 对象由下方步骤自行确保)。
-    if: ${{ !cancelled() }}
     defaults:
       run:
         shell: bash

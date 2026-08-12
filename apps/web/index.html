@@ -15,6 +15,39 @@
     <style>
       html, body { margin: 0; }
       html { background: var(--app-boot-bg, #ece4d3); }
+      /* 启动骨架:logo 里的泰卦纸页 + 扫光显「青」。慢网络下载大 chunk 期间的加载指示;
+         opacity 0 起步、0.35s 后才淡入——本地秒开根本看不到,不添闪烁。
+         React 挂载(createRoot().render)整树替换 #root 子节点,骨架自动消失,无需清理代码。
+         时间轴 3.2s 循环:0-55% 扫光下行+「青」笔画(金)同速显形 → 定格 → 76-92% 淡出。 */
+      .qa-boot {
+        position: fixed; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        opacity: 0; animation: qaBootIn 0.4s ease 0.35s forwards;
+      }
+      .qa-boot svg { width: 148px; height: auto; }
+      .qa-boot .qa-sheet { fill: #faf6ec; stroke: rgba(120, 90, 50, 0.28); stroke-width: 1; }
+      .qa-boot .qa-bars rect { fill: #e8dcb4; }
+      .qa-boot .qa-qing rect { fill: #a8823f; opacity: 0.92; }
+      .qa-boot .qa-qing { clip-path: inset(0 0 100% 0); animation: qaQingReveal 3.2s linear infinite; }
+      .qa-boot .qa-sweep { transform: translateY(47px); animation: qaSweepDown 3.2s linear infinite; mix-blend-mode: soft-light; }
+      @keyframes qaBootIn { to { opacity: 1; } }
+      @keyframes qaSweepDown {
+        0% { transform: translateY(47px); opacity: 0; }
+        6% { opacity: 1; }
+        48% { opacity: 1; }
+        55%, 100% { transform: translateY(333px); opacity: 0; }
+      }
+      @keyframes qaQingReveal {
+        0% { clip-path: inset(0 0 100% 0); opacity: 1; }
+        55% { clip-path: inset(0 0 0% 0); opacity: 1; }
+        76% { clip-path: inset(0 0 0% 0); opacity: 1; }
+        92%, 100% { clip-path: inset(0 0 0% 0); opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .qa-boot .qa-qing, .qa-boot .qa-sweep { animation: none; }
+        .qa-boot .qa-qing { clip-path: none; opacity: 0.5; }
+        .qa-boot .qa-sweep { display: none; }
+      }
     </style>
     <script>
       (function () {
@@ -31,7 +64,43 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- 启动骨架(见 head 内 .qa-boot 注释):上三组断杠+下三条通杠 = 地天泰,亦是「青」的骨架 -->
+      <div class="qa-boot" aria-hidden="true">
+        <svg viewBox="76 99 247 246">
+          <rect class="qa-sheet" x="88" y="111" width="223" height="222" />
+          <g class="qa-bars">
+            <rect x="120" y="143" width="71" height="13" />
+            <rect x="209" y="143" width="71" height="13" />
+            <rect x="120" y="174" width="71" height="13" />
+            <rect x="209" y="174" width="71" height="13" />
+            <rect x="120" y="205" width="71" height="13" />
+            <rect x="209" y="205" width="71" height="13" />
+            <rect x="120" y="246" width="160" height="13" />
+            <rect x="120" y="277" width="160" height="13" />
+            <rect x="120" y="308" width="160" height="13" />
+          </g>
+          <g class="qa-qing">
+            <rect x="191" y="131" width="18" height="87" />
+            <rect x="97" y="246" width="13" height="83" />
+            <rect x="289" y="246" width="13" height="83" />
+          </g>
+          <g clip-path="url(#qaBootSheetClip)">
+            <rect class="qa-sweep" x="88" y="0" width="223" height="64" fill="url(#qaBootSweepGrad)" />
+          </g>
+          <defs>
+            <linearGradient id="qaBootSweepGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0" />
+              <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.55" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <clipPath id="qaBootSheetClip">
+              <rect x="88" y="111" width="223" height="222" />
+            </clipPath>
+          </defs>
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

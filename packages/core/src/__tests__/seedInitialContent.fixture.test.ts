@@ -28,7 +28,10 @@ afterEach(() => {
   db.cleanup();
 });
 
-async function writeMinimalFixture(fixturesDir: string): Promise<void> {
+async function writeMinimalFixture(
+  fixturesDir: string,
+  serializedThreadMetadata: Uint8Array,
+): Promise<void> {
   const assetDir = join(fixturesDir, "assets", "asset-1");
   await mkdir(assetDir, { recursive: true });
   await writeFile(join(assetDir, "source.png"), "fixture-image");
@@ -49,8 +52,8 @@ async function writeMinimalFixture(fixturesDir: string): Promise<void> {
         {
           id: "thread-one",
           resourceId: "qingagent-user",
-          title: "真实示例",
-          metadata: { __b64__: Buffer.from("thread-meta").toString("base64") },
+          title: "示例1 · 真实示例",
+          metadata: { __b64__: Buffer.from(serializedThreadMetadata).toString("base64") },
           createdAt: "2026-08-11T18:18:15.127Z",
           updatedAt: "2026-08-11T18:18:54.432Z",
         },
@@ -68,7 +71,7 @@ async function writeMinimalFixture(fixturesDir: string): Promise<void> {
           id: "doc-main",
           thread_id: "thread-one",
           resource_id: "qingagent-user",
-          title: "真实示例",
+          title: "示例1 · 真实示例",
           doc_state: "editing",
           doc_version: 1,
           last_synced_version: 1,
@@ -134,7 +137,6 @@ describe("seedInitialContent fixture v2", () => {
   it("搬运整行、改写时间、复制资源、注入简报并保持幂等", async () => {
     const fixturesDir = join(db.tempDir, "fixtures");
     await mkdir(fixturesDir, { recursive: true });
-    await writeMinimalFixture(fixturesDir);
 
     await ensureMigrated();
     const client = getDocumentsClient();
@@ -147,12 +149,52 @@ describe("seedInitialContent fixture v2", () => {
       updatedAt TEXT NOT NULL
     )`);
 
+    const { mastra } = await import("../mastra.js");
+    const memory = mastra.getMemory("default");
+    await memory.saveThread({
+      thread: {
+        id: "metadata-template",
+        resourceId: "qingagent-user",
+        title: "真实示例",
+        metadata: {
+          title: "真实示例",
+          titlePinned: false,
+          preserved: "keep-me",
+        },
+        createdAt: new Date("2026-08-11T18:18:15.127Z"),
+        updatedAt: new Date("2026-08-11T18:18:54.432Z"),
+      },
+    });
+    const templateRows = await client.execute(
+      "SELECT metadata FROM mastra_threads WHERE id = 'metadata-template'",
+    );
+    const serializedThreadMetadata = templateRows.rows[0]!.metadata as unknown as Uint8Array;
+    await client.execute("DELETE FROM mastra_threads WHERE id = 'metadata-template'");
+    await writeMinimalFixture(fixturesDir, serializedThreadMetadata);
+
     const { seedInitialContent } = await import("../seed/seedInitialContent.js");
     const seedWithOptions = seedInitialContent as unknown as (
       options: SeedOptions,
     ) => Promise<void>;
     await seedWithOptions({ fixturesDir });
+
+    const firstSeedThread = await memory.getThreadById({ threadId: "thread-one" });
+    expect(firstSeedThread?.title).toBe("示例1 · 真实示例");
+    expect(firstSeedThread?.metadata).toMatchObject({
+      title: "示例1 · 真实示例",
+      titlePinned: true,
+      preserved: "keep-me",
+    });
+
     await seedWithOptions({ fixturesDir });
+
+    const secondSeedThread = await memory.getThreadById({ threadId: "thread-one" });
+    expect(secondSeedThread?.title).toBe("示例1 · 真实示例");
+    expect(secondSeedThread?.metadata).toMatchObject({
+      title: "示例1 · 真实示例",
+      titlePinned: true,
+      preserved: "keep-me",
+    });
 
     const threads = await client.execute(
       "SELECT id, resourceId, metadata, createdAt, updatedAt FROM mastra_threads ORDER BY id",
@@ -178,8 +220,8 @@ describe("seedInitialContent fixture v2", () => {
       createdAt: "2025-04-16T01:00:00.000Z",
       updatedAt: "2025-04-16T01:00:00.000Z",
     });
-    expect(Buffer.from(threads.rows[1]!.metadata as unknown as Uint8Array).toString()).toBe(
-      "thread-meta",
+    expect(Buffer.from(threads.rows[0]!.metadata as unknown as Uint8Array).toString()).toBe(
+      "sidecar-meta",
     );
     expect(documents.rows).toEqual([
       expect.objectContaining({

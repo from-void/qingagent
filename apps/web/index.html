@@ -15,11 +15,11 @@
     <style>
       html, body { margin: 0; }
       html { background: var(--app-boot-bg, #ece4d3); }
-      /* 启动骨架:logo 里的泰卦纸页 + 逐笔写「青」。慢网络下载大 chunk 期间的加载指示;
+      /* 启动骨架:logo 里的泰卦纸页 + 剪影显「青」。慢网络下载大 chunk 期间的加载指示;
          opacity 0 起步、0.35s 后才淡入——本地秒开根本看不到,不添闪烁。
          React 挂载(createRoot().render)整树替换 #root 子节点,骨架自动消失,无需清理代码。
-         周期 4s:4% 起每笔占 6% 按笔顺落墨(8 笔,52% 写完) → 定格到 80% → 淡出 → 重来。
-         笔画只填杠间白色通道、玄青墨色,与淡沙杠仅两个层次(用户定案)。 */
+         周期 3.6s:0-48% 完整「青」以玄青墨剪影自上而下擦出(clip-path inset)
+         → 定格到 82% → 淡出 → 重来。无扫光带、不逐笔;配色只有墨+淡沙两层(用户定案)。 */
       .qa-boot {
         position: fixed; inset: 0;
         display: flex; align-items: center; justify-content: center;
@@ -28,31 +28,18 @@
       .qa-boot svg { width: 148px; height: auto; }
       .qa-boot .qa-sheet { fill: #faf6ec; stroke: rgba(120, 90, 50, 0.28); stroke-width: 1; }
       .qa-boot .qa-bars rect { fill: #e8dcb4; }
-      .qa-boot .qa-qing { animation: qaQingFade 4s linear infinite; }
-      .qa-boot .qa-qing rect { fill: #16212c; opacity: 0; transform-box: fill-box; }
-      .qa-boot .qa-sh { transform-origin: left center; transform: scaleX(0); }
-      .qa-boot .qa-sv { transform-origin: center top; transform: scaleY(0); }
-      .qa-boot .qa-s1 { animation: qaDH1 4s linear infinite; }
-      .qa-boot .qa-s2 { animation: qaDH2 4s linear infinite; }
-      .qa-boot .qa-s3 { animation: qaDV3 4s linear infinite; }
-      .qa-boot .qa-s4 { animation: qaDH4 4s linear infinite; }
-      .qa-boot .qa-s5 { animation: qaDV5 4s linear infinite; }
-      .qa-boot .qa-s6 { animation: qaDV6 4s linear infinite; }
-      .qa-boot .qa-s7 { animation: qaDH7 4s linear infinite; }
-      .qa-boot .qa-s8 { animation: qaDH8 4s linear infinite; }
+      .qa-boot .qa-qing { clip-path: inset(0 0 100% 0); animation: qaQingWipe 3.6s linear infinite; }
+      .qa-boot .qa-qing rect { fill: #16212c; opacity: 0.92; }
       @keyframes qaBootIn { to { opacity: 1; } }
-      @keyframes qaQingFade { 0%, 80% { opacity: 1; } 90%, 100% { opacity: 0; } }
-      @keyframes qaDH1 { 0%, 4%  { transform: scaleX(0); opacity: 0; } 5%  { opacity: 0.92; } 10%, 100% { transform: scaleX(1); opacity: 0.92; } }
-      @keyframes qaDH2 { 0%, 10% { transform: scaleX(0); opacity: 0; } 11% { opacity: 0.92; } 16%, 100% { transform: scaleX(1); opacity: 0.92; } }
-      @keyframes qaDV3 { 0%, 16% { transform: scaleY(0); opacity: 0; } 17% { opacity: 0.92; } 22%, 100% { transform: scaleY(1); opacity: 0.92; } }
-      @keyframes qaDH4 { 0%, 22% { transform: scaleX(0); opacity: 0; } 23% { opacity: 0.92; } 28%, 100% { transform: scaleX(1); opacity: 0.92; } }
-      @keyframes qaDV5 { 0%, 28% { transform: scaleY(0); opacity: 0; } 29% { opacity: 0.92; } 34%, 100% { transform: scaleY(1); opacity: 0.92; } }
-      @keyframes qaDV6 { 0%, 34% { transform: scaleY(0); opacity: 0; } 35% { opacity: 0.92; } 40%, 100% { transform: scaleY(1); opacity: 0.92; } }
-      @keyframes qaDH7 { 0%, 40% { transform: scaleX(0); opacity: 0; } 41% { opacity: 0.92; } 46%, 100% { transform: scaleX(1); opacity: 0.92; } }
-      @keyframes qaDH8 { 0%, 46% { transform: scaleX(0); opacity: 0; } 47% { opacity: 0.92; } 52%, 100% { transform: scaleX(1); opacity: 0.92; } }
+      @keyframes qaQingWipe {
+        0% { clip-path: inset(0 0 100% 0); opacity: 1; }
+        48% { clip-path: inset(0 0 0% 0); opacity: 1; }
+        82% { clip-path: inset(0 0 0% 0); opacity: 1; }
+        92%, 100% { clip-path: inset(0 0 0% 0); opacity: 0; }
+      }
       @media (prefers-reduced-motion: reduce) {
-        .qa-boot .qa-qing, .qa-boot .qa-qing rect { animation: none; }
-        .qa-boot .qa-qing rect { transform: none; opacity: 0.4; }
+        .qa-boot .qa-qing { animation: none; clip-path: none; }
+        .qa-boot .qa-qing rect { opacity: 0.4; }
       }
     </style>
     <script>
@@ -73,8 +60,8 @@
     <div id="root">
       <!-- 启动骨架(见 head 内 .qa-boot 注释):上三组断杠+下三条通杠 = 地天泰,亦是「青」的骨架 -->
       <div class="qa-boot" aria-hidden="true">
-        <svg viewBox="76 99 247 246">
-          <rect class="qa-sheet" x="88" y="111" width="223" height="222" />
+        <svg viewBox="76 99 247 270">
+          <rect class="qa-sheet" x="88" y="111" width="223" height="246" />
           <g class="qa-bars">
             <rect x="120" y="143" width="71" height="13" />
             <rect x="209" y="143" width="71" height="13" />
@@ -82,21 +69,21 @@
             <rect x="209" y="174" width="71" height="13" />
             <rect x="120" y="205" width="71" height="13" />
             <rect x="209" y="205" width="71" height="13" />
-            <rect x="120" y="246" width="160" height="13" />
-            <rect x="120" y="277" width="160" height="13" />
-            <rect x="120" y="308" width="160" height="13" />
+            <rect x="140" y="270" width="120" height="13" />
+            <rect x="140" y="301" width="120" height="13" />
+            <rect x="140" y="332" width="120" height="13" />
           </g>
-          <!-- 笔顺:横 横 竖 横(长) 竖 竖钩 横 横。龶三横等长且两端捅出杠块、中竖出头;
-               月框两侧纸边与龶隔一档留白、月内二横居中不贴框 -->
+          <!-- 「青」剪影:龶三横等长捅出+中竖出头;月=顶横+左右细竖+内二横,开口朝下 -->
           <g class="qa-qing">
-            <rect class="qa-sh qa-s1" x="104" y="156" width="192" height="18" />
-            <rect class="qa-sh qa-s2" x="104" y="187" width="192" height="18" />
-            <rect class="qa-sv qa-s3" x="191" y="143" width="18" height="75" />
-            <rect class="qa-sh qa-s4" x="104" y="218" width="192" height="18" />
-            <rect class="qa-sv qa-s5" x="88" y="252" width="32" height="81" />
-            <rect class="qa-sv qa-s6" x="280" y="252" width="31" height="81" />
-            <rect class="qa-sh qa-s7" x="130" y="259" width="140" height="18" />
-            <rect class="qa-sh qa-s8" x="130" y="290" width="140" height="18" />
+            <rect x="104" y="156" width="192" height="18" />
+            <rect x="104" y="187" width="192" height="18" />
+            <rect x="191" y="143" width="18" height="75" />
+            <rect x="104" y="218" width="192" height="18" />
+            <rect x="122" y="252" width="18" height="105" />
+            <rect x="122" y="252" width="156" height="18" />
+            <rect x="260" y="252" width="18" height="105" />
+            <rect x="140" y="283" width="120" height="18" />
+            <rect x="140" y="314" width="120" height="18" />
           </g>
         </svg>
       </div>

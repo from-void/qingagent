@@ -261,10 +261,10 @@ if (process.platform === "linux" || runningFromUncPath) {
 }
 logRenderingMode(renderingMode);
 
-// 产品是纯浅色宣纸视觉(index.html 声明 color-scheme:light、drawio 也钉死浅色),但系统深色
-// 模式会让 Windows/mac 画出黑色原生标题栏——玄青超椭圆 logo 落在黑条上完全看不见。统一钉住
-// 浅色外观:标题栏/窗控随浅色主题绘制,与暖纸窗体同调,深色 icon 在浅条上清晰可辨。
-nativeTheme.themeSource = "light";
+// 标题栏统一玄青深色(用户定案):写作页左栏即玄青,浅色标题栏夹在深栏与宣纸之间反而突兀。
+// 钉 dark 让 Windows/mac 一律画深色标题栏/窗控,再由下方 accentColor 把 Win11 caption 精确
+// 涂成 --desk-base 玄青;icon 已带宣纸描边,深条上轮廓可辨。
+nativeTheme.themeSource = "dark";
 
 // 打包 renderer 使用固定标准 scheme，保证 Web Storage 的 origin 不随内置服务监听端口变化。
 // 必须在 app ready 前登记；实际转发 handler 要等随机监听端口确定后再安装。
@@ -1224,9 +1224,9 @@ async function createWindowOnce() {
     autoHideMenuBar: true,
     // 原生底色、启动壳与 Web boot 契约统一为暖纸色，整个导航链路不产生色阶跳变。
     backgroundColor: "#ece4d3",
-    // Windows 11 把激活窗口的标题栏/边框也涂成暖纸色(DWM caption),与窗体浑然一体;
-    // Win10 及其他平台忽略此项,由上面 themeSource:"light" 兜底保证浅色标题栏。
-    accentColor: "#ece4d3",
+    // Windows 11 把激活窗口的标题栏/边框涂成玄青(--desk-base),与写作页左栏一体;
+    // Win10 及其他平台忽略此项,由上面 themeSource:"dark" 兜底保证深色标题栏。
+    accentColor: "#16212c",
     show: false,
     webPreferences: {
       // preload 以 CommonJS .cjs 产出(见 build.mjs);ESM 的 .js preload 在 Electron 里

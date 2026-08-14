@@ -23,6 +23,7 @@ import type {
   ExternalReviewPatchDetail,
   ExternalReviewPatchSummary,
   ExternalReviewVerdictRequest,
+  ExternalValidationDiagnostic,
 } from "../../../contract-ts/src/ExternalApi";
 import {
   deriveActiveOverlay,
@@ -449,7 +450,13 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
   const format = c.req.query("format");
   if (format !== undefined && format !== "qingml") {
     externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
-    return externalError(c, 400, "VALIDATION", "format 仅支持 qingml");
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      "format 仅支持 qingml",
+      "读取文档时请移除 format，或改用 format=qingml 后重试",
+    );
   }
   const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
@@ -1446,12 +1453,28 @@ function errorSummary(
       error: message ?? code,
       code,
       nextStep: EXTERNAL_NEXT_STEP[code],
-      ...(diagnostic ? { diagnostic } : {}),
+      ...(diagnostic ? { diagnostic: projectExternalValidationDiagnostic(diagnostic) } : {}),
     }, seq),
     logResult: `rejected:${code}`,
     hunks: 0,
     seq,
   };
+}
+
+function projectExternalValidationDiagnostic(
+  diagnostic: WriteDraftFailureDiagnostic,
+): ExternalValidationDiagnostic {
+  return {
+    failureKind: diagnostic.failureKind,
+    warningKinds: [...diagnostic.warningKinds],
+    tagSkeleton: diagnostic.tagSkeleton,
+    errorLocations: diagnostic.errorLocations.map((location) => ({
+      kind: location.kind,
+      ...(location.startOffset === undefined ? {} : { startOffset: location.startOffset }),
+      ...(location.endOffset === undefined ? {} : { endOffset: location.endOffset }),
+      ...(location.path === undefined ? {} : { path: [...location.path] }),
+    })),
+  } satisfies ExternalValidationDiagnostic;
 }
 
 function maxSeq(entries: LoggedFrame[]): number | null {

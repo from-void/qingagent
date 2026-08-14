@@ -66,21 +66,21 @@ type ExternalQingmlDraftResult =
   | { ok: true; doc: PmDoc; title: string | null }
   | { ok: false; diagnostic: WriteDraftFailureDiagnostic };
 
-function compileExternalQingmlDraft(qingml: string): ExternalQingmlDraftResult {
+export function compileExternalQingmlDraft(
+  qingml: string,
+  compile: typeof compileAiDocumentToPm = compileAiDocumentToPm,
+): ExternalQingmlDraftResult {
   try {
     const parsed = parseAiDocumentFromQingml(qingml);
-    const compiled = compileAiDocumentToPm(parsed.document);
+    const compiled = compile(parsed.document);
     if (!compiled.ok || !compiled.doc) {
       return {
         ok: false,
         diagnostic: {
-          failureKind: "qingml_bad_block",
-          warningKinds: ["invalid-ai-document"],
+          failureKind: "compile_failed",
+          warningKinds: [],
           tagSkeleton: qingmlTagSkeleton(qingml),
-          errorLocations: compiled.blockErrors.slice(0, 12).map((error) => ({
-            kind: "invalid-ai-document",
-            path: error.index >= 0 ? ["blocks", error.index] : ["blocks"],
-          })),
+          errorLocations: [],
         },
       };
     }
@@ -106,8 +106,8 @@ function compileExternalQingmlDraft(qingml: string): ExternalQingmlDraftResult {
     return {
       ok: false,
       diagnostic: {
-        failureKind: "qingml_bad_block",
-        warningKinds: ["invalid-ai-document"],
+        failureKind: "compile_failed",
+        warningKinds: [],
         tagSkeleton: qingmlTagSkeleton(qingml),
         errorLocations: [],
       },
@@ -511,6 +511,14 @@ export async function* handleDocWriteCommand(
       if (settled.hunkCount <= 0) {
         yield docWriteReason(clientMutationId, "validation_error");
         return;
+      }
+      if (qingmlDraft && !session.titlePinned) {
+        const nextTitle = qingmlDraft.title ?? deriveTitleFromDoc(qingmlDraft.doc);
+        if (nextTitle && nextTitle !== session.title) {
+          session.title = nextTitle;
+          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
+          await persistSessionMetadata(session);
+        }
       }
       agentMessage.parts.push({
         kind: "patchSummary",

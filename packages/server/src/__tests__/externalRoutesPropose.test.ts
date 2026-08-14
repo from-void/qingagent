@@ -43,7 +43,8 @@ describe("external proposals", () => {
       ops: [{ kind: "qingmlDraft", qingml: firstQingml }],
     });
     expect(committed.status).toBe(200);
-    expect(await committed.json()).toMatchObject({ status: "committed", docVersion: 1 });
+    const committedBody = await committed.json() as { status: string; docVersion: number; seq: number };
+    expect(committedBody).toMatchObject({ status: "committed", docVersion: 1 });
 
     const read = await app.request(`/api/v1/external/sessions/${sessionId}/doc?format=qingml`, {
       headers: authHeaders(),
@@ -67,13 +68,29 @@ describe("external proposals", () => {
 
     const review = await propose(sessionId, {
       expectedDocVersion: 1,
-      ops: [{ kind: "qingmlDraft", qingml: firstQingml.replace("第一段。", "第一段已修改。") }],
+      ops: [{
+        kind: "qingmlDraft",
+        qingml: firstQingml
+          .replace("外部 QingML 标题", "审阅态新标题")
+          .replace("第一段。", "第一段已修改。"),
+      }],
     });
     expect(review.status).toBe(200);
     const reviewBody = await review.json() as { status: string; count: number; patchIds: string[] };
     expect(reviewBody.status).toBe("review");
     expect(reviewBody.count).toBeGreaterThan(0);
     expect(reviewBody.patchIds).toHaveLength(reviewBody.count);
+    const reviewFrames = sessionManager.frameLog.readFrom(sessionId, committedBody.seq).frames;
+    expect(reviewFrames).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        frame: { kind: "sessionMeta", data: { sessionId, title: "审阅态新标题" } },
+      }),
+    ]));
+
+    const readAfterReview = await app.request(`/api/v1/external/sessions/${sessionId}/doc`, {
+      headers: authHeaders(),
+    });
+    expect(await readAfterReview.json()).toMatchObject({ title: "审阅态新标题" });
 
     const reviewRead = await app.request(`/api/v1/external/sessions/${sessionId}/review`, {
       headers: authHeaders(),

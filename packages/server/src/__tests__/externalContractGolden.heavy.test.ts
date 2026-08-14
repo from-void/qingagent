@@ -9,6 +9,7 @@ import type {
   ExternalFileTextResponse,
   ExternalHealthResponse,
   ExternalProposalResponse,
+  ExternalProposalErrorResponse,
   ExternalReviewListResponse,
   ExternalSessionCreateResponse,
   ExternalSessionsListResponse,
@@ -83,6 +84,66 @@ describe("external API v1 golden contract", () => {
     });
   });
 
+  it("GET /sessions/:id/doc?format=qingml 精确返回 qingml/title", async () => {
+    const { sessionId } = await createSession();
+    await postJson<ExternalProposalResponse>(`/sessions/${sessionId}/proposals`, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "<title>Golden QingML</title><h1>正文标题</h1><p>正文。</p>" }],
+    });
+
+    const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "qingml", "title"]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 1,
+      state: "editing",
+      agentBusy: false,
+      markdown: expect.stringContaining("正文标题"),
+      qingml: "<h1>正文标题</h1><p>正文。</p>",
+      title: "Golden QingML",
+    });
+  });
+
+  it("GET 空文档 format=qingml 返回空 QingML", async () => {
+    const { sessionId } = await createSession();
+    const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "qingml", "title"]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 0,
+      state: "empty",
+      agentBusy: false,
+      markdown: "",
+      qingml: "",
+      title: null,
+    });
+  });
+
+  it("qingmlDraft 无标签纯文本 fail-open 为单段", async () => {
+    const { sessionId } = await createSession();
+    await postJson<ExternalProposalResponse>(`/sessions/${sessionId}/proposals`, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "无标签纯文本" }],
+    });
+    const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
+    expect(body.qingml).toBe("<p>无标签纯文本</p>");
+  });
+
+  it("GET /doc 未知 format 返回读语义 400", async () => {
+    const { sessionId } = await createSession();
+    const response = await app.request(`/api/v1/external/sessions/${sessionId}/doc?format=html`, {
+      headers: authHeaders(),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json() as ExternalErrorResponse;
+    exactKeys(body, ["error", "code", "nextStep"]);
+    expect(body).toEqual({
+      error: "format 仅支持 qingml",
+      code: "VALIDATION",
+      nextStep: "读取文档时请移除 format，或改用 format=qingml 后重试",
+    });
+  });
+
   it("GET /sessions/:id/chat", async () => {
     const { sessionId } = await createSession();
     const session = await getOrRestoreSession(sessionId);
@@ -148,6 +209,34 @@ describe("external API v1 golden contract", () => {
     if (body.status !== "committed") throw new Error("expected committed proposal");
     exactKeys(body, ["status", "docVersion", "seq"]);
     expect(body).toEqual({ status: "committed", docVersion: 1, seq: expect.any(Number) });
+  });
+
+  it("POST /sessions/:id/proposals 的 VALIDATION 诊断体锁定公开字段", async () => {
+    const { sessionId } = await createSession();
+    const response = await app.request(`/api/v1/external/sessions/${sessionId}/proposals`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        expectedDocVersion: 0,
+        ops: [{ kind: "qingmlDraft", qingml: "<pre>secret<p>block</p></pre>" }],
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json() as ExternalProposalErrorResponse;
+    exactKeys(body as unknown as Record<string, unknown>, ["error", "code", "nextStep", "seq", "diagnostic"]);
+    expect(body.code).toBe("VALIDATION");
+    if (!("diagnostic" in body) || !body.diagnostic) throw new Error("expected validation diagnostic");
+    exactKeys(body.diagnostic, ["failureKind", "warningKinds", "tagSkeleton", "errorLocations"]);
+    expect(body.diagnostic).toMatchObject({
+      failureKind: "qingml_bad_block",
+      warningKinds: ["raw-text-child-tag"],
+      tagSkeleton: "<pre><p></p></pre>",
+      errorLocations: expect.any(Array),
+    });
+    for (const location of body.diagnostic.errorLocations) {
+      expect(Object.keys(location).every((key) => ["kind", "startOffset", "endOffset", "path"].includes(key))).toBe(true);
+    }
+    expect(JSON.stringify(body)).not.toContain("secret");
   });
 
   it("GET /sessions/:id/review", async () => {

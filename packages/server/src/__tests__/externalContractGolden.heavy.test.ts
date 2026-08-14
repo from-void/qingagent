@@ -76,10 +76,10 @@ describe("external API v1 golden contract", () => {
   it("GET /sessions/:id/doc", async () => {
     const { sessionId } = await createSession();
     const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?lines=1`);
-    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "markdownWithLineNumbers"]);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "markdownWithLineNumbers", "title"]);
     expect(body).toEqual({
       sessionId, docVersion: 0, state: "empty", agentBusy: false,
-      markdown: "", markdownWithLineNumbers: "   1 | ",
+      markdown: "", markdownWithLineNumbers: "   1 | ", title: null,
     });
   });
 

@@ -86,3 +86,7 @@ export type { RunPythonInput, RunPythonResult } from "./runPython.js";
 export { extractLarkConfigInitUrl } from "./vendor/feishu/larkConfigUrl.js";
 export { streamMoreQuestions } from "./askMore.js";
 export type { AskMoreQuestion } from "./askMore.js";
+export {
+  AiDocumentParseError,
+  parseAiDocumentFromQingml,
+} from "./generateDoc.js";

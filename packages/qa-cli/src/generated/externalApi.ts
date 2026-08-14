@@ -71,6 +71,8 @@ export interface ExternalDocReadResponse {
   agentBusy: boolean;
   markdown: string;
   markdownWithLineNumbers?: string;
+  qingml?: string;
+  title: string | null;
 }
 
 export interface ExternalChatMessage {
@@ -120,6 +122,7 @@ export interface ExternalFileTextResponse {
 
 export type ExternalProposeOp =
   | { kind: "fullDraft"; markdown: string }
+  | { kind: "qingmlDraft"; qingml: string }
   | { kind: "strReplace"; old: string; new: string; nth?: number }
   | { kind: "insertAfterLine"; line: number; markdown: string }
   | { kind: "appendSection"; markdown: string };
@@ -134,8 +137,20 @@ export type ExternalProposalResponse =
   | { status: "review"; patchIds: string[]; count: number; seq?: number }
   | { status: "committed"; docVersion: number; seq?: number };
 
+export interface ExternalValidationDiagnostic {
+  failureKind: string;
+  warningKinds: string[];
+  tagSkeleton: string;
+  errorLocations: Array<{
+    kind: string;
+    startOffset?: number;
+    endOffset?: number;
+    path?: Array<string | number>;
+  }>;
+}
+
 export type ExternalProposalErrorResponse =
-  | (ExternalErrorResponse & { seq?: number })
+  | (ExternalErrorResponse & { seq?: number; diagnostic?: ExternalValidationDiagnostic })
   | { code: "VERSION_CONFLICT"; expected: number; actual: number; nextStep: string; seq?: number };
 
 export type ExternalReviewPatchStatus =

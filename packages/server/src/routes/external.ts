@@ -11,6 +11,7 @@ import type {
   FolderSourceRecord,
   MessagePart,
   ReviewOutcome,
+  WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
 import type {
@@ -27,10 +28,17 @@ import {
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
+  deriveTitleFromDoc,
   documentRepo,
   QINGAGENT_RESOURCE_ID,
 } from "@qingagent/core";
-import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
+import {
+  aiBlocksToQingml,
+  markdownToPm,
+  normalizePmDoc,
+  pmToAiIr,
+  pmToMarkdown,
+} from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
@@ -438,6 +446,11 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
+  const format = c.req.query("format");
+  if (format !== undefined && format !== "qingml") {
+    externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
+    return externalError(c, 400, "VALIDATION", "format 仅支持 qingml");
+  }
   const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
@@ -445,6 +458,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
   }
   const state = deriveContentState(session);
   const markdown = session.doc ? pmToMarkdown(session.doc) : "";
+  const title = session.title.trim() || deriveTitleFromDoc(session.doc);
   externalLog("read", { sessionId, ms: elapsed(startedAt), result: "ok" });
   return c.json({
     sessionId,
@@ -453,6 +467,10 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     agentBusy: deriveAgentBusy(session),
     markdown,
     ...(c.req.query("lines") === "1" ? { markdownWithLineNumbers: withLineNumbers(markdown) } : {}),
+    ...(format === "qingml"
+      ? { qingml: session.doc ? aiBlocksToQingml(pmToAiIr(session.doc).blocks) : "" }
+      : {}),
+    title,
   });
 });
 
@@ -1400,7 +1418,13 @@ function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
     if (write.data.reason === "agent_busy") return errorSummary(409, "AGENT_BUSY", undefined, seq);
     if (write.data.reason === "not_editable") return errorSummary(409, "REVIEW_PENDING", undefined, seq);
     if (write.data.reason === "not_found") return errorSummary(404, "SESSION_NOT_FOUND", undefined, seq);
-    return errorSummary(400, "VALIDATION", "未命中,请重读文档", seq);
+    return errorSummary(
+      400,
+      "VALIDATION",
+      write.data.diagnostic ? "QingML 校验失败，请根据诊断修正后重试" : "未命中,请重读文档",
+      seq,
+      write.data.diagnostic,
+    );
   }
   return errorSummary(400, "VALIDATION", "提案未产生有效变更", seq);
 }
@@ -1414,10 +1438,16 @@ function errorSummary(
   code: ExternalErrorCode,
   message?: string,
   seq: number | null = null,
+  diagnostic?: WriteDraftFailureDiagnostic,
 ): ProposalSummary {
   return {
     status,
-    body: withSeq({ error: message ?? code, code, nextStep: EXTERNAL_NEXT_STEP[code] }, seq),
+    body: withSeq({
+      error: message ?? code,
+      code,
+      nextStep: EXTERNAL_NEXT_STEP[code],
+      ...(diagnostic ? { diagnostic } : {}),
+    }, seq),
     logResult: `rejected:${code}`,
     hunks: 0,
     seq,

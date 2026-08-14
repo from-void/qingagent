@@ -3,15 +3,19 @@ import type {
   ChatMessage,
   Command,
   ExternalProposeOp,
+  WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
 import {
+  compileAiDocumentToPm,
   markdownToPm,
   normalizePmDoc,
   pmToMarkdown,
+  qingmlTagSkeleton,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import {
+  AiDocumentParseError,
   advanceLastContentEditedAt,
   buildAnnotationMappingSteps,
   clonePmDoc,
@@ -30,6 +34,7 @@ import {
   invalidateDraftStateAfterCanonicalWrite,
   mapAnnotationGroupsThroughSteps,
   persistSessionMetadata,
+  parseAiDocumentFromQingml,
   replaceDraftCandidateDoc,
   replaceTextRuns,
   settleDraftCandidate,
@@ -44,6 +49,7 @@ import { getOrRestoreSession } from "./sessionLifecycle";
 function docWriteReason(
   clientMutationId: string,
   reason: "agent_busy" | "not_editable" | "not_found" | "validation_error",
+  diagnostic?: WriteDraftFailureDiagnostic,
 ): BridgeFrame {
   return {
     kind: "docWriteResult",
@@ -51,8 +57,62 @@ function docWriteReason(
       ok: false,
       clientMutationId,
       reason,
+      ...(diagnostic ? { diagnostic } : {}),
     },
   };
+}
+
+type ExternalQingmlDraftResult =
+  | { ok: true; doc: PmDoc; title: string | null }
+  | { ok: false; diagnostic: WriteDraftFailureDiagnostic };
+
+function compileExternalQingmlDraft(qingml: string): ExternalQingmlDraftResult {
+  try {
+    const parsed = parseAiDocumentFromQingml(qingml);
+    const compiled = compileAiDocumentToPm(parsed.document);
+    if (!compiled.ok || !compiled.doc) {
+      return {
+        ok: false,
+        diagnostic: {
+          failureKind: "qingml_bad_block",
+          warningKinds: ["invalid-ai-document"],
+          tagSkeleton: qingmlTagSkeleton(qingml),
+          errorLocations: compiled.blockErrors.slice(0, 12).map((error) => ({
+            kind: "invalid-ai-document",
+            path: error.index >= 0 ? ["blocks", error.index] : ["blocks"],
+          })),
+        },
+      };
+    }
+    return {
+      ok: true,
+      doc: compiled.doc,
+      title: typeof parsed.document.title === "string" && parsed.document.title.trim()
+        ? parsed.document.title.trim()
+        : null,
+    };
+  } catch (error) {
+    if (error instanceof AiDocumentParseError) {
+      return {
+        ok: false,
+        diagnostic: error.diagnostics.failureDiagnostic ?? {
+          failureKind: error.diagnostics.failureKind ?? "qingml_bad_block",
+          warningKinds: [],
+          tagSkeleton: qingmlTagSkeleton(qingml),
+          errorLocations: [],
+        },
+      };
+    }
+    return {
+      ok: false,
+      diagnostic: {
+        failureKind: "qingml_bad_block",
+        warningKinds: ["invalid-ai-document"],
+        tagSkeleton: qingmlTagSkeleton(qingml),
+        errorLocations: [],
+      },
+    };
+  }
 }
 
 function applyExternalProposalOps(
@@ -337,13 +397,25 @@ export async function* handleDocWriteCommand(
         return;
       }
 
-      const fullDraftOp = command.data.ops[0]?.kind === "fullDraft" ? command.data.ops[0] : null;
+      const firstOp = command.data.ops[0];
+      const fullDraftOp = firstOp?.kind === "fullDraft" ? firstOp : null;
+      const qingmlDraftOp = firstOp?.kind === "qingmlDraft" ? firstOp : null;
+      const qingmlDraft = qingmlDraftOp
+        ? compileExternalQingmlDraft(qingmlDraftOp.qingml)
+        : null;
+      if (qingmlDraft && !qingmlDraft.ok) {
+        yield docWriteReason(clientMutationId, "validation_error", qingmlDraft.diagnostic);
+        return;
+      }
       if (contentState.kind === "empty") {
-        if (!fullDraftOp || command.data.ops.length !== 1) {
+        if ((!fullDraftOp && !qingmlDraft) || command.data.ops.length !== 1) {
           yield docWriteReason(clientMutationId, "validation_error");
           return;
         }
-        const submittedDoc = normalizePmDoc(markdownToPm(fullDraftOp.markdown));
+        const submittedDoc = qingmlDraft
+          ? qingmlDraft.doc
+          : normalizePmDoc(markdownToPm(fullDraftOp!.markdown));
+        const submittedTitle = qingmlDraft?.title ?? null;
         const previousDocVersion = session.docVersion;
         const result = await commitDocumentOp({
           docId: session.docId ?? session.sessionId,
@@ -354,7 +426,7 @@ export async function* handleDocWriteCommand(
           opKind: "replace_doc",
           actorType: "agent",
           createIfMissing: {
-            title: session.title,
+            title: submittedTitle ?? session.title,
             docState: "editing",
             lastSyncedVersion: 0,
           },
@@ -386,13 +458,13 @@ export async function* handleDocWriteCommand(
         transitionDocState(session, deriveContentState(session), "user_doc_write", { mode: "normalize" });
         const nextTitle = session.titlePinned
           ? null
-          : deriveTitleFromDoc(session.doc);
+          : submittedTitle ?? deriveTitleFromDoc(session.doc);
         if (nextTitle && nextTitle !== session.title) {
           session.title = nextTitle;
           yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
         }
         await persistSessionMetadata(session);
-        yield* emitProjectedDocState(session, "external_full_draft");
+        yield* emitProjectedDocState(session, qingmlDraft ? "external_qingml_draft" : "external_full_draft");
         yield { kind: "docWriteResult", data: { ok: true, clientMutationId, docVersion: session.docVersion } };
         return;
       }
@@ -403,13 +475,18 @@ export async function* handleDocWriteCommand(
       }
 
       const baseCandidate = ensureDraftCandidateDoc(session);
-      let workingDoc = clonePmDoc(baseCandidate);
-      const applied = applyExternalProposalOps(workingDoc, command.data.ops);
-      if (!applied.ok) {
-        yield docWriteReason(clientMutationId, "validation_error");
-        return;
+      let workingDoc: PmDoc;
+      if (qingmlDraft) {
+        workingDoc = clonePmDoc(qingmlDraft.doc);
+      } else {
+        workingDoc = clonePmDoc(baseCandidate);
+        const applied = applyExternalProposalOps(workingDoc, command.data.ops);
+        if (!applied.ok) {
+          yield docWriteReason(clientMutationId, "validation_error");
+          return;
+        }
+        workingDoc = applied.doc;
       }
-      workingDoc = applied.doc;
       replaceDraftCandidateDoc(session, workingDoc);
 
       const externalId = `external-${client ?? "agent"}-${crypto.randomUUID()}`;
@@ -429,7 +506,7 @@ export async function* handleDocWriteCommand(
         agentMessageId,
         streamId,
         runId,
-        wholeDocument: false,
+        wholeDocument: qingmlDraft !== null,
       });
       if (settled.hunkCount <= 0) {
         yield docWriteReason(clientMutationId, "validation_error");

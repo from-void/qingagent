@@ -360,6 +360,7 @@ type _DetachFolderExact = Expect<Equal<z.infer<typeof detachFolderDataSchema>, D
 
 const externalProposeOpSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("fullDraft"), markdown: z.string() }),
+  z.object({ kind: z.literal("qingmlDraft"), qingml: z.string() }),
   z.object({
     kind: z.literal("strReplace"),
     old: z.string().min(1),
@@ -383,9 +384,11 @@ const externalProposeDataSchema = z
     ops: z.array(externalProposeOpSchema).min(1).max(50),
   })
   .refine((data) => {
-    const fullDraftCount = data.ops.filter((op) => op.kind === "fullDraft").length;
-    return fullDraftCount === 0 || (fullDraftCount === 1 && data.ops.length === 1);
-  }, "fullDraft must not be mixed with other ops") satisfies z.ZodType<ExternalPropose>;
+    const wholeDraftCount = data.ops.filter(
+      (op) => op.kind === "fullDraft" || op.kind === "qingmlDraft",
+    ).length;
+    return wholeDraftCount === 0 || (wholeDraftCount === 1 && data.ops.length === 1);
+  }, "whole-document draft must not be mixed with other ops") satisfies z.ZodType<ExternalPropose>;
 type _ExternalProposeExact = Expect<Equal<z.infer<typeof externalProposeDataSchema>, ExternalPropose>>;
 
 // ---- 顶层 Command 联合 ----

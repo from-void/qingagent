@@ -1826,9 +1826,10 @@ describe("WorkspacePage review controls", () => {
     expect(selectPatches(captured.current!.state)).toHaveLength(1);
     expect(
       captured.current?.docViewRef.current?.hasLocalDocumentChanges(),
-    ).toBe(true);
+    ).toBe(false);
     // TipTap 会给普通格补 colspan=1/rowspan=1，并在末尾表格后补一个
-    // blockId=null 的空段落脚手架；两者都不是 canonical 正文改动。
+    // blockId=null 的空段落脚手架；dirty 兜底与 incoming comparison 共用
+    // 语义口径后，两者都不会再被当成 canonical 正文改动。
     expect(
       captured.current?.docViewRef.current?.canSafelyApplyIncomingDocument(baseDoc),
     ).toBe(true);

@@ -16,7 +16,7 @@ export const EXTERNAL_NEXT_STEP: Record<ExternalErrorCode, string> = {
 
 export function externalError(
   c: Context,
-  status: 400 | 401 | 403 | 404 | 409 | 429,
+  status: 400 | 401 | 403 | 404 | 409 | 413 | 429,
   code: ExternalErrorCode,
   message?: string,
   nextStep?: string,

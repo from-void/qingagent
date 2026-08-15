@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import type {
   AnnotationGroup,
@@ -14,6 +15,10 @@ import type {
   WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
+import {
+  listSessionResources,
+  registerSessionResource,
+} from "@qingagent/db";
 import type {
   ExternalAnnotation,
   ExternalBridgeFrame,
@@ -66,6 +71,22 @@ import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import { queueExternalChat } from "../lib/externalChatQueue";
 import { externalTemplateRoutes } from "./externalTemplates";
 import { externalSkillRoutes } from "./externalSkills";
+import { resolveUploadMaxBytes } from "../lib/uploadLimits";
+import {
+  deleteUploadedFile,
+  findOrStoreUploadedFile,
+  isValidUploadId,
+} from "../lib/uploadStorage";
+import {
+  parseExternalAssetJson,
+  validateExternalAssetUploadInput,
+  type ExternalAssetUploadInputError,
+  type ExternalAssetUploadInputResult,
+} from "../lib/externalAssetUpload";
+import {
+  resolveUploadedFileForRead,
+  streamResolvedUploadedFile,
+} from "../lib/uploadServing";
 
 export const externalRoutes = new Hono();
 
@@ -81,6 +102,12 @@ const SESSION_SNAPSHOT_CURSOR_START = "start";
 const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
 const MAX_SESSION_SNAPSHOT_CURSORS = 32;
 const MAX_SESSION_SNAPSHOT_ITEMS = 50_000;
+const externalAssetMaxBytes = resolveUploadMaxBytes();
+const EXTERNAL_ASSET_BODY_OVERHEAD_BYTES = 64 * 1024;
+const externalAssetMaxRequestBytes = Math.max(
+  externalAssetMaxBytes,
+  Math.ceil(externalAssetMaxBytes / 3) * 4,
+) + EXTERNAL_ASSET_BODY_OVERHEAD_BYTES;
 
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
 let storedSessionSnapshotItems = 0;
@@ -1155,6 +1182,129 @@ externalRoutes.get("/sessions/:id/chat", async (c) => {
   externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "ok", count: messages.length });
   return c.json({ sessionId, messages });
 });
+
+externalRoutes.post(
+  "/sessions/:id/assets",
+  bodyLimit({
+    maxSize: externalAssetMaxRequestBytes,
+    onError: (c) => externalError(
+      c,
+      413,
+      "VALIDATION",
+      "图片超过上传上限",
+      `请选择不超过 ${externalAssetMaxBytes} 字节的图片后重试`,
+    ),
+  }),
+  async (c) => {
+    const sessionId = c.req.param("id");
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+
+    const contentType = c.req.header("content-type") ?? "";
+    let parsed: ExternalAssetUploadInputResult;
+    if (contentType.toLowerCase().includes("multipart/form-data")) {
+      const form = await c.req.parseBody().catch(() => null);
+      const file = form?.file;
+      if (!(file instanceof File)) {
+        return externalAssetInputError(c, "invalid_body");
+      }
+      parsed = validateExternalAssetUploadInput(
+        {
+          filename: file.name,
+          mimeType: file.type,
+          buffer: Buffer.from(await file.arrayBuffer()),
+        },
+        externalAssetMaxBytes,
+      );
+    } else if (contentType.toLowerCase().includes("application/json")) {
+      const body = await c.req.json().catch(() => null);
+      parsed = parseExternalAssetJson(body, externalAssetMaxBytes);
+    } else {
+      return externalError(
+        c,
+        400,
+        "VALIDATION",
+        "资产上传仅支持 multipart/form-data 或 application/json",
+        "multipart 请使用 file 字段；JSON 请传 filename、mimeType、base64",
+      );
+    }
+    if (!parsed.ok) return externalAssetInputError(c, parsed.error);
+
+    let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
+    try {
+      stored = await findOrStoreUploadedFile(parsed.input);
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid filename") {
+        return externalAssetInputError(c, "invalid_filename");
+      }
+      throw error;
+    }
+    try {
+      await registerSessionResource({
+        sessionId,
+        resourceId: stored.record.fileId,
+        kind: "upload",
+      });
+    } catch (error) {
+      await deleteUploadedFile(stored.record.fileId);
+      throw error;
+    }
+
+    const { fileId, filename, size } = stored.record;
+    const mimeType = stored.record.mimeType ?? parsed.input.mimeType;
+    return c.json({
+      fileId,
+      filename,
+      mimeType,
+      size,
+      src: `/api/v1/files/${encodeURIComponent(fileId)}/${encodeURIComponent(filename)}`,
+    });
+  },
+);
+
+externalRoutes.get("/sessions/:id/assets/:ref", async (c) => {
+  const sessionId = c.req.param("id");
+  if (!(await getOrRestoreSessionReadOnly(sessionId))) {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const fileId = c.req.param("ref");
+  if (!isValidUploadId(fileId)) {
+    return externalError(c, 400, "VALIDATION", "资产引用不合法");
+  }
+  const owned = (await listSessionResources(sessionId)).some(
+    (resource) => resource.resourceId === fileId,
+  );
+  if (!owned) return externalError(c, 404, "NOT_FOUND", "ASSET_NOT_FOUND");
+
+  const resolved = await resolveUploadedFileForRead(fileId);
+  if (!resolved.ok) {
+    return externalError(c, 404, "NOT_FOUND", "ASSET_NOT_FOUND");
+  }
+  return streamResolvedUploadedFile(c, resolved.file);
+});
+
+function externalAssetInputError(c: Context, error: ExternalAssetUploadInputError) {
+  switch (error) {
+    case "file_too_large":
+      return externalError(
+        c,
+        413,
+        "VALIDATION",
+        "图片超过上传上限",
+        `请选择不超过 ${externalAssetMaxBytes} 字节的图片后重试`,
+      );
+    case "invalid_filename":
+      return externalError(c, 400, "VALIDATION", "图片文件名不合法");
+    case "invalid_base64":
+      return externalError(c, 400, "VALIDATION", "base64 图片数据不合法");
+    case "empty_file":
+      return externalError(c, 400, "VALIDATION", "图片内容不能为空");
+    case "unsupported_media":
+      return externalError(c, 400, "VALIDATION", "仅支持图片资产");
+    case "invalid_body":
+      return externalError(c, 400, "VALIDATION", "资产上传请求不合法");
+  }
+}
 
 externalRoutes.get("/sessions/:id/files", async (c) => {
   const startedAt = Date.now();

@@ -47,6 +47,8 @@ export * from "./ExternalPropose";
 export type {
   ExternalBridgeFrame,
   ExternalBridgeFrameKind,
+  ExternalAssetUploadJsonRequest,
+  ExternalAssetUploadResponse,
   ExternalDocReplaceRequest,
   ExternalDocReplaceResponse,
   ExternalPmDocReadResponse,

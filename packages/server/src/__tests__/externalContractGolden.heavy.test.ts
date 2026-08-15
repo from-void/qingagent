@@ -1,5 +1,6 @@
 import type {
   ExternalBridgeFrame,
+  ExternalAssetUploadResponse,
   ExternalChatLogResponse,
   ExternalChatSendResponse,
   ExternalDocReplaceRequest,
@@ -25,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
+import { purgeStoredFile } from "../lib/uploadStorage";
 
 const dirs: string[] = [];
 let token = "";
@@ -231,6 +233,38 @@ describe("external API v1 golden contract", () => {
     submit.mockRestore();
     exactKeys(body, ["queued", "note"]);
     expect(body).toEqual({ queued: true, note: expect.any(String) });
+  });
+
+  it("POST + GET /sessions/:id/assets 精确锁定资产引用与二进制响应", async () => {
+    const { sessionId } = await createSession();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const body = await postJson<ExternalAssetUploadResponse>(`/sessions/${sessionId}/assets`, {
+      filename: "golden.png",
+      mimeType: "image/png",
+      base64: png.toString("base64"),
+    });
+    try {
+      exactKeys(body, ["fileId", "filename", "mimeType", "size", "src"]);
+      expect(body).toEqual({
+        fileId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+        filename: "golden.png",
+        mimeType: "image/png",
+        size: 8,
+        src: `/api/v1/files/${body.fileId}/golden.png`,
+      });
+
+      const response = await app.request(
+        `/api/v1/external/sessions/${sessionId}/assets/${body.fileId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(response.headers.get("content-length")).toBe("8");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+    } finally {
+      await purgeStoredFile(body.fileId);
+    }
   });
 
   it("GET /sessions/:id/files", async () => {

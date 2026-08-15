@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
 import { app } from "../app";
 import {
+  createJsonBodyLimitMiddleware,
   DEFAULT_JSON_BODY_LIMIT_BYTES,
   resolveJsonBodyLimit,
 } from "../lib/jsonBodyLimit";
@@ -76,6 +78,23 @@ describe("API JSON 请求体上限", () => {
 
     expect(response.status).toBe(400);
     expect(response.status).not.toBe(413);
+  });
+
+  it("external assets 让路给端点自己的 base64 膨胀后上限", async () => {
+    const isolated = new Hono();
+    isolated.use("/api/*", createJsonBodyLimitMiddleware(1));
+    isolated.post("/api/v1/external/sessions/session-1/assets", (c) => c.json({ ok: true }));
+
+    const response = await isolated.request(
+      "/api/v1/external/sessions/session-1/assets",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64: "iVBORw0KGgo=" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it("环境变量仅接受正的安全整数，非法值回退 8 MiB", () => {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
+  ExternalAssetUploadJsonRequest,
+  ExternalAssetUploadResponse,
   ExternalBridgeFrame,
   ExternalReviewRenderModelResponse,
 } from "../ExternalApi";
@@ -34,5 +36,24 @@ describe("external API 文档契约", () => {
 
     expect(response.baseVersion).toBe(response.docVersion);
     expect(response.previewDoc?.type).toBe("doc");
+  });
+
+  it("资产上传返回内部同形 fileId 与可写入 PmDoc 的持久化 src", () => {
+    const request: ExternalAssetUploadJsonRequest = {
+      filename: "示意图.png",
+      mimeType: "image/png",
+      base64: "iVBORw0KGgo=",
+    };
+    const response: ExternalAssetUploadResponse = {
+      fileId: "550e8400-e29b-41d4-a716-446655440000",
+      filename: request.filename,
+      mimeType: request.mimeType!,
+      size: 8,
+      src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/%E7%A4%BA%E6%84%8F%E5%9B%BE.png",
+    };
+
+    expect(response.src).toBe(
+      `/api/v1/files/${response.fileId}/${encodeURIComponent(response.filename)}`,
+    );
   });
 });

@@ -126,6 +126,28 @@ export interface ExternalChatLogResponse { sessionId: string; messages: External
 export interface ExternalChatSendRequest { text: string }
 export interface ExternalChatSendResponse { queued: true; note: string }
 
+/**
+ * POST /sessions/:id/assets 的 JSON 请求体。multipart/form-data 形态使用单一 `file` 字段。
+ * `base64` 是纯 RFC 4648 内容，不含 data URL 前缀；mimeType 缺省时按常见图片扩展名推断。
+ */
+export interface ExternalAssetUploadJsonRequest {
+  filename: string;
+  mimeType?: string;
+  base64: string;
+}
+
+/**
+ * POST /sessions/:id/assets：字段与内部 upload 响应一致，并补充可直接写入 PmDoc image.attrs.src 的 src。
+ * GET /sessions/:id/assets/:ref 中的 ref 即 fileId；外部宿主渲染 src 时可据此代理带 Bearer 的读取。
+ */
+export interface ExternalAssetUploadResponse {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  src: string;
+}
+
 export interface ExternalMaterial {
   id: string;
   filename: string;
@@ -454,6 +476,7 @@ export type ExternalSuccessResponse =
   | ExternalHealthResponse | ExternalSessionsListResponse | ExternalSessionCreateResponse
   | ExternalDocReadResponse | ExternalPmDocReadResponse | ExternalDocReplaceResponse
   | ExternalChatLogResponse | ExternalChatSendResponse
+  | ExternalAssetUploadResponse
   | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse
   | ExternalReviewListResponse | ExternalReviewRenderModelResponse
   | ExternalReviewPatchResponse | ExternalAnnotationResponse

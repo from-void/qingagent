@@ -33,6 +33,14 @@ export function createJsonBodyLimitMiddleware(
 
   return (c, next) => {
     if (c.req.path === "/api/v1/upload") return next();
+    // external 图片资产另按 resolveUploadMaxBytes 限制；base64 JSON 的线长会大于
+    // 解码后的文件字节，不能先被通用 8 MiB JSON 护栏截断。
+    if (
+      c.req.method === "POST" &&
+      /^\/api\/v1\/external\/sessions\/[^/]+\/assets$/.test(c.req.path)
+    ) {
+      return next();
+    }
     if (
       c.req.path.startsWith("/api/v1/folder-bridge/responses/") &&
       (c.req.header("content-type") ?? "").includes("application/octet-stream")

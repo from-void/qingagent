@@ -18,6 +18,7 @@ import type { SuggestionAnchor } from "./DocSuggestion";
 import type { ReviewTemplateItem } from "./ReviewTemplates";
 import type { DraftTemplateResult } from "./DraftTemplate";
 import type { ConfirmRequested, ConfirmResolved } from "./Confirm";
+import type { WriteDraftFailureDiagnostic } from "./WriteDraftCardBody";
 
 export type BridgeFrame =
   | { kind: "templateDrafted"; data: DraftTemplateResult & { requestId: string } }
@@ -70,7 +71,7 @@ export type BridgeFrame =
   | { kind: "annotationPreviewCleared"; data: Record<string, never> }
   | { kind: "docWriteResult"; data:
       | { ok: true; clientMutationId: string; docVersion: number }
-      | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error" }
+      | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error"; diagnostic?: WriteDraftFailureDiagnostic }
       | { ok: false; clientMutationId: string; conflict: { expectedDocumentSnapshot: number; actualDocumentSnapshot: number } } }
   | {
       kind: "docStateChanged";

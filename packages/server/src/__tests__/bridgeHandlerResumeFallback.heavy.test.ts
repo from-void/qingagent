@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BridgeFrame,
+  Command,
   FolderSourceRecord,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
+import { getPmContentHash } from "@qingagent/pm-schema";
 import { pmDocFromText } from "./pmTestUtils.js";
 
 // resetModules 只重置 bridge 会话状态；真实 core 保持文件级单例，避免每个用例
@@ -29,7 +31,9 @@ const mockState = vi.hoisted(() => ({
       listSuspendedRuns: vi.fn(async () => ({ runs: [] })),
       declineToolCall: vi.fn(),
       buildCapabilityTools: vi.fn(async () => ({})),
+      commitDocumentOp: vi.fn(),
       ensureWorkingMemorySnapshot: vi.fn(async () => "# 用户长期记忆\n- 喜欢短句"),
+      invalidateDraftStateAfterCanonicalWrite: vi.fn(async () => undefined),
       prepareOmContextForTurn: vi.fn(async (session: any) => ({
         messagesForModel: session?.messages ?? [],
         tailObservationPrompt: "[长期观察]\n- 早期事实: 用户关注结构。",
@@ -170,6 +174,7 @@ async function loadBridge() {
     return {
       ...actualCore,
       buildCapabilityTools: mockState.buildCapabilityTools,
+      commitDocumentOp: mockState.commitDocumentOp,
       createSessionThread: vi.fn(async () => undefined),
       persistSessionMetadata: mockState.persistSessionMetadata,
       schedulePersist: mockState.persistSessionMetadata,
@@ -177,6 +182,7 @@ async function loadBridge() {
         actualCore.loadSessionFromThread,
       ),
       ensureWorkingMemorySnapshot: mockState.ensureWorkingMemorySnapshot,
+      invalidateDraftStateAfterCanonicalWrite: mockState.invalidateDraftStateAfterCanonicalWrite,
       prepareOmContextForTurn: mockState.prepareOmContextForTurn,
       runAgentTurn: mockState.runAgentTurn,
       scheduleOmSidecarAfterTurn: mockState.scheduleOmSidecarAfterTurn,
@@ -255,7 +261,9 @@ describe("handleResume askUser fresh-turn fallback", () => {
     mockState.declineToolCall.mockReset();
     mockState.buildCapabilityTools.mockReset();
     mockState.buildCapabilityTools.mockResolvedValue({});
+    mockState.commitDocumentOp.mockReset();
     mockState.ensureWorkingMemorySnapshot.mockClear();
+    mockState.invalidateDraftStateAfterCanonicalWrite.mockClear();
     mockState.prepareOmContextForTurn.mockClear();
     mockState.persistSessionMetadata.mockClear();
     mockState.loadSessionFromThread.mockReset();
@@ -406,6 +414,81 @@ describe("handleResume askUser fresh-turn fallback", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("冷恢复清理无 Mastra snapshot 的悬挂流后，actor updateDoc 可立即写入", async () => {
+    const bridge = await loadBridge();
+    const { createSession, deriveAgentBusy } = await import("@qingagent/core");
+    const session = createSession("cold-stale-stream-update");
+    const oldDoc = pmDocFromText("旧正文");
+    const nextDoc = pmDocFromText("新正文");
+    session.threadId = session.sessionId;
+    session.doc = oldDoc;
+    session.docVersion = 1;
+    session.docState = { kind: "editing" };
+    session.lastSyncedDocumentSnapshot = 1;
+    seedSuspendedAskUserSession(session, "run-killed-before-restart", "stream-killed-before-restart");
+    session.doc = oldDoc;
+    session.docVersion = 1;
+    session.docState = { kind: "editing" };
+    session.lastSyncedDocumentSnapshot = 1;
+    mockState.loadSessionFromThread.mockResolvedValueOnce(session);
+    mockState.listSuspendedRuns.mockResolvedValueOnce({ runs: [] });
+    mockState.commitDocumentOp.mockResolvedValueOnce({
+      status: "committed",
+      docVersion: 2,
+      contentHash: getPmContentHash(nextDoc),
+      doc: nextDoc,
+      versionId: "version-after-stale-stream",
+      createdNewVersion: true,
+      committedAt: "2026-08-15T06:00:00.000Z",
+    });
+
+    const command: Command = {
+      kind: "updateDoc",
+      data: {
+        sessionId: session.sessionId,
+        expectedDocumentSnapshot: 1,
+        baseContentHash: getPmContentHash(oldDoc),
+        doc: nextDoc,
+        clientMutationId: "mutation-after-stale-stream",
+      },
+    };
+    const logged = await bridge.sessionManager.submit(session.sessionId, {
+      command,
+      origin: "external",
+    });
+    const frames = logged.map((entry) => entry.frame);
+
+    expect(mockState.listSuspendedRuns).toHaveBeenCalledWith({
+      threadId: session.sessionId,
+      resourceId: session.resourceId,
+    });
+    expect(session.streamId).toBeNull();
+    expect(session.runId).toBeNull();
+    expect(session.toolCallId).toBeNull();
+    expect(session._suspensionOwner).toBeNull();
+    expect(deriveAgentBusy(session)).toBe(false);
+    expect(session.chatHistory[1]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: {
+        status: { kind: "aborted" },
+        result: { kind: "genericText" },
+      },
+    });
+    expect(mockState.persistSessionMetadata).toHaveBeenCalledWith(
+      session,
+      "restore:stale_agent_suspension",
+    );
+    expect(mockState.commitDocumentOp).toHaveBeenCalled();
+    expect(frames).toContainEqual({
+      kind: "docWriteResult",
+      data: {
+        ok: true,
+        clientMutationId: "mutation-after-stale-stream",
+        docVersion: 2,
+      },
+    });
   });
 
   it("resumeStream 首帧宽限超时后复用同一取消控制器并只转 fresh turn 一次", async () => {
@@ -1019,6 +1102,16 @@ describe("handleResume askUser fresh-turn fallback", () => {
       toolName: "askUser",
     };
     mockState.loadSessionFromThread.mockResolvedValueOnce(session);
+    mockState.listSuspendedRuns.mockResolvedValueOnce({
+      runs: [{
+        runId: "run-cold",
+        toolCalls: [{
+          toolCallId: "ask-inline-real",
+          toolName: "askUser",
+          requiresApproval: false,
+        }],
+      }],
+    } as never);
     mockState.resumeStream.mockResolvedValue({
       runId: "run-cold-resumed",
       fullStream: streamOf({ type: "finish", payload: {} }),

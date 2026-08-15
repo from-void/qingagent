@@ -295,7 +295,9 @@ export type {
   UserSkillSource,
 } from "./skills/index.js";
 export {
+  AiDocumentParseError,
   parseFileBuffer,
+  parseAiDocumentFromQingml,
   readDocumentForSession,
   streamMoreQuestions,
 } from "./tools/index.js";

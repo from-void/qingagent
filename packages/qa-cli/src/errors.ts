@@ -23,7 +23,7 @@ export const NEXT_STEP: Record<QaErrorCode, string> = {
   AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
   NO_INSTANCE: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
   EVENT_TARGET_NOT_REACHED: "事件流已结束但目标未命中,用 `qa doc state -s <id> --json` 对账后再决定是否续听",
-  VALIDATION: "提案不合法(空文档只能 fullDraft / 已有文档禁整篇覆写 / 未命中 / 超 50 处),按提示改",
+  VALIDATION: "提案不合法(空文档只能 fullDraft/qingmlDraft / 已有文档禁 fullDraft / QingML 结构有害降级 / 未命中 / 超 50 处),按提示改",
   NOT_FOUND: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
   SESSION_NOT_FOUND: "会话不存在,用 `qa sessions list` 重新对号,不要重试原 id",
   MATERIAL_NOT_FOUND: "材料不存在,用 `qa files list` 重新对号,不要重试原 id",

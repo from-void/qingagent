@@ -9,6 +9,10 @@
  * 破坏性响应变更必须迁移到新的 API major，并同步发布能够识别该 major 的 qa-cli。
  */
 
+import type { BridgeFrame } from "@qingagent/contract-ts";
+import type { DocDiffReady } from "@qingagent/contract-ts";
+import type { PmDoc } from "@qingagent/contract-ts";
+
 export type ExternalClient = "claudecode" | "codex" | "agent";
 
 export type ExternalErrorCode =
@@ -71,7 +75,45 @@ export interface ExternalDocReadResponse {
   agentBusy: boolean;
   markdown: string;
   markdownWithLineNumbers?: string;
+  qingml?: string;
+  title: string | null;
 }
+
+/** GET /sessions/:id/doc?format=pm：可直接作为 updateDoc 基线的权威 PM 快照。 */
+export interface ExternalPmDocReadResponse {
+  sessionId: string;
+  docVersion: number;
+  contentHash: string;
+  state: ExternalDocumentState;
+  agentBusy: boolean;
+  title: string | null;
+  ts: string;
+  pmDoc: PmDoc | null;
+}
+
+/** PUT /sessions/:id/doc：用户直接保存，不进入 proposal/review 语义。 */
+export interface ExternalDocReplaceRequest {
+  expectedDocumentSnapshot: number;
+  baseContentHash: string;
+  clientMutationId: string;
+  doc: PmDoc;
+}
+
+export type ExternalDocReplaceResponse =
+  | {
+      ok: true;
+      clientMutationId: string;
+      docVersion: number;
+      contentHash: string;
+      ts: string;
+    }
+  | {
+      ok: false;
+      clientMutationId: string;
+      code: "VERSION_CONFLICT";
+      conflict: { expected: number; actual: number };
+      actualContentHash: string;
+    };
 
 export interface ExternalChatMessage {
   id: string;
@@ -83,6 +125,28 @@ export interface ExternalChatMessage {
 export interface ExternalChatLogResponse { sessionId: string; messages: ExternalChatMessage[] }
 export interface ExternalChatSendRequest { text: string }
 export interface ExternalChatSendResponse { queued: true; note: string }
+
+/**
+ * POST /sessions/:id/assets 的 JSON 请求体。multipart/form-data 形态使用单一 `file` 字段。
+ * `base64` 是纯 RFC 4648 内容，不含 data URL 前缀；mimeType 缺省时按常见图片扩展名推断。
+ */
+export interface ExternalAssetUploadJsonRequest {
+  filename: string;
+  mimeType?: string;
+  base64: string;
+}
+
+/**
+ * POST /sessions/:id/assets：字段与内部 upload 响应一致，并补充可直接写入 PmDoc image.attrs.src 的 src。
+ * GET /sessions/:id/assets/:ref 中的 ref 即 fileId；外部宿主渲染 src 时可据此代理带 Bearer 的读取。
+ */
+export interface ExternalAssetUploadResponse {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  src: string;
+}
 
 export interface ExternalMaterial {
   id: string;
@@ -120,6 +184,7 @@ export interface ExternalFileTextResponse {
 
 export type ExternalProposeOp =
   | { kind: "fullDraft"; markdown: string }
+  | { kind: "qingmlDraft"; qingml: string }
   | { kind: "strReplace"; old: string; new: string; nth?: number }
   | { kind: "insertAfterLine"; line: number; markdown: string }
   | { kind: "appendSection"; markdown: string };
@@ -134,8 +199,20 @@ export type ExternalProposalResponse =
   | { status: "review"; patchIds: string[]; count: number; seq?: number }
   | { status: "committed"; docVersion: number; seq?: number };
 
+export interface ExternalValidationDiagnostic {
+  failureKind: string;
+  warningKinds: string[];
+  tagSkeleton: string;
+  errorLocations: Array<{
+    kind: string;
+    startOffset?: number;
+    endOffset?: number;
+    path?: Array<string | number>;
+  }>;
+}
+
 export type ExternalProposalErrorResponse =
-  | (ExternalErrorResponse & { seq?: number })
+  | (ExternalErrorResponse & { seq?: number; diagnostic?: ExternalValidationDiagnostic })
   | { code: "VERSION_CONFLICT"; expected: number; actual: number; nextStep: string; seq?: number };
 
 export type ExternalReviewPatchStatus =
@@ -216,6 +293,17 @@ export interface ExternalReviewListResponse {
   patches: ExternalReviewPatchSummary[];
   annotations: ExternalAnnotation[];
 }
+
+/**
+ * GET /sessions/:id/review?format=render-model。
+ * 渲染字段直接复用 DocDiffReady，避免 summary/detail DTO 丢失 PM steps、marks 与 textHash。
+ */
+export type ExternalReviewRenderModelResponse = {
+  sessionId: string;
+  docVersion: number;
+  state: ExternalDocumentState;
+  agentBusy: boolean;
+} & DocDiffReady;
 
 export interface ExternalReviewPatchResponse {
   sessionId: string;
@@ -371,23 +459,27 @@ export interface ExternalSkillMutationResponse {
 
 export interface ExternalEventsMeta { epoch: number; minSeq: number; nextSeq: number; gap: boolean }
 
-/** qa-cli 消费的 BridgeFrame 子集只依赖公开 envelope；data 由 kind 对应的 v1 wire 契约承载。 */
-export interface ExternalBridgeFrame {
-  seq: number;
-  kind:
-    | "restoreReset" | "sessionMeta" | "chatMessageAdded" | "chatMessageAppended"
-    | "toolCallUpdated" | "documentSnapshotWritten" | "docGenerationEvent" | "docCommitted"
-    | "docDiffReady" | "docWriteResult" | "docStateChanged" | "todosChanged"
-    | "resourceUpserted" | "resourceUpdated" | "resourceRemoved" | "folderSourcesChanged"
-    | "folderSourceOperationResult" | "annotationGroupsReady" | "stream";
-  data: unknown;
-}
+export type ExternalBridgeFrameKind =
+  | "restoreReset" | "sessionMeta" | "chatMessageAdded" | "chatMessageAppended"
+  | "toolCallUpdated" | "documentSnapshotWritten" | "docGenerationEvent" | "docCommitted"
+  | "docDiffReady" | "docWriteResult" | "docStateChanged" | "todosChanged"
+  | "resourceUpserted" | "resourceUpdated" | "resourceRemoved" | "folderSourcesChanged"
+  | "folderSourceOperationResult" | "annotationGroupsReady" | "stream";
+
+/** external SSE 的公开判别 union；kind 收窄后 data 自动得到对应 BridgeFrame 的完整类型。 */
+export type ExternalBridgeFrame = { seq: number } & Extract<
+  BridgeFrame,
+  { kind: ExternalBridgeFrameKind }
+>;
 
 export type ExternalSuccessResponse =
   | ExternalHealthResponse | ExternalSessionsListResponse | ExternalSessionCreateResponse
-  | ExternalDocReadResponse | ExternalChatLogResponse | ExternalChatSendResponse
+  | ExternalDocReadResponse | ExternalPmDocReadResponse | ExternalDocReplaceResponse
+  | ExternalChatLogResponse | ExternalChatSendResponse
+  | ExternalAssetUploadResponse
   | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse
-  | ExternalReviewListResponse | ExternalReviewPatchResponse | ExternalAnnotationResponse
+  | ExternalReviewListResponse | ExternalReviewRenderModelResponse
+  | ExternalReviewPatchResponse | ExternalAnnotationResponse
   | ExternalReviewVerdictResponse | ExternalReviewCommitResponse
   | ExternalAnnotationIgnoreResponse
   | ExternalReviewTemplatesResponse | ExternalReviewTemplateResponse

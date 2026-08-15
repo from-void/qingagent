@@ -270,6 +270,11 @@ export class SessionManager {
     return this.actors.get(sessionId)?.actor.state ?? null;
   }
 
+  /** 会话读接口使用 Actor 真态，避免持久化/只读快照把在途命令误报为空闲。 */
+  isSessionBusy(sessionId: string): boolean {
+    return this.actors.get(sessionId)?.actor.isBusy ?? false;
+  }
+
   listSessionIds(limit = 20): string[] {
     const n = Math.max(0, Math.floor(limit));
     if (n === 0) return [];

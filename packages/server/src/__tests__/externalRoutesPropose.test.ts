@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
 import { getDocumentsClient } from "@qingagent/core";
+import { qingmlParse } from "@qingagent/pm-schema";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 
@@ -24,6 +25,119 @@ afterEach(async () => {
 });
 
 describe("external proposals", () => {
+  it("qingmlDraft 首稿直落并按原生结构读回，后续整稿进入审阅", async () => {
+    const sessionId = await createSession();
+    const firstQingml = [
+      "<title>外部 QingML 标题</title>",
+      "<h1>正文一级标题</h1>",
+      "<p>第一段。</p>",
+      "<ul><li>父项<ul><li>子项</li></ul></li></ul>",
+      "<table><tr><th><p>列名</p></th><th><p>值</p></th></tr><tr><td><p>甲</p></td><td><callout emoji=\"💡\" tone=\"info\">提示</callout></td></tr></table>",
+      "<callout emoji=\"✅\" tone=\"success\">独立提示</callout>",
+      "<tasks><task checked=\"true\">已完成</task><task>待处理</task></tasks>",
+      "<pre lang=\"cpp\">#include &lt;stdio.h&gt;\nint main() { return 0; }</pre>",
+    ].join("");
+
+    const committed = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: firstQingml }],
+    });
+    expect(committed.status).toBe(200);
+    const committedBody = await committed.json() as { status: string; docVersion: number; seq: number };
+    expect(committedBody).toMatchObject({ status: "committed", docVersion: 1 });
+
+    const read = await app.request(`/api/v1/external/sessions/${sessionId}/doc?format=qingml`, {
+      headers: authHeaders(),
+    });
+    expect(read.status).toBe(200);
+    const readBody = await read.json() as { title: string | null; qingml: string; markdown: string };
+    expect(readBody.title).toBe("外部 QingML 标题");
+    expect(readBody.markdown).toContain("正文一级标题");
+    const parsedRoundTrip = qingmlParse(readBody.qingml);
+    expect(parsedRoundTrip.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
+    expect(parsedRoundTrip.blocks.map((block) => block.type)).toEqual([
+      "heading",
+      "paragraph",
+      "bulletList",
+      "table",
+      "callout",
+      "taskList",
+      "codeBlock",
+    ]);
+    expect(readBody.qingml).toContain("<ul><li>父项<ul><li>子项</li></ul></li></ul>");
+
+    const review = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{
+        kind: "qingmlDraft",
+        qingml: firstQingml
+          .replace("外部 QingML 标题", "审阅态新标题")
+          .replace("第一段。", "第一段已修改。"),
+      }],
+    });
+    expect(review.status).toBe(200);
+    const reviewBody = await review.json() as { status: string; count: number; patchIds: string[] };
+    expect(reviewBody.status).toBe("review");
+    expect(reviewBody.count).toBeGreaterThan(0);
+    expect(reviewBody.patchIds).toHaveLength(reviewBody.count);
+    const reviewFrames = sessionManager.frameLog.readFrom(sessionId, committedBody.seq).frames;
+    expect(reviewFrames).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        frame: { kind: "sessionMeta", data: { sessionId, title: "审阅态新标题" } },
+      }),
+    ]));
+
+    const readAfterReview = await app.request(`/api/v1/external/sessions/${sessionId}/doc`, {
+      headers: authHeaders(),
+    });
+    expect(await readAfterReview.json()).toMatchObject({ title: "审阅态新标题" });
+
+    const reviewRead = await app.request(`/api/v1/external/sessions/${sessionId}/review`, {
+      headers: authHeaders(),
+    });
+    expect(reviewRead.status).toBe(200);
+    const reviewReadBody = await reviewRead.json() as { patches: unknown[] };
+    expect(reviewReadBody.patches.length).toBeGreaterThan(0);
+  });
+
+  it("拒绝产生有害降级的 qingmlDraft，并返回脱敏诊断", async () => {
+    const sessionId = await createSession();
+    const rejected = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "<pre>secret<p>block</p></pre>" }],
+    });
+
+    expect(rejected.status).toBe(400);
+    const body = await rejected.json() as {
+      code: string;
+      diagnostic?: { failureKind: string; warningKinds: string[]; tagSkeleton: string };
+    };
+    expect(body).toMatchObject({
+      code: "VALIDATION",
+      diagnostic: {
+        failureKind: "qingml_bad_block",
+        warningKinds: expect.arrayContaining(["raw-text-child-tag"]),
+        tagSkeleton: "<pre><p></p></pre>",
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("secret");
+
+    const empty = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "  \n" }],
+    });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({
+      code: "VALIDATION",
+      diagnostic: {
+        failureKind: "qingml_empty",
+        warningKinds: [],
+        tagSkeleton: "",
+        errorLocations: [],
+      },
+    });
+  });
+
   it("覆盖 P1 状态矩阵主路径和 409 家族", async () => {
     const sessionId = await createSession();
 

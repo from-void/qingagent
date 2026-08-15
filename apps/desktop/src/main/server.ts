@@ -25,6 +25,8 @@ export interface StartServerOptions {
 export interface EmbeddedServerInfo {
   port: number;
   commandAuthToken: string;
+  /** external 子树专用:恒为本实例 instance token(不随 QINGAGENT_AUTH_TOKEN 变),深链探测等同应用请求靠它过 external 鉴权。 */
+  externalAuthToken: string;
 }
 
 async function startServerOnce(options: StartServerOptions): Promise<EmbeddedServerInfo> {
@@ -126,6 +128,7 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
   return {
     port: result.port,
     commandAuthToken: process.env.QINGAGENT_AUTH_TOKEN || instance.token,
+    externalAuthToken: instance.token,
   };
 }
 

@@ -32,6 +32,37 @@ function selectionChip(tableSelection: unknown): unknown {
  * 本身的接受/拒绝与消毒行为,不依赖 server。
  */
 describe("commandSchema", () => {
+  it("externalPropose 接受独占的 qingmlDraft，并拒绝与其它操作混用", () => {
+    const base = {
+      kind: "externalPropose",
+      data: { sessionId: "s", expectedDocVersion: 0, clientMutationId: "m" },
+    } as const;
+    expect(commandSchema.safeParse({
+      ...base,
+      data: { ...base.data, ops: [{ kind: "qingmlDraft", qingml: "<p>正文</p>" }] },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        ops: [
+          { kind: "qingmlDraft", qingml: "<p>正文</p>" },
+          { kind: "appendSection", markdown: "追加" },
+        ],
+      },
+    }).success).toBe(false);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        ops: [
+          { kind: "fullDraft", markdown: "正文" },
+          { kind: "qingmlDraft", qingml: "<p>正文</p>" },
+        ],
+      },
+    }).success).toBe(false);
+  });
+
   it("接受三种衍生稿 dtype，翻译要求目标语言并拒绝未知 dtype", () => {
     const base = { kind: "createDerivative", data: { sessionId: "s", requestId: "request-create", templateId: "xhs-seed", privatePrompt: "" } } as const;
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "gzh" } }).success).toBe(true);

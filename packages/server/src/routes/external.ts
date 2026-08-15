@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import type {
   AnnotationGroup,
@@ -11,26 +12,44 @@ import type {
   FolderSourceRecord,
   MessagePart,
   ReviewOutcome,
+  WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
+import {
+  listSessionResources,
+  registerSessionResource,
+} from "@qingagent/db";
 import type {
   ExternalAnnotation,
   ExternalBridgeFrame,
+  ExternalDocReplaceRequest,
   ExternalErrorCode,
   ExternalReviewCommitRequest,
   ExternalReviewDiff,
   ExternalReviewPatchDetail,
   ExternalReviewPatchSummary,
   ExternalReviewVerdictRequest,
+  ExternalValidationDiagnostic,
 } from "../../../contract-ts/src/ExternalApi";
 import {
+  currentPmDoc,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
+  deriveTitleFromDoc,
   documentRepo,
+  isWholeDocumentSuggestionBatchId,
   QINGAGENT_RESOURCE_ID,
+  type SessionState,
 } from "@qingagent/core";
-import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
+import {
+  aiBlocksToQingml,
+  getPmContentHash,
+  markdownToPm,
+  normalizePmDoc,
+  pmToAiIr,
+  pmToMarkdown,
+} from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
@@ -52,6 +71,22 @@ import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import { queueExternalChat } from "../lib/externalChatQueue";
 import { externalTemplateRoutes } from "./externalTemplates";
 import { externalSkillRoutes } from "./externalSkills";
+import { resolveUploadMaxBytes } from "../lib/uploadLimits";
+import {
+  deleteUploadedFile,
+  findOrStoreUploadedFile,
+  isValidUploadId,
+} from "../lib/uploadStorage";
+import {
+  parseExternalAssetJson,
+  validateExternalAssetUploadInput,
+  type ExternalAssetUploadInputError,
+  type ExternalAssetUploadInputResult,
+} from "../lib/externalAssetUpload";
+import {
+  resolveUploadedFileForRead,
+  streamResolvedUploadedFile,
+} from "../lib/uploadServing";
 
 export const externalRoutes = new Hono();
 
@@ -62,11 +97,16 @@ const DEFAULT_SESSIONS_LIMIT = 100;
 const MAX_SESSIONS_LIMIT = 500;
 const READ_RATE_LIMIT_PER_SECOND = 5;
 const WRITE_RATE_LIMIT_PER_SECOND = 20;
-const REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS = 3_000;
 const SESSION_SNAPSHOT_CURSOR_START = "start";
 const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
 const MAX_SESSION_SNAPSHOT_CURSORS = 32;
 const MAX_SESSION_SNAPSHOT_ITEMS = 50_000;
+const externalAssetMaxBytes = resolveUploadMaxBytes();
+const EXTERNAL_ASSET_BODY_OVERHEAD_BYTES = 64 * 1024;
+const externalAssetMaxRequestBytes = Math.max(
+  externalAssetMaxBytes,
+  Math.ceil(externalAssetMaxBytes / 3) * 4,
+) + EXTERNAL_ASSET_BODY_OVERHEAD_BYTES;
 
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
 let storedSessionSnapshotItems = 0;
@@ -84,44 +124,6 @@ type ExternalSessionSummary = {
 };
 
 const EXISTS_BY_IDS_BATCH_SIZE = 50;
-
-type ReviewOutcomeCompletionResult =
-  | { status: "completed" }
-  | { status: "failed"; error: unknown }
-  | { status: "timed_out" }
-  | { status: "disconnected" };
-
-function waitForReviewOutcomeCompletion(
-  completion: Promise<LoggedFrame[]>,
-  requestSignal: AbortSignal,
-): Promise<ReviewOutcomeCompletionResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => finish({ status: "disconnected" });
-    const finish = (result: ReviewOutcomeCompletionResult) => {
-      if (settled) return;
-      settled = true;
-      if (timeout !== undefined) clearTimeout(timeout);
-      requestSignal.removeEventListener("abort", onAbort);
-      resolve(result);
-    };
-
-    void completion.then(
-      () => finish({ status: "completed" }),
-      (error) => finish({ status: "failed", error }),
-    );
-    if (requestSignal.aborted) {
-      finish({ status: "disconnected" });
-      return;
-    }
-    requestSignal.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(
-      () => finish({ status: "timed_out" }),
-      REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS,
-    );
-  });
-}
 
 externalRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
@@ -438,22 +440,146 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
+  const format = c.req.query("format");
+  if (format !== undefined && format !== "qingml" && format !== "pm") {
+    externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      "format 仅支持 qingml 或 pm",
+      "读取文档时请移除 format，或改用 format=qingml / format=pm 后重试",
+    );
+  }
   const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
   }
   const state = deriveContentState(session);
+  if (format === "pm") {
+    const snapshot = await externalCanonicalDocumentSnapshot(session);
+    externalLog("read", { sessionId, ms: elapsed(startedAt), result: "ok" });
+    return c.json({
+      sessionId,
+      docVersion: snapshot.docVersion,
+      contentHash: snapshot.contentHash,
+      state: state.kind,
+      agentBusy: sessionManager.isSessionBusy(sessionId),
+      title: session.title.trim() || deriveTitleFromDoc(snapshot.pmDoc),
+      ts: snapshot.ts,
+      pmDoc: snapshot.pmDoc,
+    });
+  }
   const markdown = session.doc ? pmToMarkdown(session.doc) : "";
+  const title = session.title.trim() || deriveTitleFromDoc(session.doc);
   externalLog("read", { sessionId, ms: elapsed(startedAt), result: "ok" });
   return c.json({
     sessionId,
     docVersion: session.docVersion,
     state: state.kind,
-    agentBusy: deriveAgentBusy(session),
+    agentBusy: sessionManager.isSessionBusy(sessionId),
     markdown,
     ...(c.req.query("lines") === "1" ? { markdownWithLineNumbers: withLineNumbers(markdown) } : {}),
+    ...(format === "qingml"
+      ? { qingml: session.doc ? aiBlocksToQingml(pmToAiIr(session.doc).blocks) : "" }
+      : {}),
+    title,
   });
+});
+
+externalRoutes.put("/sessions/:id/doc", async (c) => {
+  const startedAt = Date.now();
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as Partial<ExternalDocReplaceRequest> | null;
+  const parsed = commandSchema.safeParse({
+    kind: "updateDoc",
+    data: {
+      ...(body && typeof body === "object" ? body : {}),
+      sessionId,
+    },
+  });
+  if (!parsed.success || parsed.data.kind !== "updateDoc") {
+    externalLog("doc_replace", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VALIDATION",
+    });
+    return externalError(c, 400, "VALIDATION", "文档保存请求不合法");
+  }
+  if (!(await sessionExists(sessionId))) {
+    externalLog("doc_replace", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:SESSION_NOT_FOUND",
+    });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command: parsed.data,
+      origin: "external",
+      client: parseExternalClient(c.req.header("x-qa-client")),
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
+
+  const write = frames
+    .map((entry) => entry.frame)
+    .find((frame) => frame.kind === "docWriteResult");
+  if (!write || write.kind !== "docWriteResult") {
+    return externalError(c, 400, "VALIDATION", "文档保存未产生有效回执");
+  }
+  if (write.data.ok) {
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+    const snapshot = await externalCanonicalDocumentSnapshot(session);
+    externalLog("doc_replace", { sessionId, ms: elapsed(startedAt), result: "committed" });
+    return c.json({
+      ok: true as const,
+      clientMutationId: write.data.clientMutationId,
+      docVersion: write.data.docVersion,
+      contentHash: snapshot.contentHash,
+      ts: snapshot.ts,
+    });
+  }
+  if ("conflict" in write.data) {
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+    const snapshot = await externalCanonicalDocumentSnapshot(session);
+    externalLog("doc_replace", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VERSION_CONFLICT",
+    });
+    return c.json({
+      ok: false as const,
+      clientMutationId: write.data.clientMutationId,
+      code: "VERSION_CONFLICT" as const,
+      conflict: {
+        expected: write.data.conflict.expectedDocumentSnapshot,
+        actual: write.data.conflict.actualDocumentSnapshot,
+      },
+      actualContentHash: snapshot.contentHash,
+    }, 409);
+  }
+  if (write.data.reason === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (write.data.reason === "not_editable") {
+    return externalError(c, 409, "REVIEW_PENDING");
+  }
+  if (write.data.reason === "not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  return externalError(c, 400, "VALIDATION", "文档内容不合法");
 });
 
 externalRoutes.get("/sessions/:id/review", async (c) => {
@@ -468,6 +594,16 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
+  const format = c.req.query("format");
+  if (format !== undefined && format !== "render-model") {
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      "format 仅支持 render-model",
+      "读取审阅摘要时请移除 format，或改用 format=render-model",
+    );
+  }
   const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("review_list", {
@@ -476,6 +612,34 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
       result: "rejected:SESSION_NOT_FOUND",
     });
     return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  if (format === "render-model") {
+    const suggestions = [...session.suggestions.values()].map((record) =>
+      structuredClone(record.suggestion)
+    );
+    externalLog("review_render_model", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "ok",
+      patches: suggestions.length,
+    });
+    return c.json({
+      sessionId,
+      docVersion: session.docVersion,
+      state: deriveContentState(session).kind,
+      agentBusy: sessionManager.isSessionBusy(sessionId),
+      baseVersion: session.suggestionBaseVersion ?? session.docVersion,
+      suggestions,
+      ...(isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId)
+        ? { wholeDocument: true }
+        : {}),
+      ...(session.suggestionBaseDoc
+        ? { previewDoc: structuredClone(session.suggestionBaseDoc) }
+        : {}),
+      ...(session.docDraftCandidateDoc
+        ? { editedDoc: structuredClone(session.docDraftCandidateDoc) }
+        : {}),
+    });
   }
   const patches = [...session.suggestions.values()].map((record) =>
     reviewPatchSummary(record.suggestion)
@@ -492,7 +656,7 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
     sessionId,
     docVersion: session.docVersion,
     state: deriveContentState(session).kind,
-    agentBusy: deriveAgentBusy(session),
+    agentBusy: sessionManager.isSessionBusy(sessionId),
     patches,
     annotations,
   });
@@ -793,63 +957,9 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
     );
   }
 
-  let outcomeQueued = false;
-  if (outcome.rejectedCount > 0) {
-    const outcomeCommand: Command = {
-      kind: "submitReviewOutcome",
-      data: { sessionId, outcome },
-    };
-    let completion: Promise<LoggedFrame[]>;
-    try {
-      ({ completion } = await sessionManager.submitQueued(sessionId, {
-        command: outcomeCommand,
-        origin: "external",
-        client,
-        modelOverrides,
-      }));
-    } catch (error) {
-      if (error instanceof SessionActorQueueFullError) {
-        return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
-      }
-      console.warn("[external] evt=review_outcome result=failed", {
-        sessionId,
-        errorType: error instanceof Error ? error.name : "unknown",
-      });
-      return externalError(
-        c,
-        409,
-        "AGENT_BUSY",
-        "审查结果反馈未完成，请稍后重试",
-      );
-    }
-    const completionResult = await waitForReviewOutcomeCompletion(
-      completion,
-      c.req.raw.signal,
-    );
-    if (completionResult.status === "failed") {
-      const error = completionResult.error;
-      console.warn("[external] evt=review_outcome result=failed", {
-        sessionId,
-        errorType: error instanceof Error ? error.name : "unknown",
-      });
-      return externalError(
-        c,
-        409,
-        "AGENT_BUSY",
-        "审查结果反馈未完成，请稍后重试",
-      );
-    }
-    if (
-      completionResult.status === "timed_out" ||
-      completionResult.status === "disconnected"
-    ) {
-      console.warn("[external] evt=review_outcome result=pending", {
-        sessionId,
-        reason: completionResult.status,
-      });
-    }
-    outcomeQueued = true;
-  }
+  // external 的作者是外部模型；这里只做确定性审阅结算，不把裁决再投成用户消息
+  // 启动青简模型续轮。内部 UI 仍可通过 submitReviewOutcome 保持原有交互语义。
+  const outcomeQueued = false;
   externalLog("review_commit", {
     sessionId,
     ms: elapsed(startedAt),
@@ -979,6 +1089,129 @@ externalRoutes.get("/sessions/:id/chat", async (c) => {
   externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "ok", count: messages.length });
   return c.json({ sessionId, messages });
 });
+
+externalRoutes.post(
+  "/sessions/:id/assets",
+  bodyLimit({
+    maxSize: externalAssetMaxRequestBytes,
+    onError: (c) => externalError(
+      c,
+      413,
+      "VALIDATION",
+      "图片超过上传上限",
+      `请选择不超过 ${externalAssetMaxBytes} 字节的图片后重试`,
+    ),
+  }),
+  async (c) => {
+    const sessionId = c.req.param("id");
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+
+    const contentType = c.req.header("content-type") ?? "";
+    let parsed: ExternalAssetUploadInputResult;
+    if (contentType.toLowerCase().includes("multipart/form-data")) {
+      const form = await c.req.parseBody().catch(() => null);
+      const file = form?.file;
+      if (!(file instanceof File)) {
+        return externalAssetInputError(c, "invalid_body");
+      }
+      parsed = validateExternalAssetUploadInput(
+        {
+          filename: file.name,
+          mimeType: file.type,
+          buffer: Buffer.from(await file.arrayBuffer()),
+        },
+        externalAssetMaxBytes,
+      );
+    } else if (contentType.toLowerCase().includes("application/json")) {
+      const body = await c.req.json().catch(() => null);
+      parsed = parseExternalAssetJson(body, externalAssetMaxBytes);
+    } else {
+      return externalError(
+        c,
+        400,
+        "VALIDATION",
+        "资产上传仅支持 multipart/form-data 或 application/json",
+        "multipart 请使用 file 字段；JSON 请传 filename、mimeType、base64",
+      );
+    }
+    if (!parsed.ok) return externalAssetInputError(c, parsed.error);
+
+    let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
+    try {
+      stored = await findOrStoreUploadedFile(parsed.input);
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid filename") {
+        return externalAssetInputError(c, "invalid_filename");
+      }
+      throw error;
+    }
+    try {
+      await registerSessionResource({
+        sessionId,
+        resourceId: stored.record.fileId,
+        kind: "upload",
+      });
+    } catch (error) {
+      await deleteUploadedFile(stored.record.fileId);
+      throw error;
+    }
+
+    const { fileId, filename, size } = stored.record;
+    const mimeType = stored.record.mimeType ?? parsed.input.mimeType;
+    return c.json({
+      fileId,
+      filename,
+      mimeType,
+      size,
+      src: `/api/v1/files/${encodeURIComponent(fileId)}/${encodeURIComponent(filename)}`,
+    });
+  },
+);
+
+externalRoutes.get("/sessions/:id/assets/:ref", async (c) => {
+  const sessionId = c.req.param("id");
+  if (!(await getOrRestoreSessionReadOnly(sessionId))) {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const fileId = c.req.param("ref");
+  if (!isValidUploadId(fileId)) {
+    return externalError(c, 400, "VALIDATION", "资产引用不合法");
+  }
+  const owned = (await listSessionResources(sessionId)).some(
+    (resource) => resource.resourceId === fileId,
+  );
+  if (!owned) return externalError(c, 404, "NOT_FOUND", "ASSET_NOT_FOUND");
+
+  const resolved = await resolveUploadedFileForRead(fileId);
+  if (!resolved.ok) {
+    return externalError(c, 404, "NOT_FOUND", "ASSET_NOT_FOUND");
+  }
+  return streamResolvedUploadedFile(c, resolved.file);
+});
+
+function externalAssetInputError(c: Context, error: ExternalAssetUploadInputError) {
+  switch (error) {
+    case "file_too_large":
+      return externalError(
+        c,
+        413,
+        "VALIDATION",
+        "图片超过上传上限",
+        `请选择不超过 ${externalAssetMaxBytes} 字节的图片后重试`,
+      );
+    case "invalid_filename":
+      return externalError(c, 400, "VALIDATION", "图片文件名不合法");
+    case "invalid_base64":
+      return externalError(c, 400, "VALIDATION", "base64 图片数据不合法");
+    case "empty_file":
+      return externalError(c, 400, "VALIDATION", "图片内容不能为空");
+    case "unsupported_media":
+      return externalError(c, 400, "VALIDATION", "仅支持图片资产");
+    case "invalid_body":
+      return externalError(c, 400, "VALIDATION", "资产上传请求不合法");
+  }
+}
 
 externalRoutes.get("/sessions/:id/files", async (c) => {
   const startedAt = Date.now();
@@ -1400,7 +1633,13 @@ function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
     if (write.data.reason === "agent_busy") return errorSummary(409, "AGENT_BUSY", undefined, seq);
     if (write.data.reason === "not_editable") return errorSummary(409, "REVIEW_PENDING", undefined, seq);
     if (write.data.reason === "not_found") return errorSummary(404, "SESSION_NOT_FOUND", undefined, seq);
-    return errorSummary(400, "VALIDATION", "未命中,请重读文档", seq);
+    return errorSummary(
+      400,
+      "VALIDATION",
+      write.data.diagnostic ? "QingML 校验失败，请根据诊断修正后重试" : "未命中,请重读文档",
+      seq,
+      write.data.diagnostic,
+    );
   }
   return errorSummary(400, "VALIDATION", "提案未产生有效变更", seq);
 }
@@ -1414,14 +1653,36 @@ function errorSummary(
   code: ExternalErrorCode,
   message?: string,
   seq: number | null = null,
+  diagnostic?: WriteDraftFailureDiagnostic,
 ): ProposalSummary {
   return {
     status,
-    body: withSeq({ error: message ?? code, code, nextStep: EXTERNAL_NEXT_STEP[code] }, seq),
+    body: withSeq({
+      error: message ?? code,
+      code,
+      nextStep: EXTERNAL_NEXT_STEP[code],
+      ...(diagnostic ? { diagnostic: projectExternalValidationDiagnostic(diagnostic) } : {}),
+    }, seq),
     logResult: `rejected:${code}`,
     hunks: 0,
     seq,
   };
+}
+
+function projectExternalValidationDiagnostic(
+  diagnostic: WriteDraftFailureDiagnostic,
+): ExternalValidationDiagnostic {
+  return {
+    failureKind: diagnostic.failureKind,
+    warningKinds: [...diagnostic.warningKinds],
+    tagSkeleton: diagnostic.tagSkeleton,
+    errorLocations: diagnostic.errorLocations.map((location) => ({
+      kind: location.kind,
+      ...(location.startOffset === undefined ? {} : { startOffset: location.startOffset }),
+      ...(location.endOffset === undefined ? {} : { endOffset: location.endOffset }),
+      ...(location.path === undefined ? {} : { path: [...location.path] }),
+    })),
+  } satisfies ExternalValidationDiagnostic;
 }
 
 function maxSeq(entries: LoggedFrame[]): number | null {
@@ -1467,9 +1728,20 @@ function frameForExternal(entry: LoggedFrame): ExternalBridgeFrame | null {
   return {
     seq: entry.seq,
     kind: entry.frame.kind,
-    data: dataForExternal(entry.frame.data),
+    data: COMPLETE_EXTERNAL_DOCUMENT_FRAME_KINDS.has(entry.frame.kind)
+      ? structuredClone(entry.frame.data)
+      : dataForExternal(entry.frame.data),
   } as ExternalBridgeFrame;
 }
+
+const COMPLETE_EXTERNAL_DOCUMENT_FRAME_KINDS: ReadonlySet<BridgeFrame["kind"]> = new Set([
+  "docGenerationEvent",
+  "documentSnapshotWritten",
+  "docCommitted",
+  "docDiffReady",
+  "docWriteResult",
+  "docStateChanged",
+]);
 
 function dataForExternal<T>(data: T): T {
   const cloned = structuredClone(data);
@@ -1664,6 +1936,27 @@ async function saveEmptySessionDocument(sessionId: string): Promise<void> {
   });
 }
 
+async function externalCanonicalDocumentSnapshot(session: SessionState): Promise<{
+  docVersion: number;
+  contentHash: string;
+  ts: string;
+  pmDoc: ReturnType<typeof currentPmDoc>;
+}> {
+  const row = await documentRepo.load(session.docId);
+  const usePersisted = row?.pmDoc && row.docVersion >= session.docVersion;
+  const pmDoc = usePersisted ? row.pmDoc! : currentPmDoc(session);
+  return {
+    docVersion: usePersisted ? row.docVersion : session.docVersion,
+    contentHash: usePersisted && row.contentHash
+      ? row.contentHash
+      : getPmContentHash(pmDoc),
+    ts: usePersisted
+      ? row.updatedAt
+      : session.lastContentEditedAt ?? row?.updatedAt ?? new Date(0).toISOString(),
+    pmDoc,
+  };
+}
+
 function elapsed(startedAt: number): number {
   return Date.now() - startedAt;
 }
@@ -1686,9 +1979,11 @@ function externalLog(
     | "chatlog"
     | "files"
     | "read"
+    | "doc_replace"
     | "health"
     | "sessions"
     | "review_list"
+    | "review_render_model"
     | "review_show"
     | "review_verdict"
     | "review_commit"

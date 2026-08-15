@@ -13,6 +13,9 @@ protocols:
   - name: 青简会话链接
     schemes:
       - qingagent
+  - name: 青简文稿链接
+    schemes:
+      - qingjian
 directories:
   buildResources: resources
   output: release

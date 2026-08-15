@@ -1,12 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { stream } from "hono/streaming";
-import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import path from "node:path";
 import {
-  removeUnpairedSurrogates,
   UPLOAD_FILENAME_HEADER,
   UPLOAD_PURPOSE_HEADER,
   UPLOAD_SESSION_HEADER,
@@ -19,23 +14,21 @@ import {
 import { preflightMaterialFileBuffer } from "@qingagent/core/material-preflight";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import {
-  UPLOAD_DIR,
   findOrStoreUploadedFile,
-  findUploadedFileRecord,
   isValidUploadId,
-  isWithinUploadDir,
   deleteUploadedFile,
 } from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { resolveUploadMaxBytes } from "../lib/uploadLimits";
+import {
+  isSafeUploadFilename,
+  normalizeUploadMimeType,
+  resolveUploadedFileForRead,
+  streamResolvedUploadedFile,
+} from "../lib/uploadServing";
 
 export const uploadRoutes = new Hono();
 const uploadMaxBytes = resolveUploadMaxBytes();
-/** Validate that a filename does not contain path separators or traversal sequences. */
-function isSafeFilename(filename: string): boolean {
-  return !filename.includes("/") && !filename.includes("\\") && !filename.includes("..");
-}
-
 function decodeUploadFilename(raw: string | undefined): string | null {
   if (!raw) return null;
   try {
@@ -43,77 +36,6 @@ function decodeUploadFilename(raw: string | undefined): string | null {
   } catch {
     return null;
   }
-}
-
-/** Sanitize a filename for use in Content-Disposition header. */
-function sanitizeFilename(filename: string): string {
-  return filename.replace(/[^\w.\-]/g, "_");
-}
-
-function encodeDispositionFilename(filename: string): string {
-  const withoutControls = removeUnpairedSurrogates(filename)
-    .replace(/[\u0000-\u001f\u007f]/g, "_");
-  return encodeURIComponent(withoutControls).replace(
-    /['()*]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-/** 只保留单一 MIME 与可选 charset，拒绝控制字符及其它可注入参数。 */
-function normalizeMimeType(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const matched = /^([a-z0-9!#$&^_.+-]+)\/([a-z0-9!#$&^_.+-]+)(?:\s*;\s*charset=([a-z0-9._-]+))?$/i.exec(
-    raw.trim(),
-  );
-  if (!matched) return null;
-  const baseType = `${matched[1]!.toLowerCase()}/${matched[2]!.toLowerCase()}`;
-  return matched[3]
-    ? `${baseType}; charset=${matched[3].toLowerCase()}`
-    : baseType;
-}
-
-/** Map file extension to MIME type for serving. */
-function mimeFromExt(filename: string): string {
-  const ext = path.extname(filename).toLowerCase();
-  const map: Record<string, string> = {
-    ".pdf": "application/pdf",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".txt": "text/plain; charset=utf-8",
-    ".md": "text/markdown; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".csv": "text/csv; charset=utf-8",
-    ".html": "text/html; charset=utf-8",
-    ".xml": "application/xml; charset=utf-8",
-  };
-  return map[ext] ?? "application/octet-stream";
-}
-
-function contentTypeForUpload(filename: string, persistedMimeType: string | null | undefined): string {
-  const persisted = normalizeMimeType(persistedMimeType);
-  return persisted && persisted !== "application/octet-stream"
-    ? persisted
-    : mimeFromExt(filename);
-}
-
-const INLINE_SAFE_CONTENT_TYPES = new Set([
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-]);
-
-function shouldServeInline(contentType: string): boolean {
-  const baseType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  return INLINE_SAFE_CONTENT_TYPES.has(baseType);
 }
 
 /**
@@ -136,7 +58,7 @@ uploadRoutes.post(
       return c.json({ error: "filename required" }, 400);
     }
 
-    if (!isSafeFilename(filename)) {
+    if (!isSafeUploadFilename(filename)) {
       return c.json({ error: "filename must not contain path separators or '..'" }, 400);
     }
 
@@ -158,7 +80,7 @@ uploadRoutes.post(
     if (buffer.byteLength > uploadMaxBytes) {
       return c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413);
     }
-    const normalizedMimeType = normalizeMimeType(c.req.header("content-type"))
+    const normalizedMimeType = normalizeUploadMimeType(c.req.header("content-type"))
       ?? "application/octet-stream";
     if (purpose === "material") {
       const preflight = await preflightMaterialFileBuffer({
@@ -221,60 +143,23 @@ async function handleFileRequest(c: Context) {
   if (!fileId || !isValidUploadId(fileId)) {
     return c.json({ error: "invalid fileId" }, 400);
   }
-  if (requestedFilename && !isSafeFilename(requestedFilename)) {
+  if (requestedFilename && !isSafeUploadFilename(requestedFilename)) {
     return c.json({ error: "invalid filename" }, 400);
   }
-
   if (!(await hasActiveSessionResource(fileId))) {
     return c.json({ error: "not found" }, 404);
   }
-
-  const dir = path.resolve(UPLOAD_DIR, fileId);
-  if (!isWithinUploadDir(dir)) {
-    return c.json({ error: "invalid fileId" }, 400);
-  }
-
-  let files: string[];
-  try {
-    files = await fs.readdir(dir);
-  } catch {
-    return c.json({ error: "not found" }, 404);
-  }
-
-  if (files.length === 0) return c.json({ error: "not found" }, 404);
-
-  const record = await findUploadedFileRecord(fileId);
-  const filename = record?.filename ?? files.sort()[0]!;
-  const filePath = path.resolve(dir, filename);
-  if (!isWithinUploadDir(filePath)) {
-    return c.json({ error: "not found" }, 404);
-  }
-  const contentType = contentTypeForUpload(filename, record?.mimeType);
-
-  let stat: Awaited<ReturnType<typeof fs.stat>>;
-  try {
-    stat = await fs.stat(filePath);
-  } catch {
-    return c.json({ error: "not found" }, 404);
-  }
-
-  const safeName = sanitizeFilename(filename);
-  const encodedName = encodeDispositionFilename(filename);
-  const disposition = shouldServeInline(contentType) ? "inline" : "attachment";
-  c.header("Content-Type", contentType);
-  c.header("Content-Length", String(stat.size));
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header(
-    "Content-Disposition",
-    `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodedName}`,
-  );
-
-  return stream(c, async (s) => {
-    const nodeStream = createReadStream(filePath);
-    for await (const chunk of nodeStream) {
-      await s.write(chunk as Uint8Array);
+  const resolved = await resolveUploadedFileForRead(fileId, requestedFilename);
+  if (!resolved.ok) {
+    if (resolved.error === "invalid_filename") {
+      return c.json({ error: "invalid filename" }, 400);
     }
-  });
+    if (resolved.error === "invalid_file_id") {
+      return c.json({ error: "invalid fileId" }, 400);
+    }
+    return c.json({ error: "not found" }, 404);
+  }
+  return streamResolvedUploadedFile(c, resolved.file);
 }
 
 uploadRoutes.get("/files/:fileId", handleFileRequest);

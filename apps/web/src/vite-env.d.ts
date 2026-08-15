@@ -63,6 +63,9 @@ interface Window {
   electron?: {
     platform: string;
     isDesktop: boolean;
+    onQingjianOpenSession?: (callback: (intent: {
+      engineSessionId: string;
+    }) => void) => () => void;
     saveExportDownload?: (input: {
       filename: string;
       format: ElectronExportFormat;

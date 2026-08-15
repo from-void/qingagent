@@ -1,7 +1,10 @@
 import type {
   ExternalBridgeFrame,
+  ExternalAssetUploadResponse,
   ExternalChatLogResponse,
   ExternalChatSendResponse,
+  ExternalDocReplaceRequest,
+  ExternalDocReplaceResponse,
   ExternalDocReadResponse,
   ExternalErrorResponse,
   ExternalEventsMeta,
@@ -9,7 +12,10 @@ import type {
   ExternalFileTextResponse,
   ExternalHealthResponse,
   ExternalProposalResponse,
+  ExternalProposalErrorResponse,
+  ExternalPmDocReadResponse,
   ExternalReviewListResponse,
+  ExternalReviewRenderModelResponse,
   ExternalSessionCreateResponse,
   ExternalSessionsListResponse,
 } from "../../../qa-cli/src/generated/externalApi";
@@ -20,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
+import { purgeStoredFile } from "../lib/uploadStorage";
 
 const dirs: string[] = [];
 let token = "";
@@ -76,10 +83,131 @@ describe("external API v1 golden contract", () => {
   it("GET /sessions/:id/doc", async () => {
     const { sessionId } = await createSession();
     const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?lines=1`);
-    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "markdownWithLineNumbers"]);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "markdownWithLineNumbers", "title"]);
     expect(body).toEqual({
       sessionId, docVersion: 0, state: "empty", agentBusy: false,
-      markdown: "", markdownWithLineNumbers: "   1 | ",
+      markdown: "", markdownWithLineNumbers: "   1 | ", title: null,
+    });
+  });
+
+  it("GET /sessions/:id/doc?format=qingml 精确返回 qingml/title", async () => {
+    const { sessionId } = await createSession();
+    await postJson<ExternalProposalResponse>(`/sessions/${sessionId}/proposals`, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "<title>Golden QingML</title><h1>正文标题</h1><p>正文。</p>" }],
+    });
+
+    const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "qingml", "title"]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 1,
+      state: "editing",
+      agentBusy: false,
+      markdown: expect.stringContaining("正文标题"),
+      qingml: "<h1>正文标题</h1><p>正文。</p>",
+      title: "Golden QingML",
+    });
+  });
+
+  it("GET /sessions/:id/doc?format=pm 精确返回可写基线", async () => {
+    const { sessionId } = await createSession();
+    const body = await getJson<ExternalPmDocReadResponse>(
+      `/sessions/${sessionId}/doc?format=pm`,
+    );
+    exactKeys(body, [
+      "sessionId",
+      "docVersion",
+      "contentHash",
+      "state",
+      "agentBusy",
+      "title",
+      "ts",
+      "pmDoc",
+    ]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 0,
+      contentHash: expect.stringMatching(/^pmv1-/),
+      state: "empty",
+      agentBusy: false,
+      title: null,
+      ts: expect.any(String),
+      pmDoc: { type: "doc", attrs: { schemaVersion: 1 }, content: [] },
+    });
+  });
+
+  it("PUT /sessions/:id/doc 精确返回直接保存回执", async () => {
+    const { sessionId } = await createSession();
+    const baseline = await getJson<ExternalPmDocReadResponse>(
+      `/sessions/${sessionId}/doc?format=pm`,
+    );
+    const request: ExternalDocReplaceRequest = {
+      expectedDocumentSnapshot: 0,
+      baseContentHash: baseline.contentHash,
+      clientMutationId: "golden-direct-save",
+      doc: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "golden-direct-paragraph" },
+          content: [{ type: "text", text: "Golden 直接保存" }],
+        }],
+      },
+    };
+    const body = await putJson<ExternalDocReplaceResponse>(
+      `/sessions/${sessionId}/doc`,
+      request,
+    );
+    if (!body.ok) throw new Error("expected direct save success");
+    exactKeys(body, ["ok", "clientMutationId", "docVersion", "contentHash", "ts"]);
+    expect(body).toEqual({
+      ok: true,
+      clientMutationId: request.clientMutationId,
+      docVersion: 1,
+      contentHash: expect.stringMatching(/^pmv1-/),
+      ts: expect.any(String),
+    });
+  });
+
+  it("GET 空文档 format=qingml 返回空 QingML", async () => {
+    const { sessionId } = await createSession();
+    const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "qingml", "title"]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 0,
+      state: "empty",
+      agentBusy: false,
+      markdown: "",
+      qingml: "",
+      title: null,
+    });
+  });
+
+  it("qingmlDraft 无标签纯文本 fail-open 为单段", async () => {
+    const { sessionId } = await createSession();
+    await postJson<ExternalProposalResponse>(`/sessions/${sessionId}/proposals`, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "无标签纯文本" }],
+    });
+    const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
+    expect(body.qingml).toBe("<p>无标签纯文本</p>");
+  });
+
+  it("GET /doc 未知 format 返回读语义 400", async () => {
+    const { sessionId } = await createSession();
+    const response = await app.request(`/api/v1/external/sessions/${sessionId}/doc?format=html`, {
+      headers: authHeaders(),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json() as ExternalErrorResponse;
+    exactKeys(body, ["error", "code", "nextStep"]);
+    expect(body).toEqual({
+      error: "format 仅支持 qingml 或 pm",
+      code: "VALIDATION",
+      nextStep: "读取文档时请移除 format，或改用 format=qingml / format=pm 后重试",
     });
   });
 
@@ -105,6 +233,38 @@ describe("external API v1 golden contract", () => {
     submit.mockRestore();
     exactKeys(body, ["queued", "note"]);
     expect(body).toEqual({ queued: true, note: expect.any(String) });
+  });
+
+  it("POST + GET /sessions/:id/assets 精确锁定资产引用与二进制响应", async () => {
+    const { sessionId } = await createSession();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const body = await postJson<ExternalAssetUploadResponse>(`/sessions/${sessionId}/assets`, {
+      filename: "golden.png",
+      mimeType: "image/png",
+      base64: png.toString("base64"),
+    });
+    try {
+      exactKeys(body, ["fileId", "filename", "mimeType", "size", "src"]);
+      expect(body).toEqual({
+        fileId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+        filename: "golden.png",
+        mimeType: "image/png",
+        size: 8,
+        src: `/api/v1/files/${body.fileId}/golden.png`,
+      });
+
+      const response = await app.request(
+        `/api/v1/external/sessions/${sessionId}/assets/${body.fileId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(response.headers.get("content-length")).toBe("8");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+    } finally {
+      await purgeStoredFile(body.fileId);
+    }
   });
 
   it("GET /sessions/:id/files", async () => {
@@ -150,6 +310,34 @@ describe("external API v1 golden contract", () => {
     expect(body).toEqual({ status: "committed", docVersion: 1, seq: expect.any(Number) });
   });
 
+  it("POST /sessions/:id/proposals 的 VALIDATION 诊断体锁定公开字段", async () => {
+    const { sessionId } = await createSession();
+    const response = await app.request(`/api/v1/external/sessions/${sessionId}/proposals`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        expectedDocVersion: 0,
+        ops: [{ kind: "qingmlDraft", qingml: "<pre>secret<p>block</p></pre>" }],
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.json() as ExternalProposalErrorResponse;
+    exactKeys(body as unknown as Record<string, unknown>, ["error", "code", "nextStep", "seq", "diagnostic"]);
+    expect(body.code).toBe("VALIDATION");
+    if (!("diagnostic" in body) || !body.diagnostic) throw new Error("expected validation diagnostic");
+    exactKeys(body.diagnostic, ["failureKind", "warningKinds", "tagSkeleton", "errorLocations"]);
+    expect(body.diagnostic).toMatchObject({
+      failureKind: "qingml_bad_block",
+      warningKinds: ["raw-text-child-tag"],
+      tagSkeleton: "<pre><p></p></pre>",
+      errorLocations: expect.any(Array),
+    });
+    for (const location of body.diagnostic.errorLocations) {
+      expect(Object.keys(location).every((key) => ["kind", "startOffset", "endOffset", "path"].includes(key))).toBe(true);
+    }
+    expect(JSON.stringify(body)).not.toContain("secret");
+  });
+
   it("GET /sessions/:id/review", async () => {
     const { sessionId } = await createSession();
     const body = await getJson<ExternalReviewListResponse>(
@@ -170,6 +358,29 @@ describe("external API v1 golden contract", () => {
       agentBusy: false,
       patches: [],
       annotations: [],
+    });
+  });
+
+  it("GET /sessions/:id/review?format=render-model 复用 DocDiffReady 字段", async () => {
+    const { sessionId } = await createSession();
+    const body = await getJson<ExternalReviewRenderModelResponse>(
+      `/sessions/${sessionId}/review?format=render-model`,
+    );
+    exactKeys(body, [
+      "sessionId",
+      "docVersion",
+      "state",
+      "agentBusy",
+      "baseVersion",
+      "suggestions",
+    ]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 0,
+      state: "empty",
+      agentBusy: false,
+      baseVersion: 0,
+      suggestions: [],
     });
   });
 
@@ -212,6 +423,14 @@ async function getJson<T>(pathName: string): Promise<T> {
 async function postJson<T>(pathName: string, body: unknown): Promise<T> {
   const response = await app.request(`/api/v1/external${pathName}`, {
     method: "POST", headers: authHeaders(), body: JSON.stringify(body),
+  });
+  expect(response.status).toBe(200);
+  return response.json() as Promise<T>;
+}
+
+async function putJson<T>(pathName: string, body: unknown): Promise<T> {
+  const response = await app.request(`/api/v1/external${pathName}`, {
+    method: "PUT", headers: authHeaders(), body: JSON.stringify(body),
   });
   expect(response.status).toBe(200);
   return response.json() as Promise<T>;

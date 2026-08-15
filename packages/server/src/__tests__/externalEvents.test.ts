@@ -220,7 +220,7 @@ describe("external events", () => {
     expect(events.map((event) => event.event)).toEqual(["meta", "frame"]);
   });
 
-  it("docDiffReady 任意嵌套位置的 SVG 均不外发", async () => {
+  it("docDiffReady 作为权威文档帧完整透传任意嵌套数据", async () => {
     const sessionId = "events-doc-diff-svg";
     sessionManager.frameLog.append(sessionId, {
       kind: "docDiffReady",
@@ -244,7 +244,7 @@ describe("external events", () => {
     });
 
     const frame = await readSingleExternalFrame(sessionId);
-    expect(JSON.stringify(frame)).not.toContain("<svg");
+    expect(JSON.stringify(frame)).toContain("<svg>审阅预览</svg>");
   });
 
   it("toolCallUpdated 任意嵌套位置的 SVG 均不外发", async () => {

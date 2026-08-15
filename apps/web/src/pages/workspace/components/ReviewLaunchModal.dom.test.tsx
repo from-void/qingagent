@@ -741,12 +741,18 @@ describe("ReviewLaunchModal", () => {
     expect(host.querySelectorAll(".ws-launch-role-avatar svg")).toHaveLength(13);
     expect(new Set(Array.from(host.querySelectorAll(".ws-launch-role-avatar svg")).map((svg) => svg.getAttribute("data-avatar-kind"))))
       .toEqual(new Set([...ROLE_REVIEW_PROFILES.map((profile) => profile.avatar), "generic"]));
-    expect(Array.from(host.querySelectorAll(".ws-launch-role-avatar svg")).every((svg) =>
-      svg.getAttribute("fill") === "none"
+    const avatars = Array.from(host.querySelectorAll(".ws-launch-role-avatar svg"));
+    expect(avatars.every((svg) =>
+      svg.getAttribute("viewBox") === "0 0 64 64"
+      && svg.getAttribute("fill") === "none"
       && svg.getAttribute("stroke") === "currentColor"
-      && svg.getAttribute("stroke-width") === "1.6"
-      && svg.getAttribute("stroke-linecap") === "round",
+      && svg.getAttribute("stroke-width") === "2"
+      && svg.getAttribute("stroke-linecap") === "round"
+      && svg.getAttribute("stroke-linejoin") === "round"
     )).toBe(true);
+    expect(new Set(avatars.map((svg) => svg.querySelector('[data-avatar-part="person"]')?.innerHTML)).size).toBe(1);
+    expect(avatars.filter((svg) => svg.querySelector('[data-avatar-part="badge"]'))).toHaveLength(12);
+    expect(host.querySelector('[data-avatar-kind="generic"] [data-avatar-part="badge"]')).toBeNull();
 
     const cards = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
     expect(cards[0]?.textContent).toContain("研发工程师");

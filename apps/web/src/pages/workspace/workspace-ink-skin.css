@@ -2218,12 +2218,15 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   gap: 11px;
   padding: 14px 22px 16px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 #view-workspace .ws-launch-content,
 #view-workspace .ws-launch-form,
 #view-workspace .ws-launch-editor { display: grid; min-width: 0; gap: 11px; }
 #view-workspace .ws-launch-starters {
   display: flex;
+  min-width: 0;
+  flex: 1 1 240px;
   flex-wrap: wrap;
   align-items: baseline;
   margin-right: auto;
@@ -2264,8 +2267,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   min-width: 0;
 }
 #view-workspace .ws-launch-template-grid.is-portrait {
-  grid-template-columns: repeat(auto-fill, 120px);
-  justify-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 }
 #view-workspace .ws-launch-template-card {
   position: relative;
@@ -2283,7 +2285,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   box-shadow: inset 3px 0 var(--mark);
 }
 #view-workspace .ws-launch-template-card.is-portrait {
-  width: 120px;
+  width: auto;
   min-height: 148px;
 }
 #view-workspace .ws-launch-template-select {
@@ -2495,7 +2497,20 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ws-launch-field input::placeholder,
 #view-workspace .ws-launch-field textarea::placeholder { color: var(--ink-4); font-weight: 400; }
 #view-workspace .ws-launch-supplement textarea { min-height: 58px; }
-#view-workspace .ws-launch-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+#view-workspace .ws-launch-actions {
+  position: sticky;
+  bottom: -16px;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 -22px -16px;
+  padding: 10px 22px 16px;
+  border-top: 1px solid var(--line-2);
+  background: var(--bg-paper-deep);
+}
 #view-workspace .ws-launch-actions .wf-btn { padding: 7px 16px; font-size: 12.5px; }
 #view-workspace .ws-launch-actions .wf-btn.primary { border-color: var(--mark); background: var(--mark); color: var(--bg-canvas); }
 #view-workspace .ws-launch-actions .wf-btn.primary:hover:not(:disabled) { border-color: var(--ink-1); background: var(--ink-1); color: var(--bg-canvas); }
@@ -2506,8 +2521,8 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 @media (max-width: 560px) {
   #view-workspace .ws-launch-head { padding-left: 16px; }
   #view-workspace .ws-launch-body { padding-right: 16px; padding-left: 16px; }
+  #view-workspace .ws-launch-actions { margin-right: -16px; margin-left: -16px; padding-right: 16px; padding-left: 16px; }
   #view-workspace .ws-launch-template-grid.is-portrait { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
-  #view-workspace .ws-launch-template-card.is-portrait { width: auto; }
 }
 #view-workspace .ws-lexicon-entry-list {
   min-height: 240px;

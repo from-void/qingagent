@@ -124,10 +124,13 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
   // command 鉴权必须在 renderer 发出首个请求前就绪；不能沿用旧 fire-and-forget，
   // 否则冷启动窗口存在 token 尚未装配的竞态。写 instance 失败时由桌面启动路径 fail-closed。
   const { startExternalInstance } = await import("@qingagent/server/externalInstance");
-  const instance = await startExternalInstance({ port: result.port });
+  const { issueDesktopGlobalToken } = await import("@qingagent/server/authCredentials");
+  const { getOrCreateLibraryId } = await import("@qingagent/server/libraryIdentity");
+  const libraryId = await getOrCreateLibraryId();
+  const instance = await startExternalInstance({ port: result.port, libraryId });
   return {
     port: result.port,
-    commandAuthToken: process.env.QINGAGENT_AUTH_TOKEN || instance.token,
+    commandAuthToken: process.env.QINGAGENT_AUTH_TOKEN || issueDesktopGlobalToken(),
     externalAuthToken: instance.token,
   };
 }

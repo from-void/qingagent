@@ -31,6 +31,7 @@ import {
   consumeConfirmUiGrant,
   insecureRememberAllowed,
 } from "../lib/confirmUiGrant";
+import { attachOperationDenied, isAttachRequest } from "../lib/attachPolicy";
 
 const MAX_CONFIRM_BODY_BYTES = 16 * 1024;
 const CONFIRM_NOT_AVAILABLE_MESSAGE = "这张确认已处理或已失效，请查看命令结果。";
@@ -194,6 +195,12 @@ export function createConfirmRoutes(
       known ? errorStatus(known.code) : 400,
     );
   }
+
+  // attach 的 confirmGrant=false：仅允许本次裁决，禁止“记住”或全局 bypass 写入。
+  if (
+    isAttachRequest(c)
+    && (parsed.decision.remember === true || parsed.decision.bypassAll === true)
+  ) return attachOperationDenied(c);
 
   const session = await getSession(parsed.sessionId);
   if (!session) return c.json({ error: CONFIRM_NOT_AVAILABLE_MESSAGE }, 404);

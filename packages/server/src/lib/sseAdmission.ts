@@ -66,15 +66,22 @@ export interface RequestClientAddress {
   loopback: boolean;
 }
 
+/** 仅依据真实 socket；用于 loopback 本身就是安全边界的握手等入口。 */
+export function requestSocketAddress(c: Context): RequestClientAddress {
+  const incoming = (c.env as {
+    incoming?: { socket?: { remoteAddress?: string | null } };
+  } | undefined)?.incoming;
+  const ip = normalizeIp(incoming?.socket?.remoteAddress) || "direct";
+  return { ip, loopback: ip === "direct" || isLoopbackIp(ip) };
+}
+
 /**
  * 非回环直连永不因伪造转发头获得回环豁免；只有连接本身来自回环代理时才采信
  * X-Forwarded-For/X-Real-IP。app.request 没有 socket，按本机测试调用处理。
  */
 export function requestClientAddress(c: Context): RequestClientAddress {
-  const incoming = (c.env as {
-    incoming?: { socket?: { remoteAddress?: string | null } };
-  } | undefined)?.incoming;
-  const remote = normalizeIp(incoming?.socket?.remoteAddress);
+  const socket = requestSocketAddress(c);
+  const remote = socket.ip === "direct" ? "" : socket.ip;
   if (remote && !isLoopbackIp(remote)) return { ip: remote, loopback: false };
 
   const forwarded = normalizeIp(c.req.header("x-forwarded-for")?.split(",", 1)[0]);

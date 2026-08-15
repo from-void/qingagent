@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import { authTokenMiddleware, tokensMatch } from "../lib/authToken";
 import { authRoutes } from "../routes/auth";
+import { principalMiddleware } from "../lib/principal";
 
 function makeApp() {
   const app = new Hono();
+  app.use("*", principalMiddleware);
   app.use("/api/*", authTokenMiddleware);
   app.route("/api/v1", authRoutes);
   app.get("/api/v1/protected", (c) => c.json({ ok: true, method: "GET" }));

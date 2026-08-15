@@ -13,6 +13,10 @@
     "./src/app": "./src/app.ts",
     "./desktopFolderSelection": "./src/lib/desktopFolderSelection.ts",
     "./externalInstance": "./src/lib/externalInstance.ts",
+    "./libraryIdentity": "./src/lib/libraryIdentity.ts",
+    "./attachPolicy": "./src/lib/attachPolicy.ts",
+    "./commandRequestHeaders": "./src/lib/commandRequestHeaders.ts",
+    "./authCredentials": "./src/lib/authCredentials.ts",
     "./httpDispatcher": "./src/lib/httpDispatcher.ts",
     "./confirmUiGrant": "./src/lib/confirmUiGrant.ts"
   },

@@ -12,6 +12,7 @@
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import type { DocDiffReady } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/contract-ts";
+import type { AttachIdentity } from "@qingagent/contract-ts";
 
 export type ExternalClient = "claudecode" | "codex" | "agent";
 
@@ -33,11 +34,8 @@ export interface ExternalErrorResponse {
   nextStep: string;
 }
 
-export interface ExternalHealthResponse {
+export interface ExternalHealthResponse extends AttachIdentity {
   ok: true;
-  version: string;
-  pid: number;
-  startedAt: string;
 }
 
 export type ExternalDocumentState = "empty" | "editing" | "pendingReview";

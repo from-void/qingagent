@@ -43,6 +43,13 @@ import {
   normalizeIdempotencyClientMessageId,
   type ClientMessageClaimResult,
 } from "../gateway/clientMessageIdempotency";
+import {
+  attachOperationDenied,
+  authorizeAttachCommand,
+  isAttachRequest,
+} from "../lib/attachPolicy";
+import { readCommandsModelOverrideHeaders } from "../lib/commandRequestHeaders";
+import { getRequestPrincipal } from "../lib/principal";
 
 const PUBLIC_STREAM_ERROR_REASON = "操作未完成，请刷新后重试";
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
@@ -209,18 +216,19 @@ function prepareCommandForActor(command: Command): { command: Command; sessionId
 async function readCommandRequestContext(c: Context): Promise<CommandRequestContext> {
   const clientTraceId = c.req.header("x-client-trace-id");
   const origin = parseOrigin(c.req.header("x-origin"));
+  const headers = readCommandsModelOverrideHeaders(c);
   const modelOverrides = await resolveRequestModelOverrides({
-    provider: c.req.header("x-model-provider"),
-    visitorKey: c.req.header("x-model-key"),
-    baseUrl: c.req.header("x-model-base-url"),
-    modelFlash: c.req.header("x-model-flash"),
-    modelPro: c.req.header("x-model-pro"),
-    modelTier: c.req.header("x-model-tier"),
-    protocol: c.req.header("x-model-protocol"),
-    visionKey: c.req.header("x-vision-key"),
-    visionBaseUrl: c.req.header("x-vision-base-url"),
-    visionModel: c.req.header("x-vision-model"),
-    visionProtocol: c.req.header("x-vision-protocol"),
+    provider: headers["x-model-provider"],
+    visitorKey: headers["x-model-key"],
+    baseUrl: headers["x-model-base-url"],
+    modelFlash: headers["x-model-flash"],
+    modelPro: headers["x-model-pro"],
+    modelTier: headers["x-model-tier"],
+    protocol: headers["x-model-protocol"],
+    visionKey: headers["x-vision-key"],
+    visionBaseUrl: headers["x-vision-base-url"],
+    visionModel: headers["x-vision-model"],
+    visionProtocol: headers["x-vision-protocol"],
   });
   return { clientTraceId, origin, modelOverrides };
 }
@@ -232,6 +240,11 @@ async function handleCommandPost(c: Context) {
   const parsed = await parseBody(c, commandSchema, { formatError: formatCommandError });
   if (!parsed.ok) return parsed.response;
   const command = parsed.data;
+
+  // attach operation gate：必须早于 PM 深校验、会话存在性查询、幂等 claim、lazy import 与入队。
+  if (isAttachRequest(c) && !authorizeAttachCommand(getRequestPrincipal(c), command.kind)) {
+    return attachOperationDenied(c);
+  }
 
   // updateDoc 的 doc 深层结构校验(zod 层只做直通)。
   const deepError = updateDocDeepError(command);

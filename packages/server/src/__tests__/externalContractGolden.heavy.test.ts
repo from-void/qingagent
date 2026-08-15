@@ -34,7 +34,7 @@ let token = "";
 beforeEach(async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "qa-external-contract-"));
   dirs.push(dir);
-  await startExternalInstance({ port: 52341, version: "1.2.3", filePath: path.join(dir, "instance.json") });
+  await startExternalInstance({ port: 52341, version: "1.2.3", libraryId: "00000000-0000-4000-8000-000000000001", filePath: path.join(dir, "instance.json") });
   token = getExternalToken() ?? "";
 });
 
@@ -59,8 +59,21 @@ describe("external API v1 golden contract", () => {
 
   it("GET /health", async () => {
     const body = await getJson<ExternalHealthResponse>("/health");
-    exactKeys(body, ["ok", "version", "pid", "startedAt"]);
-    expect(body).toEqual({ ok: true, version: "1.2.3", pid: process.pid, startedAt: expect.any(String) });
+    exactKeys(body, [
+      "ok", "schemaVersion", "port", "version", "pid", "attachProtocolVersion",
+      "instanceId", "libraryId", "startedAt",
+    ]);
+    expect(body).toEqual({
+      ok: true,
+      schemaVersion: 2,
+      port: 52341,
+      version: "1.2.3",
+      pid: process.pid,
+      attachProtocolVersion: 1,
+      instanceId: expect.any(String),
+      libraryId: "00000000-0000-4000-8000-000000000001",
+      startedAt: expect.any(String),
+    });
   });
 
   it("POST /sessions", async () => {

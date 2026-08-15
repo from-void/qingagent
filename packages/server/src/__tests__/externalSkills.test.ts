@@ -26,6 +26,7 @@ beforeEach(async () => {
   await startExternalInstance({
     port: 52341,
     version: "test",
+    libraryId: "00000000-0000-4000-8000-000000000001",
     filePath: path.join(TEST_SKILLS_DIR, "instance.json"),
   });
   token = getExternalToken() ?? "";

@@ -27,12 +27,15 @@ import { confirmRoutes } from "./routes/confirms";
 import { credentialShareRoutes } from "./routes/credentialShare";
 import { securitySettingsRoutes } from "./routes/securitySettings";
 import { memorySettingsRoutes } from "./routes/memorySettings";
+import { attachRoutes } from "./routes/attach";
 import { cleanupOldFolderSourceCaches } from "@qingagent/core";
 import { authTokenMiddleware } from "./lib/authToken";
 import { externalTokenMiddleware } from "./lib/externalAuth";
 import { csrfMutationGuard, isTrustedOrigin } from "./lib/trustedOrigin";
 import { createJsonBodyLimitMiddleware } from "./lib/jsonBodyLimit";
 import { commandsTokenMiddleware } from "./lib/commandsAuth";
+import { principalMiddleware } from "./lib/principal";
+import { attachRouteAuthorizationMiddleware } from "./lib/attachPolicy";
 
 export const app = new Hono();
 
@@ -47,6 +50,7 @@ function redactAuthInLog(message: string): string {
 // (复用 isTrustedOrigin 单一真源,不按 Host 或任意 loopback 端口放行)。
 // credentials:true 是 cookie 鉴权(步骤 B)必需,且带 credentials 时浏览器禁止 ACAO=*,所以 * 必须退役。
 // 无 Origin(同源/curl)时回调收到空串,返回 null 不加 ACAO——同源请求本就不受 CORS 约束。
+app.use("*", principalMiddleware);
 app.use(
   "*",
   cors({
@@ -55,8 +59,9 @@ app.use(
   }),
 );
 app.use("*", logger((message: string, ...rest: string[]) => console.log(redactAuthInLog(message), ...rest)));
-app.use("/api/*", createJsonBodyLimitMiddleware());
 app.use("/api/*", csrfMutationGuard);
+app.use("/api/*", attachRouteAuthorizationMiddleware);
+app.use("/api/*", createJsonBodyLimitMiddleware());
 app.use("/api/*", authTokenMiddleware);
 app.use("/api/v1/external/*", externalTokenMiddleware);
 app.use("/api/v1/commands", commandsTokenMiddleware);
@@ -64,6 +69,7 @@ app.use("/api/v1/commands", commandsTokenMiddleware);
 // Routes
 app.route("/", healthRoutes);
 app.route("/api/v1", authRoutes);
+app.route("/api/v1", attachRoutes);
 app.route("/api/v1", homeRoutes);
 app.route("/api/v1", historyRoutes);
 app.route("/api/v1", streamRoutes);

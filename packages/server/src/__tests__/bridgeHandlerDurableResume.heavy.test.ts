@@ -256,7 +256,20 @@ describe("bridgeHandler durable askUser resume", () => {
         const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
         return {
           ...actual,
-          qingagentAgent: second.agent,
+          qingagentAgent: {
+            ...second.agent,
+            resumeStream: second.agent.resumeStream.bind(second.agent),
+            listSuspendedRuns: vi.fn(async () => ({
+              runs: [{
+                runId: firstStream.runId,
+                toolCalls: [{
+                  toolCallId: suspended.payload.toolCallId,
+                  toolName: "askUser",
+                  requiresApproval: false,
+                }],
+              }],
+            })),
+          },
         };
       });
       const bridge = await import("../gateway/bridgeHandler");

@@ -21,7 +21,10 @@ import {
 import { emitRestoreFrames } from "./restoreFrames";
 import { sessions } from "./sessionRegistry";
 import { confirmService } from "./bridgeCore";
-import { reconcileRestoredConfirms } from "./confirmRecovery";
+import {
+  reconcileRestoredAgentSuspension,
+  reconcileRestoredConfirms,
+} from "./confirmRecovery";
 import { handleConfirmExpiry, registerConfirmSessionResolver } from "./confirmRuntime";
 export {
   findSessionByPatch,
@@ -117,6 +120,7 @@ export async function getOrRestoreSession(
     if (!restoreOptions || cached.runId) return cached;
     const restored = await loadSessionFromThread(sessionId, restoreOptions);
     if (restored?.runId && !cached.runId) {
+      await reconcileRestoredAgentSuspension(restored);
       await reconcileRestoredConfirms(restored);
       mergeRestoredSuspension(cached, restored);
       armSessionConfirmTimeouts(cached);
@@ -134,6 +138,7 @@ export async function getOrRestoreSession(
         ? await loadSessionFromThread(sessionId, restoreOptions)
         : await loadSessionFromThread(sessionId);
       if (!restored) return undefined;
+      await reconcileRestoredAgentSuspension(restored);
       await reconcileRestoredConfirms(restored);
       // await 期间可能已有别的路径(如 startSession existing)把 session 放回内存,以内存态为准,不覆盖。
       const existing = sessions.get(sessionId);

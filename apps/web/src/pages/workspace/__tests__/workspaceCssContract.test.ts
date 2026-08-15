@@ -141,6 +141,8 @@ describe("workspaceCssContract", () => {
     expect(css).toContain("width: min(780px, 94vw);");
     expect(css).toContain(".ws-launch-template-grid {");
     expect(css).toContain("grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));");
+    expect(css).toContain("grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));");
+    expect(css).toMatch(/\.ws-launch-template-card\.is-portrait \{[^}]*width: auto;/s);
     expect(css).toContain(".ws-launch-head {\n  position: relative;\n  display: flex;");
     expect(css).toContain(".ws-launch-subtitle {");
     expect(css).not.toContain(".ws-launch-meta");
@@ -157,7 +159,7 @@ describe("workspaceCssContract", () => {
     expect(css).toMatch(/\.ws-launch-template-edit svg \{[^}]*width: 13px;[^}]*stroke: currentColor;[^}]*stroke-width: 1\.4;/s);
     expect(css).toMatch(/\.ws-launch-head h2 \{[^}]*font: 700 15px\/1\.3 var\(--font-zh-serif\);/s);
     expect(css).toMatch(/\.ws-launch-subtitle \{[^}]*font: 11\.5px\/1\.5 var\(--font-zh-serif\);/s);
-    expect(css).toMatch(/\.ws-launch-body \{[^}]*gap: 11px;[^}]*padding: 14px 22px 16px;/s);
+    expect(css).toMatch(/\.ws-launch-body \{[^}]*gap: 11px;[^}]*padding: 14px 22px 16px;[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;/s);
     expect(css).toContain(".ws-launch-editor { display: grid; min-width: 0; gap: 11px; }");
     expect(css).toMatch(/\.ws-launch-starters \{[^}]*margin-right: auto;/s);
     expect(css).toMatch(/\.ws-launch-template-group-title \{[^}]*font: 600 12\.5px\/1\.4 var\(--font-zh-serif\);/s);
@@ -169,6 +171,7 @@ describe("workspaceCssContract", () => {
     expect(css).toMatch(/\.ws-launch-field \{[^}]*font: 600 12\.5px\/1\.4 var\(--font-zh-serif\);/s);
     expect(css).toMatch(/\.ws-launch-field input,[^}]*\.ws-launch-field textarea \{[^}]*font: 400 12\.5px\/1\.6 var\(--font-zh-serif\);/s);
     expect(css).toContain(".ws-launch-supplement textarea { min-height: 58px;");
+    expect(css).toMatch(/\.ws-launch-actions \{[^}]*position: sticky;[^}]*bottom: -16px;[^}]*margin: 0 -22px -16px;[^}]*padding: 10px 22px 16px;[^}]*border-top: 1px solid var\(--line-2\);[^}]*background: var\(--bg-paper-deep\);/s);
     expect(css).toContain(".ws-launch-actions .wf-btn { padding: 7px 16px; font-size: 12.5px; }");
     expect(css).not.toMatch(/\.ws-review-(?:template|link|lexicon|builtin)/);
     expect(`${workspaceCss}\n${css}`).not.toMatch(/\.ws-deriv-(?:modal|generate-form|style-group|template(?:-list|-open|-select|-new)?|style-editor|style-back|modal-error|modal-status|prompt|modal-actions)(?:[\s.{:#])/);

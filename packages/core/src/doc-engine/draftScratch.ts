@@ -1,13 +1,15 @@
 import type { DiffHunk } from "@qingagent/contract-ts";
 import {
   PM_SCHEMA_VERSION,
+  assertUniquePmBlockIds,
   findPmTableByBlockId,
   getPmContentHash,
   getStablePmJson,
-  assertUniquePmBlockIds,
+  isGeneratedAiBlockId,
   materializeDraftBlockIds,
   pmToPlainText,
   pmTableLogicalGrid,
+  safeParsePmDoc,
   type PmDoc,
   type PmTableCellNode,
   type PmTableNode,
@@ -107,8 +109,35 @@ export function replaceDraftCandidateDoc(
   doc: PmDoc,
   writeGuard?: TurnWriteGuard,
   expectedMutationRevision?: number,
+  options: { preserveExistingNodes?: boolean } = {},
 ): PmDoc {
-  const materializedDoc = materializeDraftBlockIds(doc, { namespace: "draft.replace" });
+  let materializedDoc: PmDoc;
+  if (options.preserveExistingNodes) {
+    const baseDoc = state.docDraftBaseDoc ?? currentPmDoc(state);
+    const preservedIds = new Set(collectAllBlockIds(baseDoc));
+    const needsMaterialization = collectAllBlockIds(doc).some(
+      (blockId) => isGeneratedAiBlockId(blockId) && !preservedIds.has(blockId),
+    );
+    // 局部操作若没有引入新的 ai-block-*，直接复用候选节点；这样 canonical
+    // 旧块的 blockId 与节点引用都不会被一次全篇 normalize/materialize 改写。
+    materializedDoc = needsMaterialization
+      ? materializeDraftBlockIds(doc, {
+          namespace: "draft.replace",
+          preserveIds: preservedIds,
+        })
+      : doc;
+    if (!needsMaterialization) {
+      assertUniquePmBlockIds(materializedDoc);
+      // safeParse 只做 doc 级 schema 校验，不使用其重建后的 data，避免抵消
+      // preserveExistingNodes 对未触碰节点引用的复用收益。
+      const parsed = safeParsePmDoc(materializedDoc);
+      if (!parsed.success) {
+        throw new Error(`draft candidate 未过 pmDocSchema: ${parsed.error.message}`);
+      }
+    }
+  } else {
+    materializedDoc = materializeDraftBlockIds(doc, { namespace: "draft.replace" });
+  }
   if (writeGuard) assertTurnWriteAllowed(state, writeGuard);
   if (
     expectedMutationRevision !== undefined &&
@@ -124,6 +153,17 @@ export function replaceDraftCandidateDoc(
   state.docDraftCandidateDoc = materializedDoc;
   advanceDraftMutationRevision(state);
   return state.docDraftCandidateDoc;
+}
+
+function collectAllBlockIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(collectAllBlockIds);
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const attrs = record.attrs && typeof record.attrs === "object"
+    ? record.attrs as Record<string, unknown>
+    : null;
+  const own = typeof attrs?.blockId === "string" ? [attrs.blockId] : [];
+  return [...own, ...collectAllBlockIds(record.content)];
 }
 
 export async function saveDraftCandidateCheckpoint(opts: {

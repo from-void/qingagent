@@ -62,6 +62,8 @@ export async function* settleDraftCandidate(opts: {
   generationId?: string | null;
   generationLastSeq?: number;
   emitGenerationEvent?: boolean;
+  /** 仅外部提案编译开启：忽略全文重编译造成的纯 blockId replace。 */
+  ignoreBlockIdentityOnlyReplacements?: boolean;
 }): AsyncGenerator<BridgeFrame, { hunkCount: number; docWritten: boolean }> {
   const {
     state,
@@ -73,6 +75,7 @@ export async function* settleDraftCandidate(opts: {
     generationId,
     generationLastSeq = 0,
     emitGenerationEvent = false,
+    ignoreBlockIdentityOnlyReplacements = false,
   } = opts;
   {
     const draftDoc = state.docDraftCandidateDoc;
@@ -81,7 +84,10 @@ export async function* settleDraftCandidate(opts: {
       const baseVersion = state.docDraftBaseVersion ?? state.docVersion;
       // 首稿没有可审批的原版；跳过 candidate-diff，继续走整篇直接落地路径。
       if (hasNonEmptyCanonicalBase(state, baseDoc)) {
-        const hunks = buildDraftDiff(baseDoc, draftDoc, { baseVersion });
+        const hunks = buildDraftDiff(baseDoc, draftDoc, {
+          baseVersion,
+          ignoreBlockIdentityOnlyReplacements,
+        });
         if (hunks.length === 0) {
           await documentDraftRepo.clear(state.docId).catch((err) => {
             logger.warn("Failed to clear empty pending draft row", {

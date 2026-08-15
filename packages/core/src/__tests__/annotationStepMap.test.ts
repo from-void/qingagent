@@ -267,6 +267,36 @@ describe("annotation StepMap", () => {
     expect(mapAnnotationGroupsThroughSteps(groups, steps, finalDoc).groups).toEqual(groups);
   });
 
+  it("仅 blockId 变化仍生成迁移 step，并把批注锚点迁到新块身份", () => {
+    const baseDoc = doc([{
+      type: "callout",
+      attrs: { blockId: "block-old", emoji: "!", tone: "info" },
+      content: [paragraph("block-old-p", "唯一批注原句") as Extract<PmBlockNode, { type: "paragraph" }>],
+    }]);
+    const finalDoc = doc([{
+      type: "callout",
+      attrs: { blockId: "block-new", emoji: "!", tone: "info" },
+      content: [paragraph("block-new-p", "唯一批注原句") as Extract<PmBlockNode, { type: "paragraph" }>],
+    }]);
+    const groups: AnnotationGroup[] = [{
+      id: "g-identity-migration",
+      summary: "块身份迁移",
+      note: "正文不变也要更新锚点块身份",
+      origin: "role-review",
+      status: "reviewing",
+      anchors: [anchor("block-old-p", 2, 8, "唯一批注原句")],
+    }];
+
+    const steps = buildAnnotationMappingSteps(baseDoc, finalDoc);
+    const mapped = mapAnnotationGroupsThroughSteps(groups, steps, finalDoc);
+
+    expect(steps).toHaveLength(1);
+    expect(mapped.groups[0]?.anchors[0]).toMatchObject({
+      blockId: "block-new-p",
+      quote: "唯一批注原句",
+    });
+  });
+
   it("脏 step 兜底校验保留含 hardBreak 与 inlineMath 的未改批注", () => {
     const finalDoc = doc([{
       type: "paragraph",

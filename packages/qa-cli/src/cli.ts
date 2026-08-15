@@ -446,6 +446,8 @@ async function parseOps(
   args: string[],
   preflightStrReplaceValues?: Array<[string, string]>,
 ): Promise<ExternalProposeOp[]> {
+  // TODO(engine follow-up): 增加 --title 并与 --append/--str-replace 组合；
+  // 本批只交付 contract + server 的 setTitle，现阶段可经 --ops 使用。
   const opsFile = optionValue(args, "--ops");
   if (opsFile) return JSON.parse(await readFile(opsFile, "utf8")) as ExternalProposeOp[];
   const full = optionValue(args, "--full");

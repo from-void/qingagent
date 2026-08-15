@@ -4,11 +4,14 @@ import {
   applyBlockEdits,
   pmToAiIr,
   pmToPlainText,
+  safeParsePmDoc,
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import { pmDocFromText } from "./pmTestUtils.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
+import { replaceDraftCandidateDoc } from "../doc-engine/draftScratch.js";
+import { createSession } from "../session/sessionState.js";
 import {
   collectTopLevelTextBlocks,
   findLiteralMatches,
@@ -41,6 +44,32 @@ function secondRef(doc: PmDoc): string {
 }
 
 describe("S7 L1 editDraft 指标 ④⑤⑥", () => {
+  it("preserveExistingNodes 物化新 ai 块时仍保留 canonical 的 ai-block 身份", () => {
+    const state = createSession("preserve-existing-ai-id");
+    const canonical = docWithBlocks([
+      { type: "paragraph", attrs: { blockId: "ai-block-canonical" }, content: [{ type: "text", text: "旧块" }] },
+    ]);
+    state.doc = canonical;
+    state.docVersion = 1;
+    state.docDraftBaseDoc = structuredClone(canonical);
+    const candidate = docWithBlocks([
+      canonical.content[0]!,
+      { type: "paragraph", attrs: { blockId: "ai-block-new" }, content: [{ type: "text", text: "新块" }] },
+    ]);
+
+    const replaced = replaceDraftCandidateDoc(
+      state,
+      candidate,
+      undefined,
+      undefined,
+      { preserveExistingNodes: true },
+    );
+
+    expect(replaced.content[0]?.attrs.blockId).toBe("ai-block-canonical");
+    expect(replaced.content[1]?.attrs.blockId).toMatch(/^block-/);
+    expect(safeParsePmDoc(replaced).success).toBe(true);
+  });
+
   it("④ 零幽灵 hunk：只改 A 不应影响 B/C", () => {
     const base = makeBaseDoc();
     const refA = firstRef(base);
@@ -97,3 +126,7 @@ describe("S7 L1 editDraft 指标 ④⑤⑥", () => {
     expect(buildDraftDiff(base, round4).length).toBeGreaterThan(0);
   });
 });
+
+function docWithBlocks(content: PmBlockNode[]): PmDoc {
+  return { type: "doc", attrs: { schemaVersion: 1 }, content };
+}

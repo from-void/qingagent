@@ -7,6 +7,7 @@ import type {
 } from "@qingagent/contract-ts";
 import {
   compileAiDocumentToPm,
+  assertUniquePmBlockIds,
   markdownToPm,
   normalizePmDoc,
   pmToMarkdown,
@@ -115,11 +116,17 @@ export function compileExternalQingmlDraft(
   }
 }
 
-function applyExternalProposalOps(
-  doc: PmDoc,
+/**
+ * 对已由 ensureDraftCandidateDoc 隔离出的候选文档应用外部局部操作。
+ *
+ * 本函数刻意不 clone 入参，并复用未触碰节点引用；禁止传入 session.doc、
+ * docDraftBaseDoc 或其它 canonical/base 文档。调用方必须先建立候选副本。
+ */
+export function applyExternalProposalOps(
+  candidateDoc: PmDoc,
   ops: ExternalProposeOp[],
 ): { ok: true; doc: PmDoc } | { ok: false; error: string } {
-  let workingDoc = clonePmDoc(doc);
+  let workingDoc = candidateDoc;
   for (const op of ops) {
     if (op.kind === "strReplace") {
       const blocks = collectTopLevelTextBlocks(workingDoc);
@@ -132,27 +139,33 @@ function applyExternalProposalOps(
     }
     if (op.kind === "appendSection") {
       const insertDoc = normalizePmDoc(markdownToPm(op.markdown));
-      workingDoc = normalizePmDoc({
+      workingDoc = {
         ...workingDoc,
         content: [...workingDoc.content, ...insertDoc.content],
-      });
+      };
       continue;
     }
     if (op.kind === "insertAfterLine") {
       const insertDoc = normalizePmDoc(markdownToPm(op.markdown));
       const index = blockIndexForMarkdownLine(workingDoc, op.line);
       if (index < 0) return { ok: false, error: "行号超出范围" };
-      workingDoc = normalizePmDoc({
+      workingDoc = {
         ...workingDoc,
         content: [
           ...workingDoc.content.slice(0, index + 1),
           ...insertDoc.content,
           ...workingDoc.content.slice(index + 1),
         ],
-      });
+      };
       continue;
     }
+    if (op.kind === "setTitle") continue;
     return { ok: false, error: "已有文档不允许 fullDraft" };
+  }
+  try {
+    assertUniquePmBlockIds(workingDoc);
+  } catch {
+    return { ok: false, error: "追加内容与已有文档产生重复块身份" };
   }
   return { ok: true, doc: workingDoc };
 }
@@ -400,11 +413,35 @@ export async function* handleDocWriteCommand(
       const firstOp = command.data.ops[0];
       const fullDraftOp = firstOp?.kind === "fullDraft" ? firstOp : null;
       const qingmlDraftOp = firstOp?.kind === "qingmlDraft" ? firstOp : null;
+      const titleOp = command.data.ops.find((op) => op.kind === "setTitle");
       const qingmlDraft = qingmlDraftOp
         ? compileExternalQingmlDraft(qingmlDraftOp.qingml)
         : null;
       if (qingmlDraft && !qingmlDraft.ok) {
         yield docWriteReason(clientMutationId, "validation_error", qingmlDraft.diagnostic);
+        return;
+      }
+      const contentOps = command.data.ops.filter((op) => op.kind !== "setTitle");
+      if (contentOps.length === 0) {
+        if (!titleOp) {
+          yield docWriteReason(clientMutationId, "validation_error");
+          return;
+        }
+        const titleChanged = titleOp.title !== session.title;
+        const pinChanged = !session.titlePinned;
+        if (titleChanged) {
+          session.title = titleOp.title;
+          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
+        }
+        session.titlePinned = true;
+        if (titleChanged || pinChanged) {
+          await persistSessionMetadata(session);
+        }
+        // 同标题重放也按幂等成功返回；标题不进入正文审阅，也不推进 docVersion。
+        yield {
+          kind: "docWriteResult",
+          data: { ok: true, clientMutationId, docVersion: session.docVersion },
+        };
         return;
       }
       if (contentState.kind === "empty") {
@@ -479,15 +516,21 @@ export async function* handleDocWriteCommand(
       if (qingmlDraft) {
         workingDoc = clonePmDoc(qingmlDraft.doc);
       } else {
-        workingDoc = clonePmDoc(baseCandidate);
-        const applied = applyExternalProposalOps(workingDoc, command.data.ops);
+        workingDoc = baseCandidate;
+        const applied = applyExternalProposalOps(workingDoc, contentOps);
         if (!applied.ok) {
           yield docWriteReason(clientMutationId, "validation_error");
           return;
         }
         workingDoc = applied.doc;
       }
-      replaceDraftCandidateDoc(session, workingDoc);
+      replaceDraftCandidateDoc(
+        session,
+        workingDoc,
+        undefined,
+        undefined,
+        { preserveExistingNodes: qingmlDraft === null },
+      );
 
       const externalId = `external-${client ?? "agent"}-${crypto.randomUUID()}`;
       const agentMessageId = externalId;
@@ -501,12 +544,23 @@ export async function* handleDocWriteCommand(
         chips: null,
       };
 
+      if (titleOp) {
+        const titleChanged = titleOp.title !== session.title;
+        const pinChanged = !session.titlePinned;
+        if (titleChanged) {
+          session.title = titleOp.title;
+          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
+        }
+        session.titlePinned = true;
+        if (titleChanged || pinChanged) await persistSessionMetadata(session);
+      }
       const settled = yield* settleDraftCandidate({
         state: session,
         agentMessageId,
         streamId,
         runId,
         wholeDocument: qingmlDraft !== null,
+        ignoreBlockIdentityOnlyReplacements: true,
       });
       if (settled.hunkCount <= 0) {
         yield docWriteReason(clientMutationId, "validation_error");

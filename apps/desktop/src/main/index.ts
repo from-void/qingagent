@@ -1169,14 +1169,14 @@ function addAllowedOrigin(origins: Set<string>, url: string): void {
   }
 }
 
-function installPackagedRendererProtocol(port: number, commandAuthToken: string): void {
+function installPackagedRendererProtocol(port: number, commandAuthToken: string, externalAuthToken: string): void {
   if (protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) return;
   // 这一跳必须走 Node http 直连而非 net.fetch:后者取消不传播(SSE 连接永久泄漏)且受
   // Chromium 单主机 6 连接上限约束,叠加后会让事件流和随后的所有 API 请求集体静默挂起。
   // 详见 desktopAppProxyFetch.ts 头部注释。
   protocol.handle(
     DESKTOP_APP_SCHEME,
-    createDesktopAppProxyHandler(port, createNodeHttpProxyFetch(), commandAuthToken),
+    createDesktopAppProxyHandler(port, createNodeHttpProxyFetch(), commandAuthToken, externalAuthToken),
   );
 }
 
@@ -1413,8 +1413,9 @@ async function createWindowOnce() {
   // 迁移失败已由 startServer 报错；其余启动异常也必须明确告知并退出，不能永远停在启动壳。
   let port: number;
   let commandAuthToken: string;
+  let externalAuthToken: string;
   try {
-    ({ port, commandAuthToken } = await serverReady);
+    ({ port, commandAuthToken, externalAuthToken } = await serverReady);
   } catch (error) {
     if (!isReportedServerStartupError(error)) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -1431,7 +1432,7 @@ async function createWindowOnce() {
   addAllowedOrigin(allowedAppOrigins, `http://localhost:${port}`);
   addAllowedOrigin(allowedAppOrigins, `http://127.0.0.1:${port}`);
   if (!isDev) {
-    installPackagedRendererProtocol(port, commandAuthToken);
+    installPackagedRendererProtocol(port, commandAuthToken, externalAuthToken);
     allowedAppOrigins.add(DESKTOP_APP_ORIGIN);
   } else {
     const removeDevCommandAuth = installDevRendererCommandAuth(

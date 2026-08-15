@@ -201,3 +201,33 @@ test("desktop dev 只给主窗口同源 command mutation 补凭据", () => {
     "http://localhost:6173/api/v1/commands*",
   ]);
 });
+
+test("external 子树任何方法都注入 external instance token(深链探测不再 401)", async () => {
+  const forwarded: Request[] = [];
+  const handler = createDesktopAppProxyHandler(43127, async (request) => {
+    forwarded.push(request);
+    return new Response("ok");
+  }, "desktop-command-token", "external-instance-token");
+
+  const head = new Request("qingagent://app/api/v1/external/sessions/abc/doc?format=pm", {
+    method: "HEAD",
+    headers: { Origin: DESKTOP_APP_ORIGIN, Authorization: "Bearer renderer-forged-token" },
+  });
+  await handler(head);
+  assert.equal(forwarded[0]?.headers.get("authorization"), "Bearer external-instance-token");
+
+  // 非 external、非 command-mutation 的 GET 不注入
+  const plain = new Request("qingagent://app/api/v1/home", { method: "GET" });
+  await handler(plain);
+  assert.equal(forwarded[1]?.headers.get("authorization"), null);
+
+  // command mutation 仍走 command token
+  const command = new Request("qingagent://app/api/v1/commands", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    duplex: "half",
+  } as RequestInit);
+  await handler(command);
+  assert.equal(forwarded[2]?.headers.get("authorization"), "Bearer desktop-command-token");
+});

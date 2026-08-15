@@ -103,6 +103,7 @@ export function createDesktopAppProxyHandler(
   port: number,
   fetchRequest: DesktopAppProxyFetch,
   commandAuthToken: string,
+  externalAuthToken: string = commandAuthToken,
 ): (request: Request) => Promise<Response> {
   const serverOrigin = `http://127.0.0.1:${port}`;
 
@@ -125,6 +126,10 @@ export function createDesktopAppProxyHandler(
     if (request.method === "POST" && isDesktopCommandMutationPath(sourceUrl.pathname)) {
       // Headers.set 大小写不敏感，会覆盖 renderer 伪造的 Authorization。
       headers.set("authorization", `Bearer ${commandAuthToken}`);
+    } else if (sourceUrl.pathname.startsWith("/api/v1/external/")) {
+      // external 子树恒要 Bearer;本应用自己的请求(深链探测 HEAD doc 等)由主进程
+      // 注入自家 instance token,绝不落到 renderer,也绝不弹交互式令牌门。
+      headers.set("authorization", `Bearer ${externalAuthToken}`);
     }
     const init: RequestInit & { duplex?: "half" } = {
       method: request.method,

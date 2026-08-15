@@ -16,7 +16,15 @@ export function AuthTokenGate({ forceOpen = false }: { forceOpen?: boolean } = {
   useEffect(() => {
     if (forceOpen) return;
 
+    // 桌面客户端铁律:交互式令牌门永不弹出(它只服务自部署 web 实例的访问保护)。
+    // 桌面端一切鉴权由主进程代理注入,401 走静默取消,按普通错误呈现。
+    const isDesktopRuntime = typeof window !== "undefined"
+      && Boolean((window as { electron?: unknown }).electron);
     const onRequired = () => {
+      if (isDesktopRuntime) {
+        cancelAuth();
+        return;
+      }
       setError(null);
       setOpen(true);
     };

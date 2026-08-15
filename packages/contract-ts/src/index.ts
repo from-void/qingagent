@@ -44,7 +44,15 @@ export * from "./DiagSpan";
 export * from "./EndReason";
 export * from "./ExportFormat";
 export * from "./ExternalPropose";
-export type { ExternalSkillSource } from "./ExternalApi";
+export type {
+  ExternalBridgeFrame,
+  ExternalBridgeFrameKind,
+  ExternalDocReplaceRequest,
+  ExternalDocReplaceResponse,
+  ExternalPmDocReadResponse,
+  ExternalReviewRenderModelResponse,
+  ExternalSkillSource,
+} from "./ExternalApi";
 export * from "./HistoryEntry";
 export * from "./HistoryList";
 export * from "./HistorySnapshot";

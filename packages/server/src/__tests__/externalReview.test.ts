@@ -38,6 +38,46 @@ afterEach(async () => {
 });
 
 describe("external review", () => {
+  it("render-model 返回 DocDiffReady 完整渲染字段并拒绝未知 format", async () => {
+    const { sessionId, patchIds } = await createPendingReview();
+    const response = await request(
+      `/sessions/${sessionId}/review?format=render-model`,
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, unknown> & {
+      suggestions: Array<Record<string, any>>;
+    };
+    expect(body).toMatchObject({
+      sessionId,
+      docVersion: 1,
+      state: "pendingReview",
+      agentBusy: false,
+      baseVersion: 1,
+      previewDoc: { type: "doc", attrs: { schemaVersion: 1 } },
+      editedDoc: { type: "doc", attrs: { schemaVersion: 1 } },
+      suggestions: expect.arrayContaining([
+        expect.objectContaining({
+          id: patchIds[0],
+          anchor: expect.objectContaining({ textHash: expect.any(String) }),
+          patch: { kind: "prosemirror_steps", steps: expect.any(Array) },
+          preview: {
+            deleteText: expect.stringContaining("旧"),
+            insertText: expect.stringContaining("新"),
+          },
+          diffHunk: expect.objectContaining({
+            beforeText: expect.stringContaining("旧"),
+            afterText: expect.stringContaining("新"),
+          }),
+        }),
+      ]),
+    });
+    expect(body.suggestions[0]?.anchor).toHaveProperty("textHash");
+
+    const invalid = await request(`/sessions/${sessionId}/review?format=detail`);
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ code: "VALIDATION" });
+  });
+
   it("读取 diff、逐条表态并提交，事件流包含 docCommitted", async () => {
     const { sessionId, patchIds } = await createPendingReview();
     const patchId = patchIds[0]!;

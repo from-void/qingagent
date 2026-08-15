@@ -17,6 +17,7 @@ import { commandSchema } from "@qingagent/contract-ts/schemas";
 import type {
   ExternalAnnotation,
   ExternalBridgeFrame,
+  ExternalDocReplaceRequest,
   ExternalErrorCode,
   ExternalReviewCommitRequest,
   ExternalReviewDiff,
@@ -26,15 +27,19 @@ import type {
   ExternalValidationDiagnostic,
 } from "../../../contract-ts/src/ExternalApi";
 import {
+  currentPmDoc,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
   deriveTitleFromDoc,
   documentRepo,
+  isWholeDocumentSuggestionBatchId,
   QINGAGENT_RESOURCE_ID,
+  type SessionState,
 } from "@qingagent/core";
 import {
   aiBlocksToQingml,
+  getPmContentHash,
   markdownToPm,
   normalizePmDoc,
   pmToAiIr,
@@ -448,14 +453,14 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
   }
   const sessionId = c.req.param("id");
   const format = c.req.query("format");
-  if (format !== undefined && format !== "qingml") {
+  if (format !== undefined && format !== "qingml" && format !== "pm") {
     externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
     return externalError(
       c,
       400,
       "VALIDATION",
-      "format 仅支持 qingml",
-      "读取文档时请移除 format，或改用 format=qingml 后重试",
+      "format 仅支持 qingml 或 pm",
+      "读取文档时请移除 format，或改用 format=qingml / format=pm 后重试",
     );
   }
   const session = await getOrRestoreSessionReadOnly(sessionId);
@@ -464,6 +469,20 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     return externalError(c, 404, "SESSION_NOT_FOUND");
   }
   const state = deriveContentState(session);
+  if (format === "pm") {
+    const snapshot = await externalCanonicalDocumentSnapshot(session);
+    externalLog("read", { sessionId, ms: elapsed(startedAt), result: "ok" });
+    return c.json({
+      sessionId,
+      docVersion: snapshot.docVersion,
+      contentHash: snapshot.contentHash,
+      state: state.kind,
+      agentBusy: deriveAgentBusy(session),
+      title: session.title.trim() || deriveTitleFromDoc(snapshot.pmDoc),
+      ts: snapshot.ts,
+      pmDoc: snapshot.pmDoc,
+    });
+  }
   const markdown = session.doc ? pmToMarkdown(session.doc) : "";
   const title = session.title.trim() || deriveTitleFromDoc(session.doc);
   externalLog("read", { sessionId, ms: elapsed(startedAt), result: "ok" });
@@ -481,6 +500,100 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
   });
 });
 
+externalRoutes.put("/sessions/:id/doc", async (c) => {
+  const startedAt = Date.now();
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as Partial<ExternalDocReplaceRequest> | null;
+  const parsed = commandSchema.safeParse({
+    kind: "updateDoc",
+    data: {
+      ...(body && typeof body === "object" ? body : {}),
+      sessionId,
+    },
+  });
+  if (!parsed.success || parsed.data.kind !== "updateDoc") {
+    externalLog("doc_replace", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VALIDATION",
+    });
+    return externalError(c, 400, "VALIDATION", "文档保存请求不合法");
+  }
+  if (!(await sessionExists(sessionId))) {
+    externalLog("doc_replace", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:SESSION_NOT_FOUND",
+    });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command: parsed.data,
+      origin: "external",
+      client: parseExternalClient(c.req.header("x-qa-client")),
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
+
+  const write = frames
+    .map((entry) => entry.frame)
+    .find((frame) => frame.kind === "docWriteResult");
+  if (!write || write.kind !== "docWriteResult") {
+    return externalError(c, 400, "VALIDATION", "文档保存未产生有效回执");
+  }
+  if (write.data.ok) {
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+    const snapshot = await externalCanonicalDocumentSnapshot(session);
+    externalLog("doc_replace", { sessionId, ms: elapsed(startedAt), result: "committed" });
+    return c.json({
+      ok: true as const,
+      clientMutationId: write.data.clientMutationId,
+      docVersion: write.data.docVersion,
+      contentHash: snapshot.contentHash,
+      ts: snapshot.ts,
+    });
+  }
+  if ("conflict" in write.data) {
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+    const snapshot = await externalCanonicalDocumentSnapshot(session);
+    externalLog("doc_replace", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VERSION_CONFLICT",
+    });
+    return c.json({
+      ok: false as const,
+      clientMutationId: write.data.clientMutationId,
+      code: "VERSION_CONFLICT" as const,
+      conflict: {
+        expected: write.data.conflict.expectedDocumentSnapshot,
+        actual: write.data.conflict.actualDocumentSnapshot,
+      },
+      actualContentHash: snapshot.contentHash,
+    }, 409);
+  }
+  if (write.data.reason === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (write.data.reason === "not_editable") {
+    return externalError(c, 409, "REVIEW_PENDING");
+  }
+  if (write.data.reason === "not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  return externalError(c, 400, "VALIDATION", "文档内容不合法");
+});
+
 externalRoutes.get("/sessions/:id/review", async (c) => {
   const startedAt = Date.now();
   const limited = rateLimit(c);
@@ -493,6 +606,16 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
+  const format = c.req.query("format");
+  if (format !== undefined && format !== "render-model") {
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      "format 仅支持 render-model",
+      "读取审阅摘要时请移除 format，或改用 format=render-model",
+    );
+  }
   const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("review_list", {
@@ -501,6 +624,34 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
       result: "rejected:SESSION_NOT_FOUND",
     });
     return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  if (format === "render-model") {
+    const suggestions = [...session.suggestions.values()].map((record) =>
+      structuredClone(record.suggestion)
+    );
+    externalLog("review_render_model", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "ok",
+      patches: suggestions.length,
+    });
+    return c.json({
+      sessionId,
+      docVersion: session.docVersion,
+      state: deriveContentState(session).kind,
+      agentBusy: deriveAgentBusy(session),
+      baseVersion: session.suggestionBaseVersion ?? session.docVersion,
+      suggestions,
+      ...(isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId)
+        ? { wholeDocument: true }
+        : {}),
+      ...(session.suggestionBaseDoc
+        ? { previewDoc: structuredClone(session.suggestionBaseDoc) }
+        : {}),
+      ...(session.docDraftCandidateDoc
+        ? { editedDoc: structuredClone(session.docDraftCandidateDoc) }
+        : {}),
+    });
   }
   const patches = [...session.suggestions.values()].map((record) =>
     reviewPatchSummary(record.suggestion)
@@ -1520,9 +1671,20 @@ function frameForExternal(entry: LoggedFrame): ExternalBridgeFrame | null {
   return {
     seq: entry.seq,
     kind: entry.frame.kind,
-    data: dataForExternal(entry.frame.data),
+    data: COMPLETE_EXTERNAL_DOCUMENT_FRAME_KINDS.has(entry.frame.kind)
+      ? structuredClone(entry.frame.data)
+      : dataForExternal(entry.frame.data),
   } as ExternalBridgeFrame;
 }
+
+const COMPLETE_EXTERNAL_DOCUMENT_FRAME_KINDS: ReadonlySet<BridgeFrame["kind"]> = new Set([
+  "docGenerationEvent",
+  "documentSnapshotWritten",
+  "docCommitted",
+  "docDiffReady",
+  "docWriteResult",
+  "docStateChanged",
+]);
 
 function dataForExternal<T>(data: T): T {
   const cloned = structuredClone(data);
@@ -1717,6 +1879,27 @@ async function saveEmptySessionDocument(sessionId: string): Promise<void> {
   });
 }
 
+async function externalCanonicalDocumentSnapshot(session: SessionState): Promise<{
+  docVersion: number;
+  contentHash: string;
+  ts: string;
+  pmDoc: ReturnType<typeof currentPmDoc>;
+}> {
+  const row = await documentRepo.load(session.docId);
+  const usePersisted = row?.pmDoc && row.docVersion >= session.docVersion;
+  const pmDoc = usePersisted ? row.pmDoc! : currentPmDoc(session);
+  return {
+    docVersion: usePersisted ? row.docVersion : session.docVersion,
+    contentHash: usePersisted && row.contentHash
+      ? row.contentHash
+      : getPmContentHash(pmDoc),
+    ts: usePersisted
+      ? row.updatedAt
+      : session.lastContentEditedAt ?? row?.updatedAt ?? new Date(0).toISOString(),
+    pmDoc,
+  };
+}
+
 function elapsed(startedAt: number): number {
   return Date.now() - startedAt;
 }
@@ -1739,9 +1922,11 @@ function externalLog(
     | "chatlog"
     | "files"
     | "read"
+    | "doc_replace"
     | "health"
     | "sessions"
     | "review_list"
+    | "review_render_model"
     | "review_show"
     | "review_verdict"
     | "review_commit"

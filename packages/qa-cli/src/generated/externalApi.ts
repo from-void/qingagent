@@ -9,6 +9,10 @@
  * 破坏性响应变更必须迁移到新的 API major，并同步发布能够识别该 major 的 qa-cli。
  */
 
+import type { BridgeFrame } from "@qingagent/contract-ts";
+import type { DocDiffReady } from "@qingagent/contract-ts";
+import type { PmDoc } from "@qingagent/contract-ts";
+
 export type ExternalClient = "claudecode" | "codex" | "agent";
 
 export type ExternalErrorCode =
@@ -74,6 +78,42 @@ export interface ExternalDocReadResponse {
   qingml?: string;
   title: string | null;
 }
+
+/** GET /sessions/:id/doc?format=pm：可直接作为 updateDoc 基线的权威 PM 快照。 */
+export interface ExternalPmDocReadResponse {
+  sessionId: string;
+  docVersion: number;
+  contentHash: string;
+  state: ExternalDocumentState;
+  agentBusy: boolean;
+  title: string | null;
+  ts: string;
+  pmDoc: PmDoc | null;
+}
+
+/** PUT /sessions/:id/doc：用户直接保存，不进入 proposal/review 语义。 */
+export interface ExternalDocReplaceRequest {
+  expectedDocumentSnapshot: number;
+  baseContentHash: string;
+  clientMutationId: string;
+  doc: PmDoc;
+}
+
+export type ExternalDocReplaceResponse =
+  | {
+      ok: true;
+      clientMutationId: string;
+      docVersion: number;
+      contentHash: string;
+      ts: string;
+    }
+  | {
+      ok: false;
+      clientMutationId: string;
+      code: "VERSION_CONFLICT";
+      conflict: { expected: number; actual: number };
+      actualContentHash: string;
+    };
 
 export interface ExternalChatMessage {
   id: string;
@@ -232,6 +272,17 @@ export interface ExternalReviewListResponse {
   annotations: ExternalAnnotation[];
 }
 
+/**
+ * GET /sessions/:id/review?format=render-model。
+ * 渲染字段直接复用 DocDiffReady，避免 summary/detail DTO 丢失 PM steps、marks 与 textHash。
+ */
+export type ExternalReviewRenderModelResponse = {
+  sessionId: string;
+  docVersion: number;
+  state: ExternalDocumentState;
+  agentBusy: boolean;
+} & DocDiffReady;
+
 export interface ExternalReviewPatchResponse {
   sessionId: string;
   patch: ExternalReviewPatchDetail;
@@ -386,23 +437,26 @@ export interface ExternalSkillMutationResponse {
 
 export interface ExternalEventsMeta { epoch: number; minSeq: number; nextSeq: number; gap: boolean }
 
-/** qa-cli 消费的 BridgeFrame 子集只依赖公开 envelope；data 由 kind 对应的 v1 wire 契约承载。 */
-export interface ExternalBridgeFrame {
-  seq: number;
-  kind:
-    | "restoreReset" | "sessionMeta" | "chatMessageAdded" | "chatMessageAppended"
-    | "toolCallUpdated" | "documentSnapshotWritten" | "docGenerationEvent" | "docCommitted"
-    | "docDiffReady" | "docWriteResult" | "docStateChanged" | "todosChanged"
-    | "resourceUpserted" | "resourceUpdated" | "resourceRemoved" | "folderSourcesChanged"
-    | "folderSourceOperationResult" | "annotationGroupsReady" | "stream";
-  data: unknown;
-}
+export type ExternalBridgeFrameKind =
+  | "restoreReset" | "sessionMeta" | "chatMessageAdded" | "chatMessageAppended"
+  | "toolCallUpdated" | "documentSnapshotWritten" | "docGenerationEvent" | "docCommitted"
+  | "docDiffReady" | "docWriteResult" | "docStateChanged" | "todosChanged"
+  | "resourceUpserted" | "resourceUpdated" | "resourceRemoved" | "folderSourcesChanged"
+  | "folderSourceOperationResult" | "annotationGroupsReady" | "stream";
+
+/** external SSE 的公开判别 union；kind 收窄后 data 自动得到对应 BridgeFrame 的完整类型。 */
+export type ExternalBridgeFrame = { seq: number } & Extract<
+  BridgeFrame,
+  { kind: ExternalBridgeFrameKind }
+>;
 
 export type ExternalSuccessResponse =
   | ExternalHealthResponse | ExternalSessionsListResponse | ExternalSessionCreateResponse
-  | ExternalDocReadResponse | ExternalChatLogResponse | ExternalChatSendResponse
+  | ExternalDocReadResponse | ExternalPmDocReadResponse | ExternalDocReplaceResponse
+  | ExternalChatLogResponse | ExternalChatSendResponse
   | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse
-  | ExternalReviewListResponse | ExternalReviewPatchResponse | ExternalAnnotationResponse
+  | ExternalReviewListResponse | ExternalReviewRenderModelResponse
+  | ExternalReviewPatchResponse | ExternalAnnotationResponse
   | ExternalReviewVerdictResponse | ExternalReviewCommitResponse
   | ExternalAnnotationIgnoreResponse
   | ExternalReviewTemplatesResponse | ExternalReviewTemplateResponse

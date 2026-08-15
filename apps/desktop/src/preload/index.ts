@@ -14,12 +14,42 @@ import {
   type DesktopDialogResponse,
   type DesktopDialogResult,
 } from "../rendererDialogContract.js";
+import {
+  QINGJIAN_OPEN_SESSION_CHANNEL,
+  type QingjianOpenSessionIntent,
+} from "../qingjianDeepLinkContract.js";
 
 type UpdateStatusPayload = {
   kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
   version?: string;
   notesUrl?: string;
 };
+
+const qingjianOpenSessionListeners = new Set<(intent: QingjianOpenSessionIntent) => void>();
+let pendingQingjianOpenSession: QingjianOpenSessionIntent | null = null;
+ipcRenderer.on(QINGJIAN_OPEN_SESSION_CHANNEL, (_event, rawIntent: unknown) => {
+  if (!rawIntent || typeof rawIntent !== "object") return;
+  const engineSessionId = (rawIntent as { engineSessionId?: unknown }).engineSessionId;
+  if (typeof engineSessionId !== "string") return;
+  const intent = { engineSessionId };
+  if (qingjianOpenSessionListeners.size === 0) {
+    pendingQingjianOpenSession = intent;
+    return;
+  }
+  for (const listener of qingjianOpenSessionListeners) listener(intent);
+});
+
+function onQingjianOpenSession(
+  callback: (intent: QingjianOpenSessionIntent) => void,
+): () => void {
+  qingjianOpenSessionListeners.add(callback);
+  if (pendingQingjianOpenSession) {
+    const intent = pendingQingjianOpenSession;
+    pendingQingjianOpenSession = null;
+    callback(intent);
+  }
+  return () => qingjianOpenSessionListeners.delete(callback);
+}
 
 // 应用版本号:启动期同步取一次(主进程回 app.getVersion()),供关于页显示与「复制版本信息」。
 let appVersion = "";
@@ -118,6 +148,7 @@ function respondToDesktopDialog(id: number, result: DesktopDialogResult): void {
 contextBridge.exposeInMainWorld("electron", {
   platform: process.platform,
   isDesktop: true,
+  onQingjianOpenSession,
   saveExportDownload,
   revealExportDownload,
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),

@@ -109,6 +109,12 @@ import {
 } from "./exportDownloadCoordinator.js";
 import { DIAGNOSTICS_EXPORT_CHANNEL } from "../diagnosticsExportContract.js";
 import { exportDiagnosticsToDownloads } from "./diagnosticsExport.js";
+import {
+  QingjianDeepLinkDispatcher,
+  registerQingjianProtocolClient,
+  type QingjianDeepLinkHandler,
+} from "./qingjianDeepLink.js";
+import { QINGJIAN_OPEN_SESSION_CHANNEL } from "../qingjianDeepLinkContract.js";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
@@ -119,16 +125,38 @@ const nativeRememberGrantGate = new NativeRememberGrantGate();
 let mainWindowRememberGeneration = 0;
 let mainWindowRememberScope: string | null = null;
 const rendererDialogBroker = new RendererDialogBroker();
+
+function focusAndShowWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
 const desktopDeepLinks = new DesktopAppDeepLinkDispatcher(process.argv);
+const qingjianDeepLinks = new QingjianDeepLinkDispatcher(process.argv);
 app.on("open-url", (event, url) => {
   event.preventDefault();
   desktopDeepLinks.offerUrl(url);
+  qingjianDeepLinks.offerUrl(url);
 });
 const hasSingleInstanceLock = acquireSingleInstanceLock(
   app,
   () => mainWindow,
-  (commandLine) => desktopDeepLinks.offerCommandLine(commandLine),
+  (commandLine) => {
+    desktopDeepLinks.offerCommandLine(commandLine);
+    qingjianDeepLinks.offerCommandLine(commandLine);
+  },
 );
+
+if (hasSingleInstanceLock) {
+  const entryScript = process.argv[1] ? path.resolve(process.argv[1]) : undefined;
+  const registered = registerQingjianProtocolClient(app, {
+    defaultApp: process.defaultApp === true,
+    execPath: process.execPath,
+    entryScript,
+  });
+  if (!registered) console.warn("[deep-link] qingjian 协议注册失败");
+}
 
 function assertTrustedRenderer(
   event: IpcMainEvent | IpcMainInvokeEvent,
@@ -1544,11 +1572,31 @@ async function createWindowOnce() {
     }
     loadDesiredContent();
   };
+
+  const deliverQingjianDeepLink: QingjianDeepLinkHandler = (intent): void => {
+    if (getLiveWebContents(contentWindow) !== contentWebContents) return;
+    focusAndShowWindow(contentWindow);
+    contentWebContents.send(QINGJIAN_OPEN_SESSION_CHANNEL, intent);
+  };
+  const bindQingjianDeepLinkHandler = (): void => {
+    if (
+      getLiveWebContents(contentWindow) !== contentWebContents
+      || contentWebContents.getURL() === STARTUP_SHELL_URL
+    ) return;
+    qingjianDeepLinks.setHandler(deliverQingjianDeepLink);
+  };
+  contentWebContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      qingjianDeepLinks.clearHandler(deliverQingjianDeepLink);
+    }
+  });
+  contentWebContents.on("did-finish-load", bindQingjianDeepLinkHandler);
   // 绑定点刻意晚于 await serverReady 与 installPackagedRendererProtocol：冷启动 URL、
   // macOS open-url、second-instance 在此之前都只排队，不会撞进未就绪的自定义协议。
   const loadedQueuedDeepLink = desktopDeepLinks.setNavigator(navigateToDesktopDeepLink);
   contentWindow.once("closed", () => {
     desktopDeepLinks.clearNavigator(navigateToDesktopDeepLink);
+    qingjianDeepLinks.clearHandler(deliverQingjianDeepLink);
   });
   if (!loadedQueuedDeepLink) loadDesiredContent();
   if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {

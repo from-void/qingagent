@@ -1,4 +1,4 @@
-import { Router, useRoute } from "./shell";
+import { Router, routeToHash, useRoute } from "./shell";
 import type { RouteName } from "./shell";
 import { AppUpdateWatcher } from "./system/AppUpdateWatcher";
 import { DesktopDialogHost } from "./system/DesktopDialogHost";
@@ -8,7 +8,7 @@ import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { onceAsync } from "./system/onceAsync";
 import { WORKSPACE_PAPER_CSS_VARIABLES } from "./system/workspacePaperGeometry";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 // 路由页面懒加载:首页只下载 home chunk,workspace 的 tiptap 编辑器等不再进首屏 bundle。
 // 各页都抽成命名工厂,既给 lazy 用,也给「空闲预热」用 —— 同一个 import 工厂只会拉一次 chunk。
@@ -84,6 +84,37 @@ const ROUTE_PRESENTATION: Partial<
 function AppShell() {
   const toast = useToast();
   const isMobileViewport = useIsMobileViewport();
+  const qingjianOpenRequestRef = useRef(0);
+
+  useEffect(() => {
+    const subscribe = window.electron?.onQingjianOpenSession;
+    if (!subscribe) return;
+    return subscribe(({ engineSessionId }) => {
+      const requestId = ++qingjianOpenRequestRef.current;
+      void fetch(
+        `/api/v1/external/sessions/${encodeURIComponent(engineSessionId)}/doc?format=pm`,
+        { method: "HEAD", cache: "no-store" },
+      ).then((response) => {
+        if (requestId !== qingjianOpenRequestRef.current) return;
+        if (response.ok) {
+          window.location.hash = `${routeToHash("workspace")}?session=${encodeURIComponent(engineSessionId)}`;
+          return;
+        }
+        toast.show({
+          message: response.status === 404 ? "未找到对应文稿" : "暂时无法打开文稿",
+          tone: "warn",
+          dedupeKey: "qingjian-deep-link-open-failed",
+        });
+      }).catch(() => {
+        if (requestId !== qingjianOpenRequestRef.current) return;
+        toast.show({
+          message: "暂时无法打开文稿",
+          tone: "warn",
+          dedupeKey: "qingjian-deep-link-open-failed",
+        });
+      });
+    });
+  }, [toast]);
 
   useEffect(() => {
     const handleSseRateLimited = () => {

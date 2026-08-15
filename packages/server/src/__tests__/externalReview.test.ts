@@ -2,12 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { markdownToPm } from "@qingagent/pm-schema";
 import { app } from "../app";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
-import {
-  SessionActorCommandError,
-  SessionActorQueueFullError,
-} from "../gateway/sessionActor";
+import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import {
   getExternalToken,
   startExternalInstance,
@@ -167,192 +165,112 @@ describe("external review", () => {
     ).toBe(true);
   });
 
-  it("全量拒绝复用 reviewOutcome 命令并退出 pendingReview", async () => {
-    const { sessionId } = await createPendingReview();
-    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
-    const submitQueued = vi.spyOn(sessionManager, "submitQueued").mockImplementation(
-      async (targetSessionId, input) => {
-        if (input.command.kind === "submitReviewOutcome") {
-          return { completion: Promise.resolve([]) };
-        }
-        return originalSubmitQueued(targetSessionId, input);
-      },
-    );
+  it.each(["commit", "accept_all", "reject_all"] as const)(
+    "%s 只做审阅结算，返回后会话空闲且可立即写入",
+    async (action) => {
+      const { sessionId, patchIds } = await createPendingReview();
+      if (action === "commit") {
+        const marked = await request(`/sessions/${sessionId}/review/verdicts`, {
+          method: "POST",
+          body: JSON.stringify({
+            expectedDocVersion: 1,
+            patchId: patchIds[0],
+            verdict: "rejected",
+          }),
+        });
+        expect(marked.status).toBe(200);
+      }
+      const submitQueued = vi.spyOn(sessionManager, "submitQueued");
 
-    const rejected = await request(`/sessions/${sessionId}/review/commit`, {
-      method: "POST",
-      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
-    });
-
-    expect(rejected.status).toBe(200);
-    expect(await rejected.json()).toMatchObject({
-      status: "reviewed",
-      docVersion: 1,
-      acceptedCount: 0,
-      rejectedCount: expect.any(Number),
-      remainingCount: 0,
-      outcomeQueued: true,
-      outcome: {
-        acceptedCount: 0,
-        rejectedCount: expect.any(Number),
-        hunks: expect.arrayContaining([
-          expect.objectContaining({ verdict: "rejected" }),
-        ]),
-      },
-    });
-    expect(
-      submitQueued.mock.calls.some(
-        ([, input]) => input.command.kind === "submitReviewOutcome",
-      ),
-    ).toBe(true);
-    const session = await getOrRestoreSession(sessionId);
-    expect(session?.docState.kind).toBe("editing");
-  });
-
-  it("拒绝反馈队列准入失败时返回 429，不再提前声明 outcomeQueued", async () => {
-    const { sessionId } = await createPendingReview();
-    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
-    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
-      async (targetSessionId, input) => {
-        if (input.command.kind === "submitReviewOutcome") {
-          throw new SessionActorQueueFullError(64);
-        }
-        return originalSubmitQueued(targetSessionId, input);
-      },
-    );
-
-    const rejected = await request(`/sessions/${sessionId}/review/commit`, {
-      method: "POST",
-      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
-    });
-
-    expect(rejected.status).toBe(429);
-    expect(rejected.headers.get("Retry-After")).toBe("1");
-    expect(await rejected.json()).toMatchObject({
-      code: "RATE_LIMITED",
-      error: "会话命令队列已满",
-    });
-  });
-
-  it("拒绝反馈 Actor 执行失败时调用方收到失败响应", async () => {
-    const { sessionId } = await createPendingReview();
-    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
-    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
-      async (targetSessionId, input) => {
-        if (input.command.kind === "submitReviewOutcome") {
-          return {
-            completion: Promise.reject(new SessionActorCommandError(
-              "Session actor command failed",
-              new Error("model handler rejected"),
-              [],
-            )),
-          };
-        }
-        return originalSubmitQueued(targetSessionId, input);
-      },
-    );
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    const rejected = await request(`/sessions/${sessionId}/review/commit`, {
-      method: "POST",
-      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
-    });
-
-    expect(rejected.status).toBe(409);
-    expect(await rejected.json()).toMatchObject({
-      code: "AGENT_BUSY",
-      error: "审查结果反馈未完成，请稍后重试",
-    });
-  });
-
-  it("拒绝反馈 completion 永不结束时限时返回已入队回执", async () => {
-    const { sessionId } = await createPendingReview();
-    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
-    let markSubmitted!: () => void;
-    const submitted = new Promise<void>((resolve) => {
-      markSubmitted = resolve;
-    });
-    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
-      async (targetSessionId, input) => {
-        if (input.command.kind === "submitReviewOutcome") {
-          markSubmitted();
-          return { completion: new Promise<never>(() => undefined) };
-        }
-        return originalSubmitQueued(targetSessionId, input);
-      },
-    );
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    vi.useFakeTimers();
-    try {
-      const responsePromise = request(`/sessions/${sessionId}/review/commit`, {
+      const committed = await request(`/sessions/${sessionId}/review/commit`, {
         method: "POST",
-        body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
-      });
-      await submitted;
-      await Promise.resolve();
-      await Promise.resolve();
-      let settled = false;
-      void responsePromise.then(() => {
-        settled = true;
+        body: JSON.stringify({ expectedDocVersion: 1, action }),
       });
 
-      await vi.advanceTimersByTimeAsync(2_999);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-
-      const response = await responsePromise;
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({
+      expect(committed.status).toBe(200);
+      const committedBody = await committed.json() as {
+        docVersion: number;
+        acceptedCount: number;
+        rejectedCount: number;
+        outcomeQueued: boolean;
+      };
+      expect(committedBody).toMatchObject({
         status: "reviewed",
-        outcomeQueued: true,
+        remainingCount: 0,
+        outcomeQueued: false,
       });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+      expect(
+        submitQueued.mock.calls.some(
+          ([, input]) => input.command.kind === "submitReviewOutcome",
+        ),
+      ).toBe(false);
+      expect(sessionManager.isSessionBusy(sessionId)).toBe(false);
 
-  it("拒绝反馈等待期间请求断连后立即返回已入队回执", async () => {
+      const read = await request(`/sessions/${sessionId}/doc?format=pm`);
+      expect(read.status).toBe(200);
+      const snapshot = await read.json() as {
+        agentBusy: boolean;
+        docVersion: number;
+        contentHash: string;
+      };
+      expect(snapshot.agentBusy).toBe(false);
+
+      if (action === "reject_all") {
+        const updated = await request(`/sessions/${sessionId}/doc`, {
+          method: "PUT",
+          body: JSON.stringify({
+            expectedDocumentSnapshot: snapshot.docVersion,
+            baseContentHash: snapshot.contentHash,
+            clientMutationId: "external-post-review-write",
+            doc: markdownToPm("# 标题\n\n裁决后立即直写。"),
+          }),
+        });
+        expect(updated.status).toBe(200);
+        expect(await updated.json()).toMatchObject({ ok: true });
+      } else {
+        const proposed = await request(`/sessions/${sessionId}/proposals`, {
+          method: "POST",
+          body: JSON.stringify({
+            expectedDocVersion: snapshot.docVersion,
+            ops: [{ kind: "appendSection", markdown: "裁决后立即提案。" }],
+          }),
+        });
+        expect(proposed.status).toBe(200);
+        expect(await proposed.json()).toMatchObject({ status: "review" });
+      }
+    },
+  );
+
+  it("actor 忙时 doc 与 review 读取都返回 agentBusy=true", async () => {
     const { sessionId } = await createPendingReview();
-    const originalSubmitQueued = sessionManager.submitQueued.bind(sessionManager);
-    let markSubmitted!: () => void;
-    const submitted = new Promise<void>((resolve) => {
-      markSubmitted = resolve;
+    let markStarted!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
     });
-    vi.spyOn(sessionManager, "submitQueued").mockImplementation(
-      async (targetSessionId, input) => {
-        if (input.command.kind === "submitReviewOutcome") {
-          markSubmitted();
-          return { completion: new Promise<never>(() => undefined) };
-        }
-        return originalSubmitQueued(targetSessionId, input);
-      },
-    );
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const abortController = new AbortController();
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const active = sessionManager.runExclusive(sessionId, async function* () {
+      markStarted();
+      await gate;
+    });
+    await started;
 
-    vi.useFakeTimers();
     try {
-      const responsePromise = request(`/sessions/${sessionId}/review/commit`, {
-        method: "POST",
-        body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
-        signal: abortController.signal,
-      });
-      await submitted;
-      await Promise.resolve();
-      await Promise.resolve();
-
-      abortController.abort("client_disconnected");
-
-      const response = await responsePromise;
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({
-        status: "reviewed",
-        outcomeQueued: true,
-      });
+      const docResponse = await request(`/sessions/${sessionId}/doc?format=pm`);
+      const reviewResponse = await request(`/sessions/${sessionId}/review`);
+      expect(docResponse.status).toBe(200);
+      expect(reviewResponse.status).toBe(200);
+      expect(await docResponse.json()).toMatchObject({ agentBusy: true });
+      expect(await reviewResponse.json()).toMatchObject({ agentBusy: true });
     } finally {
-      vi.useRealTimers();
+      release();
+      await active;
     }
+
+    const idle = await request(`/sessions/${sessionId}/doc?format=pm`);
+    expect(await idle.json()).toMatchObject({ agentBusy: false });
   });
 
   it("版本冲突、agent busy、无待审查和缺失 patch 都返回内建错误码", async () => {

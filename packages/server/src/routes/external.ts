@@ -97,7 +97,6 @@ const DEFAULT_SESSIONS_LIMIT = 100;
 const MAX_SESSIONS_LIMIT = 500;
 const READ_RATE_LIMIT_PER_SECOND = 5;
 const WRITE_RATE_LIMIT_PER_SECOND = 20;
-const REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS = 3_000;
 const SESSION_SNAPSHOT_CURSOR_START = "start";
 const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
 const MAX_SESSION_SNAPSHOT_CURSORS = 32;
@@ -125,44 +124,6 @@ type ExternalSessionSummary = {
 };
 
 const EXISTS_BY_IDS_BATCH_SIZE = 50;
-
-type ReviewOutcomeCompletionResult =
-  | { status: "completed" }
-  | { status: "failed"; error: unknown }
-  | { status: "timed_out" }
-  | { status: "disconnected" };
-
-function waitForReviewOutcomeCompletion(
-  completion: Promise<LoggedFrame[]>,
-  requestSignal: AbortSignal,
-): Promise<ReviewOutcomeCompletionResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => finish({ status: "disconnected" });
-    const finish = (result: ReviewOutcomeCompletionResult) => {
-      if (settled) return;
-      settled = true;
-      if (timeout !== undefined) clearTimeout(timeout);
-      requestSignal.removeEventListener("abort", onAbort);
-      resolve(result);
-    };
-
-    void completion.then(
-      () => finish({ status: "completed" }),
-      (error) => finish({ status: "failed", error }),
-    );
-    if (requestSignal.aborted) {
-      finish({ status: "disconnected" });
-      return;
-    }
-    requestSignal.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(
-      () => finish({ status: "timed_out" }),
-      REVIEW_OUTCOME_COMPLETION_TIMEOUT_MS,
-    );
-  });
-}
 
 externalRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
@@ -504,7 +465,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
       docVersion: snapshot.docVersion,
       contentHash: snapshot.contentHash,
       state: state.kind,
-      agentBusy: deriveAgentBusy(session),
+      agentBusy: sessionManager.isSessionBusy(sessionId),
       title: session.title.trim() || deriveTitleFromDoc(snapshot.pmDoc),
       ts: snapshot.ts,
       pmDoc: snapshot.pmDoc,
@@ -517,7 +478,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     sessionId,
     docVersion: session.docVersion,
     state: state.kind,
-    agentBusy: deriveAgentBusy(session),
+    agentBusy: sessionManager.isSessionBusy(sessionId),
     markdown,
     ...(c.req.query("lines") === "1" ? { markdownWithLineNumbers: withLineNumbers(markdown) } : {}),
     ...(format === "qingml"
@@ -666,7 +627,7 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
       sessionId,
       docVersion: session.docVersion,
       state: deriveContentState(session).kind,
-      agentBusy: deriveAgentBusy(session),
+      agentBusy: sessionManager.isSessionBusy(sessionId),
       baseVersion: session.suggestionBaseVersion ?? session.docVersion,
       suggestions,
       ...(isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId)
@@ -695,7 +656,7 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
     sessionId,
     docVersion: session.docVersion,
     state: deriveContentState(session).kind,
-    agentBusy: deriveAgentBusy(session),
+    agentBusy: sessionManager.isSessionBusy(sessionId),
     patches,
     annotations,
   });
@@ -996,63 +957,9 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
     );
   }
 
-  let outcomeQueued = false;
-  if (outcome.rejectedCount > 0) {
-    const outcomeCommand: Command = {
-      kind: "submitReviewOutcome",
-      data: { sessionId, outcome },
-    };
-    let completion: Promise<LoggedFrame[]>;
-    try {
-      ({ completion } = await sessionManager.submitQueued(sessionId, {
-        command: outcomeCommand,
-        origin: "external",
-        client,
-        modelOverrides,
-      }));
-    } catch (error) {
-      if (error instanceof SessionActorQueueFullError) {
-        return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
-      }
-      console.warn("[external] evt=review_outcome result=failed", {
-        sessionId,
-        errorType: error instanceof Error ? error.name : "unknown",
-      });
-      return externalError(
-        c,
-        409,
-        "AGENT_BUSY",
-        "审查结果反馈未完成，请稍后重试",
-      );
-    }
-    const completionResult = await waitForReviewOutcomeCompletion(
-      completion,
-      c.req.raw.signal,
-    );
-    if (completionResult.status === "failed") {
-      const error = completionResult.error;
-      console.warn("[external] evt=review_outcome result=failed", {
-        sessionId,
-        errorType: error instanceof Error ? error.name : "unknown",
-      });
-      return externalError(
-        c,
-        409,
-        "AGENT_BUSY",
-        "审查结果反馈未完成，请稍后重试",
-      );
-    }
-    if (
-      completionResult.status === "timed_out" ||
-      completionResult.status === "disconnected"
-    ) {
-      console.warn("[external] evt=review_outcome result=pending", {
-        sessionId,
-        reason: completionResult.status,
-      });
-    }
-    outcomeQueued = true;
-  }
+  // external 的作者是外部模型；这里只做确定性审阅结算，不把裁决再投成用户消息
+  // 启动青简模型续轮。内部 UI 仍可通过 submitReviewOutcome 保持原有交互语义。
+  const outcomeQueued = false;
   externalLog("review_commit", {
     sessionId,
     ms: elapsed(startedAt),

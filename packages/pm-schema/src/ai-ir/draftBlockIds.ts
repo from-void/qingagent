@@ -9,7 +9,12 @@ export function isGeneratedAiBlockId(blockId: unknown): blockId is string {
 
 export function allocateMaterializedBlockIds(
   nodes: readonly PmBlockNode[],
-  opts: { namespace?: string; existingIds?: ReadonlySet<string>; occurrence?: number },
+  opts: {
+    namespace?: string;
+    existingIds?: ReadonlySet<string>;
+    occurrence?: number;
+    preserveIds?: ReadonlySet<string>;
+  },
 ): { nodes: PmBlockNode[]; ids: string[]; nextOccurrence: number } {
   const used = new Set(opts.existingIds ?? []);
   for (const blockId of collectBlockIds(nodes)) {
@@ -40,7 +45,7 @@ export function allocateMaterializedBlockIds(
 
   const materialized = nodes.map((node) => {
     const sourceBlockId = node.attrs.blockId;
-    const top = isGeneratedAiBlockId(sourceBlockId)
+    const top = isGeneratedAiBlockId(sourceBlockId) && !opts.preserveIds?.has(sourceBlockId)
       ? allocatePrefix(node, sourceBlockId, baseNamespace)
       : node;
     const topBlockId = top.attrs.blockId;
@@ -56,7 +61,7 @@ export function allocateMaterializedBlockIds(
       let current = value as PmNode;
       const currentRecord = current as unknown as { attrs?: { blockId?: unknown } };
       const currentId = currentRecord.attrs?.blockId;
-      if (isGeneratedAiBlockId(currentId)) {
+      if (isGeneratedAiBlockId(currentId) && !opts.preserveIds?.has(currentId)) {
         current = allocatePrefix(current, currentId, `${baseNamespace}:${topBlockId}`);
       }
       const record = current as unknown as Record<string, unknown>;
@@ -76,7 +81,11 @@ export function allocateMaterializedBlockIds(
 
 export function materializeDraftBlockNodes(
   nodes: readonly PmBlockNode[],
-  opts?: { namespace?: string; existingIds?: ReadonlySet<string> },
+  opts?: {
+    namespace?: string;
+    existingIds?: ReadonlySet<string>;
+    preserveIds?: ReadonlySet<string>;
+  },
 ): PmBlockNode[] {
   const existingIds = new Set(opts?.existingIds ?? []);
   let occurrence = 0;
@@ -87,6 +96,7 @@ export function materializeDraftBlockNodes(
       namespace: opts?.namespace,
       existingIds,
       occurrence,
+      preserveIds: opts?.preserveIds,
     });
     occurrence = result.nextOccurrence;
     for (const id of result.ids) existingIds.add(id);
@@ -96,7 +106,10 @@ export function materializeDraftBlockNodes(
   return out;
 }
 
-export function materializeDraftBlockIds(doc: PmDoc, opts?: { namespace?: string }): PmDoc {
+export function materializeDraftBlockIds(
+  doc: PmDoc,
+  opts?: { namespace?: string; preserveIds?: ReadonlySet<string> },
+): PmDoc {
   const realTopLevelIds = new Set<string>();
   for (const node of doc.content) {
     if (!isGeneratedAiBlockId(node.attrs.blockId)) realTopLevelIds.add(node.attrs.blockId);
@@ -105,6 +118,7 @@ export function materializeDraftBlockIds(doc: PmDoc, opts?: { namespace?: string
   const content = materializeDraftBlockNodes(doc.content, {
     namespace: opts?.namespace,
     existingIds: realTopLevelIds,
+    preserveIds: opts?.preserveIds,
   });
   const normalized = normalizePmDoc({
     type: "doc",

@@ -742,6 +742,45 @@ describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () =>
   });
 });
 
+describe("external block identity-only 过滤边界", () => {
+  it("默认保留 identity-only hunk，只有显式 external option 才过滤", () => {
+    const base = doc([callout("callout-old", "正文不变")]);
+    const draft = doc([callout("callout-new", "正文不变")]);
+
+    expect(buildDraftDiff(base, draft)).toHaveLength(1);
+    expect(buildDraftDiff(base, draft, {
+      ignoreBlockIdentityOnlyReplacements: true,
+    })).toEqual([]);
+  });
+
+  it("diagram.svg 缓存与默认 attrs 不阻止 identity-only 过滤，但 source 变化仍保留", () => {
+    const baseDiagram = diagram("diagram-old") as PmDiagramNode;
+    const base = doc([{
+      ...baseDiagram,
+      attrs: {
+        ...baseDiagram.attrs,
+        svg: "<svg viewBox='0 0 1 1'></svg>",
+      },
+    }]);
+    const sameSource = doc([diagram("diagram-new")]);
+    const changedDiagram = diagram("diagram-new") as PmDiagramNode;
+    const changedSource = doc([{
+      ...changedDiagram,
+      attrs: {
+        ...changedDiagram.attrs,
+        source: "flowchart TD\n  A[开始] --> C[真正变化]\n",
+      },
+    } as PmBlockNode]);
+
+    expect(buildDraftDiff(base, sameSource, {
+      ignoreBlockIdentityOnlyReplacements: true,
+    })).toEqual([]);
+    expect(buildDraftDiff(base, changedSource, {
+      ignoreBlockIdentityOnlyReplacements: true,
+    })).toHaveLength(1);
+  });
+});
+
 describe("拆干净:锚点清理(★裁决 260710)", () => {
   const graphemeCount = (s: string): number => Array.from(s).length;
   const nonTrivialCount = (s: string): number =>

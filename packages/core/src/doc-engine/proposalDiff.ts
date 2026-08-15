@@ -77,7 +77,10 @@ const BLOCK_NODE_TYPES = new Set<PmNode["type"]>([
 export function buildDraftDiff(
   baseDoc: PmDoc,
   draftDoc: PmDoc,
-  options: { baseVersion?: number } = {},
+  options: {
+    baseVersion?: number;
+    ignoreBlockIdentityOnlyReplacements?: boolean;
+  } = {},
 ): DiffHunk[] {
   const normalizedBase = normalizePmDoc(baseDoc);
   const normalizedDraft = normalizePmDoc(draftDoc);
@@ -128,7 +131,10 @@ export function buildDraftDiff(
     hunks,
   });
 
-  const groupedHunks = annotateReviewGroups(hunks, {
+  const effectiveHunks = options.ignoreBlockIdentityOnlyReplacements
+    ? hunks.filter((hunk) => !isBlockIdentityOnlyReplacement(hunk))
+    : hunks;
+  const groupedHunks = annotateReviewGroups(effectiveHunks, {
     baseVersion: options.baseVersion ?? 0,
   });
   Object.defineProperty(groupedHunks, "overlapRatio", {
@@ -137,6 +143,48 @@ export function buildDraftDiff(
     configurable: false,
   });
   return groupedHunks;
+}
+
+/**
+ * 外部全文编译可能只重建 blockId；这种 replace 的可见文本与实际结构都没变，
+ * 在调用方显式开启过滤时不能物化成审阅项。默认保留该 hunk，避免改变批注迁移、
+ * pending draft 冷恢复等内部调用方的既有语义。
+ *
+ * diagram.svg 是可再生渲染缓存，null/undefined attrs 是 PM 默认态，均不算内容变化；
+ * diagram.source、mark、块类型和其它有效 attrs 的变化仍会保留。
+ */
+function isBlockIdentityOnlyReplacement(hunk: DiffHunk): boolean {
+  if (
+    hunk.op !== "replace" ||
+    hunk.beforeText !== hunk.afterText ||
+    !hunk.beforeBlock ||
+    !hunk.afterBlock
+  ) {
+    return false;
+  }
+  return getStablePmJson(normalizeIdentityComparison(hunk.beforeBlock)) ===
+    getStablePmJson(normalizeIdentityComparison(hunk.afterBlock));
+}
+
+function normalizeIdentityComparison(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeIdentityComparison);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(record).flatMap(([key, child]) => {
+    if (key !== "attrs" || !child || typeof child !== "object" || Array.isArray(child)) {
+      return [[key, normalizeIdentityComparison(child)] as const];
+    }
+    const normalizedAttrs = Object.entries(child as Record<string, unknown>)
+      .filter(([attr, attrValue]) =>
+        attr !== "blockId" &&
+        !(record.type === "diagram" && attr === "svg") &&
+        attrValue !== null &&
+        attrValue !== undefined)
+      .map(([attr, attrValue]) => [attr, normalizeIdentityComparison(attrValue)] as const);
+    return normalizedAttrs.length > 0
+      ? [[key, Object.fromEntries(normalizedAttrs)] as const]
+      : [];
+  }));
 }
 
 export function annotateReviewGroups(

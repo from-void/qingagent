@@ -238,6 +238,160 @@ describe("external proposals", () => {
     expect(session?.chatHistory.filter((message) => message.role.kind === "agent" && message.parts.length === 0)).toHaveLength(0);
   });
 
+  it("丢弃仅由块身份重建产生的逐字节相同 hunk，并按空提案拒绝", async () => {
+    const sessionId = await createSession();
+    const qingml = [
+      "<h1>标题</h1>",
+      "<ul><li>第一项<ul><li>子项</li></ul></li><li>第二项</li></ul>",
+      "<callout emoji=\"💡\" tone=\"info\">提示内容</callout>",
+    ].join("");
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml }],
+    });
+
+    const noop = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "qingmlDraft", qingml }],
+    });
+
+    expect(noop.status).toBe(400);
+    expect(await noop.json()).toMatchObject({ code: "VALIDATION" });
+    const review = await app.request(`/api/v1/external/sessions/${sessionId}/review`, {
+      headers: authHeaders(),
+    });
+    expect(await review.json()).toMatchObject({ patches: [] });
+  });
+
+  it("setTitle 直接更新标题并保持正文、版本与审阅状态不变", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。\n\n第二段。" }],
+    });
+
+    const renamed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "setTitle", title: "午夜微光" }],
+    });
+
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ status: "committed", docVersion: 1 });
+    const doc = await app.request(`/api/v1/external/sessions/${sessionId}/doc`, {
+      headers: authHeaders(),
+    });
+    expect(await doc.json()).toMatchObject({
+      title: "午夜微光",
+      docVersion: 1,
+      state: "editing",
+      markdown: "第一段。\n\n第二段。",
+    });
+    const session = await getOrRestoreSession(sessionId);
+    expect(session).toMatchObject({ title: "午夜微光", titlePinned: true });
+    expect(session?.suggestions.size).toBe(0);
+
+    const replayed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "setTitle", title: "午夜微光" }],
+    });
+    expect(replayed.status).toBe(200);
+    expect(await replayed.json()).toMatchObject({ status: "committed", docVersion: 1 });
+  });
+
+  it("空文档允许 title-only，且不创建正文版本或审阅批次", async () => {
+    const sessionId = await createSession();
+
+    const renamed = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "setTitle", title: "只有标题" }],
+    });
+
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ status: "committed", docVersion: 0 });
+    const session = await getOrRestoreSession(sessionId);
+    expect(session).toMatchObject({
+      title: "只有标题",
+      titlePinned: true,
+      docVersion: 0,
+      docState: { kind: "empty" },
+    });
+    expect(session?.suggestions.size).toBe(0);
+  });
+
+  it("setTitle 可与局部正文操作同批，标题立即更新且正文仅产生一个待审 hunk", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。\n\n第二段。" }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [
+        { kind: "setTitle", title: "午夜微光" },
+        { kind: "appendSection", markdown: "第三段。" },
+      ],
+    });
+
+    expect(proposed.status).toBe(200);
+    expect(await proposed.json()).toMatchObject({ status: "review", count: 1 });
+    const doc = await app.request(`/api/v1/external/sessions/${sessionId}/doc`, {
+      headers: authHeaders(),
+    });
+    expect(await doc.json()).toMatchObject({
+      title: "午夜微光",
+      docVersion: 1,
+      state: "pendingReview",
+      markdown: "第一段。\n\n第二段。",
+    });
+  });
+
+  it("setTitle 与正文 no-op 同批时标题仍落库，正文按空提案拒绝", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "原正文。" }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [
+        { kind: "setTitle", title: "独立落库标题" },
+        { kind: "strReplace", old: "原正文。", new: "原正文。" },
+      ],
+    });
+
+    expect(proposed.status).toBe(400);
+    expect(await proposed.json()).toMatchObject({ code: "VALIDATION" });
+    const session = await getOrRestoreSession(sessionId);
+    expect(session).toMatchObject({
+      title: "独立落库标题",
+      titlePinned: true,
+      docVersion: 1,
+      docState: { kind: "editing" },
+    });
+    expect(session?.suggestions.size).toBe(0);
+  });
+
+  it("appendSection 重复段落撞 blockId 时收敛为 validation_error", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "重复段落。" }],
+    });
+
+    const duplicated = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "appendSection", markdown: "重复段落。" }],
+    });
+
+    expect(duplicated.status).toBe(400);
+    expect(await duplicated.json()).toMatchObject({ code: "VALIDATION" });
+    const session = await getOrRestoreSession(sessionId);
+    expect(session?.docState).toEqual({ kind: "editing" });
+    expect(session?.suggestions.size).toBe(0);
+  });
+
   it("把调用方身份编入外部提案的 agent 消息 id", async () => {
     const claudeSessionId = await createSession();
     await propose(claudeSessionId, {
@@ -285,6 +439,33 @@ describe("external proposals", () => {
     const markdown = session!.docDraftCandidateDoc!.content.map((block) => JSON.stringify(block)).join("\n");
     expect(markdown.indexOf("插入段。")).toBeGreaterThan(markdown.indexOf("第一段。"));
     expect(markdown.indexOf("插入段。")).toBeLessThan(markdown.indexOf("第二段。"));
+  });
+
+  it("insertAfterLine 在 ai-block 多块文档中只产生一个 hunk，并保留未触碰块身份", async () => {
+    const sessionId = await createSession();
+    const paragraphs = Array.from({ length: 12 }, (_, index) => `<p>第 ${index + 1} 段。</p>`).join("");
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: paragraphs }],
+    });
+    const before = await getOrRestoreSession(sessionId);
+    const beforeIds = before!.doc!.content.map((block) => block.attrs.blockId);
+    expect(beforeIds.every((blockId) => blockId.startsWith("ai-block-"))).toBe(true);
+
+    const inserted = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "insertAfterLine", line: 2, markdown: "插入段。" }],
+    });
+
+    expect(inserted.status).toBe(200);
+    expect(await inserted.json()).toMatchObject({ status: "review", count: 1 });
+    const session = await getOrRestoreSession(sessionId);
+    const candidateIds = session!.docDraftCandidateDoc!.content
+      .filter((block) => !JSON.stringify(block).includes("插入段。"))
+      .map((block) => block.attrs.blockId);
+    expect(candidateIds).toEqual(beforeIds);
+    expect([...session!.suggestions.values()].map((record) => record.diffHunk?.afterText))
+      .toEqual(["插入段。"]);
   });
 });
 

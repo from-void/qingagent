@@ -32,7 +32,7 @@ function selectionChip(tableSelection: unknown): unknown {
  * 本身的接受/拒绝与消毒行为,不依赖 server。
  */
 describe("commandSchema", () => {
-  it("externalPropose 接受独占的 qingmlDraft，并拒绝与其它操作混用", () => {
+  it("externalPropose 接受 setTitle 局部操作，并禁止整稿与任何其它操作混用", () => {
     const base = {
       kind: "externalPropose",
       data: { sessionId: "s", expectedDocVersion: 0, clientMutationId: "m" },
@@ -41,6 +41,36 @@ describe("commandSchema", () => {
       ...base,
       data: { ...base.data, ops: [{ kind: "qingmlDraft", qingml: "<p>正文</p>" }] },
     }).success).toBe(true);
+    expect(commandSchema.parse({
+      ...base,
+      data: { ...base.data, ops: [{ kind: "setTitle", title: "  新标题  " }] },
+    })).toMatchObject({
+      data: { ops: [{ kind: "setTitle", title: "新标题" }] },
+    });
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        ops: [
+          { kind: "setTitle", title: "新标题" },
+          { kind: "appendSection", markdown: "追加" },
+        ],
+      },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: { ...base.data, ops: [{ kind: "setTitle", title: "  " }] },
+    }).success).toBe(false);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        ops: [
+          { kind: "setTitle", title: "标题一" },
+          { kind: "setTitle", title: "标题二" },
+        ],
+      },
+    }).success).toBe(false);
     expect(commandSchema.safeParse({
       ...base,
       data: {
@@ -58,6 +88,16 @@ describe("commandSchema", () => {
         ops: [
           { kind: "fullDraft", markdown: "正文" },
           { kind: "qingmlDraft", qingml: "<p>正文</p>" },
+        ],
+      },
+    }).success).toBe(false);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        ops: [
+          { kind: "fullDraft", markdown: "正文" },
+          { kind: "setTitle", title: "新标题" },
         ],
       },
     }).success).toBe(false);

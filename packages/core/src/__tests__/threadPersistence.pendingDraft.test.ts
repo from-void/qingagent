@@ -99,6 +99,14 @@ function paragraph(blockId: string, content: string | PmInlineNode[]): PmBlockNo
   };
 }
 
+function callout(blockId: string, content: string): PmBlockNode {
+  return {
+    type: "callout",
+    attrs: { blockId, emoji: "!", tone: "info" },
+    content: [paragraph(`${blockId}-p`, content) as Extract<PmBlockNode, { type: "paragraph" }>],
+  };
+}
+
 function doc(blocks: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content: blocks };
 }
@@ -156,6 +164,45 @@ afterEach(() => {
 });
 
 describe("pending draft rehydrate", () => {
+  it("冷恢复默认保留 identity-only hunk，不因 external 过滤语义丢批次", async () => {
+    const sessionId = "rehy-identity-only";
+    const base = doc([callout("block-old", "正文不变")]);
+    const draft = doc([callout("block-new", "正文不变")]);
+    const batchId = createSuggestionBatchId(1, draft, { wholeDocument: true });
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    const suggestions = hunks.map((hunk) => createSuggestionFromDiffHunk({
+      hunk,
+      docId: sessionId,
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+      batchId,
+    }));
+    expect(suggestions).toHaveLength(1);
+    await seedDocument(sessionId, base);
+    await saveInitialReviewBatch({
+      draft: {
+        docId: sessionId,
+        threadId: sessionId,
+        baseVersion: 1,
+        baseHash: getPmContentHash(base),
+        draftPmDoc: draft,
+        batchId,
+        reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
+        groupMode: suggestions[0]?.groupMode ?? null,
+      },
+      suggestions,
+    });
+    const state = createSession(sessionId);
+    state.doc = base;
+    state.docVersion = 1;
+
+    const restored = await rehydratePendingDraft(state);
+
+    expect(restored.kind).toBe("restored");
+    expect([...state.suggestions.keys()]).toEqual(suggestions.map((suggestion) => suggestion.id));
+    expect(state.docDraftCandidateDoc?.content[0]?.attrs.blockId).toBe("block-new");
+  });
+
   it("loadSessionFromThread 刷新后重现待审,正文不覆盖", async () => {
     const sessionId = "rehy-load";
     const base = doc([paragraph("block-a", "旧正文")]);

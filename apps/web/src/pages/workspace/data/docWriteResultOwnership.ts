@@ -220,6 +220,22 @@ export function decideBroadcastDocumentFrame(input: {
   ) {
     return { kind: "apply" };
   }
+  // pendingReview 的同基线 canonical 必须优先于粗粒度 editorDirty 判定：
+  // dirty 兜底与语义比较统一后，schema 默认 attrs / blockId 漂移会正确返回干净，
+  // 但这帧仍只能 reconcile，不能按普通干净快照 apply 后清掉现有候选。
+  if (
+    input.incomingDocumentMatchesEditor === true &&
+    input.reviewActive === true
+  ) {
+    const incoming = appliedDocVersionFromBroadcastFrame(input.frame);
+    if (
+      incoming !== null &&
+      input.reviewBaseVersion === incoming.version
+    ) {
+      return { kind: "reconcile", reason: "equivalent_review_base" };
+    }
+    return { kind: "conflict", reason: "review_base_version_diverged" };
+  }
   if (!input.editorDirty) return { kind: "apply" };
   if (
     input.incomingDocumentComparisonUnavailable === true &&
@@ -236,20 +252,6 @@ export function decideBroadcastDocumentFrame(input: {
     }
   }
   if (input.incomingDocumentMatchesEditor === true) {
-    if (input.reviewActive === true) {
-      const incoming = appliedDocVersionFromBroadcastFrame(input.frame);
-      if (
-        incoming !== null &&
-        input.reviewBaseVersion === incoming.version
-      ) {
-        // /events gap restore 或终态收据可能在 docDiffReady 之后重放同一版
-        // canonical。它既不是新版本，也不能重新 dispatch 后清掉当前候选。
-        return { kind: "reconcile", reason: "equivalent_review_base" };
-      }
-      // 审阅基线版本真的已分叉时，即使内容偶然相等也不能悄悄让旧候选
-      // 继续挂在新版本上；交给显式冲突/重载链处理。
-      return { kind: "conflict", reason: "review_base_version_diverged" };
-    }
     return { kind: "apply" };
   }
   if (isAgentFinalDocumentFrame(input.frame) && !input.afterDeferredDrain) {

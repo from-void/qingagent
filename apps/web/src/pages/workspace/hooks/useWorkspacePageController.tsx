@@ -1993,7 +1993,11 @@ export function useWorkspacePageController() {
           incomingDocumentComparisonUnavailable:
             incomingDocument !== null &&
             incomingDocumentComparison === "unavailable",
-          reviewActive: stateRef.current.docState.kind === "pendingReview",
+          // 本标签提交审阅的权威快照、显式冲突重载都必须直接应用；只有普通
+          // 广播里的 pendingReview 同基线回放需要 reconcile 保留候选。
+          reviewActive:
+            !bypassDirtyDecision &&
+            stateRef.current.docState.kind === "pendingReview",
           reviewBaseVersion: stateRef.current.docDiff?.baseVersion ?? null,
           afterDeferredDrain,
         });

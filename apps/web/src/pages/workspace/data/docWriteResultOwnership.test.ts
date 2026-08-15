@@ -161,6 +161,15 @@ describe("decideBroadcastDocumentFrame", () => {
       reason: "equivalent_review_base",
     });
     expect(decide(snapshot, {
+      editorDirty: false,
+      reviewActive: true,
+      reviewBaseVersion: 2,
+      incomingDocumentMatchesEditor: true,
+    })).toEqual({
+      kind: "reconcile",
+      reason: "equivalent_review_base",
+    });
+    expect(decide(snapshot, {
       editorDirty: true,
       reviewActive: true,
       reviewBaseVersion: 1,

@@ -912,11 +912,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           return false;
         }
         try {
-          const live = JSON.stringify(normalizePmDoc(editor.getJSON()));
-          const canonical = JSON.stringify(
-            normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current)),
-          );
-          return live !== canonical;
+          return compareEditorWithIncomingDocument(
+            viewDocToPm(latestCanonicalDocRef.current),
+          ) !== "equivalent";
         } catch {
           // 无法可靠比较时 fail closed，宁可触发显式冲突也不静默覆盖。
           return true;
@@ -1016,6 +1014,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       // TipTap 的 update 事件也可能来自 editable/placeholder/选区等只改视图的事务。
       // 只有 PM 正文真的变化才允许登记 dirty 与自动保存；否则空稿会凭空发 updateDoc。
       if (!transaction.docChanged) return;
+      // 远端 setContent / blockId attrs 同步事务自带来源标记；必须消费事务本身的
+      // meta，不能只依赖 isApplyingRemote 的 microtask 时序窗，否则迟到的 update
+      // 会在 ref 复位后被误登记为本地 dirty，并触发一笔旧基线保存。
+      if (transaction.getMeta(APPLYING_REMOTE_META) === true) return;
       if (
         !shouldForwardEditorUpdate({
           isApplyingRemote: isApplyingRemoteRef.current,
@@ -1250,16 +1252,30 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       try {
         editor.view.dispatch(repair);
         const repairedDoc = normalizePmDoc(editor.getJSON());
+        // 自愈只改 blockId，不值得拿陈旧正文/版本冒险写入。基线必须在发送前从最新
+        // canonical 构造，且编辑器已经同步到同一版本与修订；任一口径对不上就丢弃
+        // 这次保存，等待后续 canonical 同步即可。
+        const syncedVersion = lastVersionRef.current;
+        if (
+          latestDocVersionRef.current !== syncedVersion ||
+          latestDocRevisionRef.current !== lastSyncedDocRevisionRef.current
+        ) {
+          return;
+        }
+        let repairBaseline: DocWriteBaseline;
+        try {
+          repairBaseline = currentDocWriteBaseline();
+        } catch {
+          return;
+        }
+        if (repairBaseline.expectedDocumentSnapshot !== syncedVersion) return;
         // update 监听被 isApplyingRemote 抑制；这里只显式保存一次修复结果，回声由既有
         // pendingSelfDocKeys 识别，不会形成 setContent → dirty-save 循环。
         pendingSelfDocKeysRef.current = pushPendingSelfDocKey(
           pendingSelfDocKeysRef.current,
           JSON.stringify(repairedDoc),
         );
-        void Promise.resolve(onEditorChange(repairedDoc, {
-          ...canonicalDocWriteBaseline(doc, viewDocToPm),
-          expectedDocumentSnapshot: targetVersion,
-        })).catch((error: unknown) => {
+        void Promise.resolve(onEditorChange(repairedDoc, repairBaseline)).catch((error: unknown) => {
           repairedBlockIdVersionRef.current = null;
           console.error("[doc] 存量 blockId 自愈保存失败", error);
           onToast?.("文档标识修复未保存，请刷新后重试");
@@ -1270,6 +1286,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     });
   }, [
     beginApplyingRemote,
+    currentDocWriteBaseline,
     deferBlockIdNormalization,
     doc.version,
     docId,

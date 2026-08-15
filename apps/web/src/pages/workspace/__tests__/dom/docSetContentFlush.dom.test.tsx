@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { applyBlockEdits, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { APPLYING_REMOTE_META } from "@qingagent/pm-schema/tiptap";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
 import {
@@ -12,6 +13,7 @@ import {
   type DocumentSnapshotViewHandle,
 } from "../../components/DocumentSnapshotView";
 import { DIAGRAM_VISUAL_WRITE_META } from "../../components/DiagramView";
+import type { DocWriteBaseline } from "../../data/docWriteBaseline";
 import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
 
 vi.mock("mermaid", () => ({
@@ -766,7 +768,10 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
 
   it("载入含重复 blockId 的存量 PmDoc 后只自愈并保存一次，随后 AI 编辑可用", async () => {
     let editor: Editor | null = null;
-    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const onEditorChange = vi.fn(async (
+      _doc: PmDoc,
+      _baseline?: DocWriteBaseline,
+    ) => undefined);
     const duplicateDoc = duplicateTableDoc();
 
     const render = (doc: PmDoc, version: number) => {
@@ -799,6 +804,7 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(onEditorChange).toHaveBeenCalledTimes(1);
     expect(collectAllBlockIds(onEditorChange.mock.calls[0]![0])).toEqual(ids);
+    expect(onEditorChange.mock.calls[0]![1]?.expectedDocumentSnapshot).toBe(7);
 
     // 服务器把自愈保存以 version+1 原样回显时，应命中 pendingSelfDocKeys，既不 setContent
     // 重设正文/选区，也不再次触发保存。
@@ -825,6 +831,62 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
       },
     ]);
     expect(editable.ok, editable.error).toBe(true);
+  });
+
+  it("blockId 自愈遇到编辑器尚未同步的最新版本时跳过保存", async () => {
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (
+      _doc: PmDoc,
+      _baseline?: DocWriteBaseline,
+    ) => undefined);
+    const duplicateDoc = duplicateTableDoc();
+    const render = (version: number, deferBlockIdNormalization: boolean) => {
+      act(() => {
+        root.render(
+          <DocumentSnapshotView
+            doc={pmDocToViewDocumentSnapshot(duplicateDoc, version)}
+            docId="session-stale-repair"
+            editable
+            interactiveEditable
+            deferBlockIdNormalization={deferBlockIdNormalization}
+            showPatches={false}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            onEditorReady={(readyEditor) => {
+              editor = readyEditor;
+            }}
+            onEditorChange={onEditorChange}
+          />,
+        );
+      });
+    };
+
+    // 先用 defer 保留 v7 的重复 ID，再让 v8 的远端 apply 与自愈同时排队。
+    render(7, true);
+    await flush();
+    expect(editor).not.toBeNull();
+    expect(new Set(collectAllBlockIds(editor!.getJSON())).size)
+      .toBeLessThan(collectAllBlockIds(editor!.getJSON()).length);
+
+    const queuedMicrotasks: Array<() => void> = [];
+    const originalQueueMicrotask = globalThis.queueMicrotask;
+    vi.stubGlobal("queueMicrotask", (callback: () => void) => {
+      queuedMicrotasks.push(callback);
+    });
+    try {
+      render(8, false);
+      expect(queuedMicrotasks).toHaveLength(2);
+
+      // 故意让自愈早于远端正文 apply：latest=v8，但编辑器仍停在 v7。
+      const repairBeforeRemoteApply = queuedMicrotasks.pop();
+      await act(async () => {
+        repairBeforeRemoteApply?.();
+        await Promise.resolve();
+      });
+      expect(onEditorChange).not.toHaveBeenCalled();
+    } finally {
+      vi.stubGlobal("queueMicrotask", originalQueueMicrotask);
+    }
   });
 
   it("R9：图表后的新增段落保存回声不会重设选区或把后续输入移到文末", async () => {
@@ -1176,5 +1238,100 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(onEditorChange).toHaveBeenCalledTimes(1);
     expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
     expect(viewRef.current?.canSafelyApplyIncomingDocument(canonical)).toBe(true);
+  });
+
+  it("迟到的 APPLYING_REMOTE_META 正文事务不登记 dirty 或触发保存", async () => {
+    const viewRef = createRef<DocumentSnapshotViewHandle>();
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const initial = paragraphDoc("旧正文");
+    const remote = paragraphDoc("远端正文");
+    const render = (doc: PmDoc, version: number) => {
+      act(() => {
+        root.render(
+          <DocumentSnapshotView
+            ref={viewRef}
+            doc={pmDocToViewDocumentSnapshot(doc, version)}
+            editable
+            interactiveEditable
+            showPatches={false}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            onEditorReady={(readyEditor) => {
+              editor = readyEditor;
+            }}
+            onEditorChange={onEditorChange}
+          />,
+        );
+      });
+    };
+
+    render(initial, 7);
+    await flush();
+    expect(editor).not.toBeNull();
+    onEditorChange.mockClear();
+    vi.useFakeTimers();
+
+    // 此时 isApplyingRemote ref 已复位；只有事务自身 meta 能证明它来自远端。
+    act(() => {
+      editor!.chain()
+        .setMeta(APPLYING_REMOTE_META, true)
+        .setContent(remote)
+        .run();
+    });
+    render(remote, 8);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(401);
+    });
+
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
+    expect(onEditorChange).not.toHaveBeenCalled();
+  });
+
+  it("dirty 兜底按语义口径忽略仅 blockId 的本地自愈漂移", async () => {
+    const viewRef = createRef<DocumentSnapshotViewHandle>();
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const canonical = paragraphDoc("正文未变");
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          ref={viewRef}
+          doc={pmDocToViewDocumentSnapshot(canonical, 7)}
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+        />,
+      );
+    });
+    await flush();
+    expect(editor).not.toBeNull();
+    onEditorChange.mockClear();
+
+    // 直接推进 EditorView state，隔离测试 debounce 已结算后的 dirty 兜底比较。
+    const paragraph = editor!.state.doc.child(0);
+    const blockIdOnly = editor!.state.tr.setNodeMarkup(
+      0,
+      undefined,
+      { ...paragraph.attrs, blockId: "p-1-repaired" },
+      paragraph.marks,
+    );
+    act(() => {
+      editor!.view.updateState(editor!.state.apply(blockIdOnly));
+    });
+
+    expect(normalizePmDoc(editor!.getJSON())).not.toEqual(normalizePmDoc(canonical));
+    expect(viewRef.current?.compareIncomingDocument(canonical)).toBe("equivalent");
+    expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
+    expect(onEditorChange).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,53 @@
 import { describe, expect, it } from "vitest";
-import { markdownToPm, pmToMarkdown, pmToMarkdownWithLineMap } from "@qingagent/pm-schema";
-import { applyExternalProposalOps, compileExternalQingmlDraft } from "../docWriteCommands";
+import {
+  EXTERNAL_STRUCTURAL_OP_KINDS,
+  type ExternalProposeOp,
+} from "@qingagent/contract-ts";
+import { commandSchema } from "@qingagent/contract-ts/schemas";
+import {
+  assertUniquePmBlockIds,
+  markdownToPm,
+  pmToMarkdown,
+  pmToMarkdownWithLineMap,
+} from "@qingagent/pm-schema";
+import {
+  applyExternalProposalOps,
+  compileExternalQingmlDraft,
+  hasExternalStructuralOp,
+} from "../docWriteCommands";
 
 describe("compileExternalQingmlDraft", () => {
+  it("结构操作 kind 在 contract schema 与服务端幂等判定中保持一致", () => {
+    const opSamples = {
+      fullDraft: { kind: "fullDraft", markdown: "正文" },
+      qingmlDraft: { kind: "qingmlDraft", qingml: "<p>正文</p>" },
+      setTitle: { kind: "setTitle", title: "标题" },
+      strReplace: { kind: "strReplace", old: "旧", new: "新" },
+      insertAfterLine: { kind: "insertAfterLine", line: 1, markdown: "插入" },
+      insertAfterBlock: { kind: "insertAfterBlock", blockId: "block-1", markdown: "插入" },
+      appendSection: { kind: "appendSection", markdown: "追加" },
+      deleteBlock: { kind: "deleteBlock", blockId: "block-1" },
+      deleteListItem: { kind: "deleteListItem", blockId: "item-1" },
+    } satisfies {
+      [Kind in ExternalProposeOp["kind"]]: Extract<ExternalProposeOp, { kind: Kind }>;
+    };
+    const allKinds = Object.keys(opSamples) as ExternalProposeOp["kind"][];
+    const schemaKinds = allKinds.filter((kind) => !commandSchema.safeParse({
+      kind: "externalPropose",
+      data: {
+        sessionId: "session-1",
+        expectedDocVersion: 1,
+        ops: [opSamples[kind]],
+      },
+    }).success);
+    const serverKinds = allKinds.filter((kind) =>
+      hasExternalStructuralOp([opSamples[kind]])
+    );
+
+    expect(schemaKinds).toEqual([...EXTERNAL_STRUCTURAL_OP_KINDS]);
+    expect(serverKinds).toEqual(schemaKinds);
+  });
+
   it("编译失败使用 compile_failed，且不伪造 QingML warning 与位置", () => {
     const result = compileExternalQingmlDraft("<p>正文</p>", () => ({
       ok: false,
@@ -75,7 +120,7 @@ describe("compileExternalQingmlDraft", () => {
     expect(out.indexOf("插在 36/37 之间")).toBeLessThan(out.indexOf("第 37 项"));
   });
 
-  it("P34：多行大块内部行拒绝吸附，并提示内容锚点与同批行号过期", () => {
+  it("P34：多行大块内部行拒绝吸附，并指向 insertAfterBlock 与同批行号过期", () => {
     const candidate = markdownToPm("| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\n尾段");
     const table = pmToMarkdownWithLineMap(candidate).blocks.find((span) => span.blockType === "table");
     expect(table).toBeTruthy();
@@ -87,8 +132,149 @@ describe("compileExternalQingmlDraft", () => {
     expect(result).toMatchObject({ ok: false });
     if (result.ok) return;
     expect(result.error).toContain("多行 table 块");
-    expect(result.error).toContain("内容锚点");
+    expect(result.error).toContain("insertAfterBlock");
     expect(result.error).toContain("同批前序操作会使后续行号过期");
+  });
+
+  it("insertAfterBlock 对顶层末尾锚点插入多个块，清单容器锚点仍按顶层解释", () => {
+    const candidate = markdownToPm("- [ ] 清单项");
+    const taskListId = candidate.content[0]!.attrs.blockId;
+    const result = applyExternalProposalOps(candidate, [{
+      kind: "insertAfterBlock",
+      blockId: taskListId,
+      markdown: "新增一\n\n新增二",
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.doc.content.map((block) => block.type)).toEqual([
+      "taskList", "paragraph", "paragraph",
+    ]);
+    expect(pmToMarkdown(result.doc)).toContain("清单项\n\n新增一\n\n新增二");
+    assertUniquePmBlockIds(result.doc);
+  });
+
+  it("insertAfterBlock 在嵌套列表项后插入同深度兄弟，并保留新项后代", () => {
+    const candidate = markdownToPm("- 父项\n  - 子项甲\n  - 子项乙\n- 尾项");
+    const root = candidate.content[0]!;
+    expect(root.type).toBe("bulletList");
+    if (root.type !== "bulletList") return;
+    const nested = root.content[0]!.content[1];
+    expect(nested?.type).toBe("bulletList");
+    if (nested?.type !== "bulletList") return;
+
+    const result = applyExternalProposalOps(candidate, [{
+      kind: "insertAfterBlock",
+      blockId: nested.content[0]!.attrs.blockId,
+      markdown: "- 新子项\n  - 随行后代",
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const out = pmToMarkdown(result.doc);
+    expect(out.indexOf("子项甲")).toBeLessThan(out.indexOf("新子项"));
+    expect(out.indexOf("新子项")).toBeLessThan(out.indexOf("子项乙"));
+    expect(out).toContain("  - 随行后代");
+    expect(result.doc.content).toHaveLength(1);
+    assertUniquePmBlockIds(result.doc);
+  });
+
+  it("insertAfterBlock 拒绝表格 cell 内锚点", () => {
+    const candidate = markdownToPm("| A | B |\n| --- | --- |\n| 1 | 2 |");
+    const table = candidate.content[0]!;
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    const cellParagraphId = table.content[1]!.content[0]!.content[0]!.attrs.blockId;
+
+    const result = applyExternalProposalOps(candidate, [{
+      kind: "insertAfterBlock",
+      blockId: cellParagraphId,
+      markdown: "不应插入",
+    }]);
+
+    expect(result).toEqual({ ok: false, error: "暂不支持表格内锚点" });
+  });
+
+  it.each([
+    ["非列表 markdown", "普通段落"],
+    ["不同类列表", "- 普通列表项"],
+    ["多个同类列表项", "- [ ] 新任务一\n- [ ] 新任务二"],
+  ])("insertAfterBlock 列表锚点拒绝%s", (_label, markdown) => {
+    const candidate = markdownToPm("- [ ] 原任务");
+    const taskList = candidate.content[0]!;
+    expect(taskList.type).toBe("taskList");
+    if (taskList.type !== "taskList") return;
+
+    const result = applyExternalProposalOps(candidate, [{
+      kind: "insertAfterBlock",
+      blockId: taskList.content[0]!.attrs.blockId,
+      markdown,
+    }]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "列表项锚点的 markdown 必须恰好包含 1 条同类列表项",
+    });
+  });
+
+  it("insertAfterBlock 拒绝空 Markdown 与空 taskItem", () => {
+    const paragraph = markdownToPm("原段");
+    expect(applyExternalProposalOps(paragraph, [{
+      kind: "insertAfterBlock",
+      blockId: paragraph.content[0]!.attrs.blockId,
+      markdown: " \n ",
+    }])).toMatchObject({ ok: false, error: expect.stringContaining("不能为空") });
+    expect(applyExternalProposalOps(paragraph, [{
+      kind: "insertAfterBlock",
+      blockId: paragraph.content[0]!.attrs.blockId,
+      markdown: "- [ ]   ",
+    }])).toMatchObject({ ok: false, error: expect.stringContaining("taskItem 内容不能为空") });
+
+    const tasks = markdownToPm("- [ ] 原任务");
+    const taskList = tasks.content[0]!;
+    expect(taskList.type).toBe("taskList");
+    if (taskList.type !== "taskList") return;
+    expect(applyExternalProposalOps(tasks, [{
+      kind: "insertAfterBlock",
+      blockId: taskList.content[0]!.attrs.blockId,
+      markdown: "- [ ]   ",
+    }])).toMatchObject({ ok: false, error: expect.stringContaining("不能为空") });
+  });
+
+  it("insertAfterBlock 同批先删锚点时整批失败且不泄漏删除", () => {
+    const candidate = markdownToPm("- [ ] 任务甲\n- [ ] 任务乙");
+    const before = structuredClone(candidate);
+    const taskList = candidate.content[0]!;
+    expect(taskList.type).toBe("taskList");
+    if (taskList.type !== "taskList") return;
+    const anchorId = taskList.content[0]!.attrs.blockId;
+
+    const result = applyExternalProposalOps(candidate, [
+      { kind: "deleteListItem", blockId: anchorId },
+      { kind: "insertAfterBlock", blockId: anchorId, markdown: "- [ ] 新任务" },
+    ]);
+
+    expect(result).toEqual({ ok: false, error: "锚点块已被同批前序操作删除" });
+    expect(candidate).toEqual(before);
+  });
+
+  it("insertAfterBlock 同批多个同锚点插入按 op 顺序排列", () => {
+    const candidate = markdownToPm("- [ ] 任务甲\n- [ ] 任务乙");
+    const taskList = candidate.content[0]!;
+    expect(taskList.type).toBe("taskList");
+    if (taskList.type !== "taskList") return;
+    const anchorId = taskList.content[0]!.attrs.blockId;
+
+    const result = applyExternalProposalOps(candidate, [
+      { kind: "insertAfterBlock", blockId: anchorId, markdown: "- [ ] 新任务一" },
+      { kind: "insertAfterBlock", blockId: anchorId, markdown: "- [ ] 新任务二" },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(pmToMarkdown(result.doc)).toBe([
+      "- [ ] 任务甲", "- [ ] 新任务一", "- [ ] 新任务二", "- [ ] 任务乙",
+    ].join("\n"));
   });
 
   it("P34：整篇序列化过滤的空块不再额外占两行", () => {

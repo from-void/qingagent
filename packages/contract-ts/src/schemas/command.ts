@@ -23,7 +23,11 @@ import type { UpdateMaterialSummary } from "../UpdateMaterialSummary";
 import type { RemoveMaterial } from "../RemoveMaterial";
 import type { ReparseMaterial } from "../ReparseMaterial";
 import type { AttachFolder, DetachFolder } from "../FolderSource";
-import type { ExternalPropose, ExternalProposeOp } from "../ExternalPropose";
+import {
+  EXTERNAL_STRUCTURAL_OP_KINDS,
+  type ExternalPropose,
+  type ExternalProposeOp,
+} from "../ExternalPropose";
 import type { IgnoreAnnotationGroups } from "../IgnoreAnnotationGroups";
 import {
   boundedNonEmptyString,
@@ -377,6 +381,11 @@ const externalProposeOpSchema = z.discriminatedUnion("kind", [
     line: z.number().int().positive(),
     markdown: z.string(),
   }),
+  z.object({
+    kind: z.literal("insertAfterBlock"),
+    blockId: boundedNonEmptyString(MAX_ID_LENGTH),
+    markdown: z.string(),
+  }),
   z.object({ kind: z.literal("appendSection"), markdown: z.string() }),
   z.object({ kind: z.literal("deleteBlock"), blockId: boundedNonEmptyString(MAX_ID_LENGTH) }),
   z.object({ kind: z.literal("deleteListItem"), blockId: boundedNonEmptyString(MAX_ID_LENGTH) }),
@@ -403,9 +412,11 @@ const externalProposeDataSchema = z
   )
   .refine(
     (data) =>
-      !data.ops.some((op) => op.kind === "deleteBlock" || op.kind === "deleteListItem") ||
+      !EXTERNAL_STRUCTURAL_OP_KINDS.some((kind) =>
+        data.ops.some((op) => op.kind === kind)
+      ) ||
       typeof data.opId === "string",
-    "deleteBlock/deleteListItem require request-level opId",
+    `${EXTERNAL_STRUCTURAL_OP_KINDS.join("/")} require request-level opId`,
   ) satisfies z.ZodType<ExternalPropose>;
 type _ExternalProposeExact = Expect<Equal<z.infer<typeof externalProposeDataSchema>, ExternalPropose>>;
 

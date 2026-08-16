@@ -1528,7 +1528,13 @@ async function connectSelectedAttach(
     rediscover: async (libraryId) => {
       const report = await runAttachDiscovery();
       const decision = decideAttachMode(report, libraryId);
-      return decision.kind === "attach" ? decision.instance : null;
+      if (decision.kind === "attach") return decision.instance;
+      return report.observations.some((observation) => (
+        observation.state === "indeterminate"
+        && observation.errorCode === "STARTING_LEASE"
+      ))
+        ? { errorCode: "STARTING_LEASE" as const }
+        : null;
     },
   });
 }

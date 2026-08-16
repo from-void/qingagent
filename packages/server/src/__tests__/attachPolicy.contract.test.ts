@@ -170,6 +170,7 @@ const EXPECTED_ATTACH_ROUTE_KEYS = new Set([
   "GET /api/v1/files/:fileId/:filename",
   "GET /api/v1/materials/:materialId/text",
   "GET /api/v1/export/:sessionId",
+  "GET /api/v1/skills",
   "GET /api/v1/capabilities",
   "GET /api/v1/settings/security",
   "GET /api/v1/settings/memory",

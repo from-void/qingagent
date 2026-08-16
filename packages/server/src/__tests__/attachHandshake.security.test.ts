@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -16,6 +16,19 @@ import {
 import { revokeAllAttachSessions } from "../lib/attachSessions";
 import { COMMANDS_MODEL_OVERRIDE_HEADERS } from "../lib/commandRequestHeaders";
 
+const isolatedSkillHome = vi.hoisted(() => {
+  const original = {
+    home: process.env.HOME,
+    userProfile: process.env.USERPROFILE,
+    userSkillsDir: process.env.QINGAGENT_USER_SKILLS_DIR,
+  };
+  const home = `/tmp/qingagent-attach-skills-home-${process.pid}`;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.QINGAGENT_USER_SKILLS_DIR = `${home}/.qingagent/skills`;
+  return { home, original };
+});
+
 const TRUSTED_ORIGIN = "http://127.0.0.1:5173";
 const desktopCapabilities = Object.fromEntries([
   "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport", "sessionDeletion",
@@ -29,6 +42,7 @@ let instanceToken = "";
 let savedGlobalToken: string | undefined;
 
 beforeAll(async () => {
+  await mkdir(isolatedSkillHome.home, { recursive: true });
   savedGlobalToken = process.env.QINGAGENT_AUTH_TOKEN;
   delete process.env.QINGAGENT_AUTH_TOKEN;
   dir = await mkdtemp(path.join(os.tmpdir(), "qa-attach-handshake-"));
@@ -45,6 +59,13 @@ afterAll(async () => {
   __resetHandshakeAdmissionForTest();
   await stopExternalInstance(path.join(dir, "instance.json"));
   await rm(dir, { recursive: true, force: true });
+  await rm(isolatedSkillHome.home, { recursive: true, force: true });
+  if (isolatedSkillHome.original.home === undefined) delete process.env.HOME;
+  else process.env.HOME = isolatedSkillHome.original.home;
+  if (isolatedSkillHome.original.userProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = isolatedSkillHome.original.userProfile;
+  if (isolatedSkillHome.original.userSkillsDir === undefined) delete process.env.QINGAGENT_USER_SKILLS_DIR;
+  else process.env.QINGAGENT_USER_SKILLS_DIR = isolatedSkillHome.original.userSkillsDir;
   if (savedGlobalToken === undefined) delete process.env.QINGAGENT_AUTH_TOKEN;
   else process.env.QINGAGENT_AUTH_TOKEN = savedGlobalToken;
 });
@@ -143,6 +164,22 @@ describe("attach handshake", () => {
 });
 
 describe("attach principal 与两级 gate", () => {
+  it("skills 在 attach 握手前拒绝 instance token，握手后允许 session token", async () => {
+    __resetHandshakeAdmissionForTest();
+    const beforeHandshake = await app.request("/api/v1/skills", {
+      headers: { Authorization: `Bearer ${instanceToken}` },
+    });
+    expect(beforeHandshake.status).toBe(403);
+
+    const token = (await handshake().then((response) => response.json()) as AttachHandshakeResponse)
+      .attachSessionToken;
+    const afterHandshake = await app.request("/api/v1/skills", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(afterHandshake.status).toBe(200);
+    await expect(afterHandshake.json()).resolves.toMatchObject({ skills: expect.any(Array) });
+  });
+
   it("global token 有/无与 Bearer/cookie/query 形态保持既有语义", async () => {
     const legacy = await app.request("/api/v1/capabilities", {
       headers: { Authorization: "Bearer unrelated-local-token" },

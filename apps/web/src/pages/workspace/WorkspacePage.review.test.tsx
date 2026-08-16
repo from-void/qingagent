@@ -787,6 +787,7 @@ describe("WorkspacePage review controls", () => {
     serverStreamMock.listDerivativesImpl = null;
     serverStreamMock.createDerivativeImpl = null;
     window.location.hash = "";
+    delete window.electron;
     sessionStorage.clear();
     clearPageExitOutboxStorage();
     localStorage.setItem("qingagent.deepseek_api_key", "test-key");
@@ -794,6 +795,7 @@ describe("WorkspacePage review controls", () => {
   });
 
   afterEach(() => {
+    delete window.electron;
     restoreWorkspaceDomMocks?.();
     restoreWorkspaceDomMocks = null;
     localStorage.removeItem("qingagent.deepseek_api_key");
@@ -2543,6 +2545,113 @@ describe("WorkspacePage review controls", () => {
     expect(retryCommand?.data.doc).toEqual(offlineEditedDoc);
     expect(captured.current?.state.version).toBe(2);
     expect(captured.current?.state.doc?.pmDoc).toEqual(offlineEditedDoc);
+  }, 60_000);
+
+  it("attach generation 递增会幂等地自动重发等待重存的正文", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    let backendSnapshot: ElectronBackendConnectionSnapshot = {
+      mode: "attach",
+      status: "attached",
+      generation: 0,
+      libraryId: "00000000-0000-4000-8000-000000000001",
+      instanceId: "00000000-0000-4000-8000-000000000011",
+      effectiveCapabilities: {
+        deepLink: true,
+        docEditing: true,
+        review: true,
+        assets: true,
+      },
+      errorCode: null,
+      conflictKind: null,
+    };
+    const backendListeners = new Set<(snapshot: ElectronBackendConnectionSnapshot) => void>();
+    window.electron = {
+      platform: "linux",
+      isDesktop: true,
+      getBackendConnection: () => backendSnapshot,
+      onBackendConnectionChanged: (listener) => {
+        backendListeners.add(listener);
+        return () => backendListeners.delete(listener);
+      },
+    };
+    const publishBackend = (snapshot: ElectronBackendConnectionSnapshot) => {
+      backendSnapshot = snapshot;
+      for (const listener of [...backendListeners]) listener(snapshot);
+    };
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-attach-recovery", "保存前")]);
+    const editedDoc = pmDoc([pmParagraph("p-attach-recovery", "引擎重启期间的新正文")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "attach 恢复重存" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 1) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+
+    let sendAttempt = 0;
+    stream.sendCommand.mockImplementation(async (command: Command) => {
+      if (command.kind !== "updateDoc") return;
+      sendAttempt += 1;
+      if (sendAttempt <= 3) throw new TypeError("Failed to fetch");
+      stream.emit({
+        kind: "docWriteResult",
+        data: {
+          ok: true,
+          clientMutationId: command.data.clientMutationId,
+          docVersion: 2,
+        },
+      });
+    });
+
+    vi.useFakeTimers();
+    const failedSave = captured.current!.handleEditorChange(editedDoc).catch(() => undefined);
+    await flushMicrotasks(3);
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await failedSave;
+    expect(updateDocCommands(stream)).toHaveLength(3);
+
+    await act(async () => {
+      publishBackend({ ...backendSnapshot, status: "revalidating" });
+      publishBackend({
+        ...backendSnapshot,
+        status: "attached",
+        generation: 1,
+        instanceId: "00000000-0000-4000-8000-000000000021",
+      });
+      publishBackend({ ...backendSnapshot });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushMicrotasks(3);
+
+    const retryCommand = updateDocCommands(stream)[3];
+    expect(retryCommand?.data.expectedDocumentSnapshot).toBe(1);
+    expect(retryCommand?.data.baseContentHash).toBe(getPmContentHash(initialDoc));
+    expect(retryCommand?.data.doc).toEqual(editedDoc);
+    expect(captured.current?.state.version).toBe(2);
   }, 60_000);
 
   it("用户显式将多块长文档改写为短文时仍发送 updateDoc", async () => {

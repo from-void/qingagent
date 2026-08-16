@@ -192,6 +192,7 @@ export const ATTACH_ROUTE_POLICY = [
     capability: "documentExport",
     params: { sessionId: ID },
   }),
+  route("GET", "/api/v1/skills"),
   route("GET", "/api/v1/capabilities"),
   route("GET", "/api/v1/settings/security"),
   route("GET", "/api/v1/settings/memory"),

@@ -14,6 +14,10 @@ import {
 } from "@qingagent/pm-schema";
 import type { Command } from "@qingagent/contract-ts";
 import { acknowledgedDocWriteContentHash } from "../data/docWriteResultOwnership";
+import {
+  getBackendConnectionSnapshot,
+  subscribeBackendConnection,
+} from "../../../system/backendConnectionStore";
 import { validateCommand } from "../../../system/validators";
 import type { DocumentSnapshotViewHandle } from "../components/DocumentSnapshotView";
 import type { StarterBlankTarget } from "../components/StarterPanel";
@@ -335,7 +339,7 @@ export function useWorkspaceDocumentEditor(input: {
   }, [sendDocWrite]);
 
   useEffect(() => {
-    const retryFailedDocWrite = () => {
+    const retryFailedDocWrite = (source: "online" | "attach-recovered") => {
       const failed = failedTransientDocWriteRef.current;
       if (!failed) return;
       if (
@@ -349,13 +353,29 @@ export function useWorkspaceDocumentEditor(input: {
       if (pendingDocWriteRef.current || scheduledDocWriteRef.current) return;
       failedTransientDocWriteRef.current = null;
       sendDocWriteRef.current(failed.pmDoc, failed, failed.baseline).catch((error) => {
-        // sendDocWrite 会重新登记仍属瞬态的失败快照；这里仅避免 online 事件产生未处理拒绝。
-        console.error("[workspace] online updateDoc retry failed", error);
+        // sendDocWrite 会重新登记仍属瞬态的失败快照；这里只避免恢复事件产生未处理拒绝。
+        console.error(`[workspace] ${source} updateDoc retry failed`, error);
       });
     };
 
-    window.addEventListener("online", retryFailedDocWrite);
-    return () => window.removeEventListener("online", retryFailedDocWrite);
+    const onOnline = () => retryFailedDocWrite("online");
+    let previousBackend = getBackendConnectionSnapshot();
+    const detachBackend = subscribeBackendConnection(() => {
+      const nextBackend = getBackendConnectionSnapshot();
+      const attachRecovered = previousBackend?.mode === "attach"
+        && nextBackend?.mode === "attach"
+        && nextBackend.status === "attached"
+        && nextBackend.generation > previousBackend.generation;
+      previousBackend = nextBackend;
+      if (attachRecovered) retryFailedDocWrite("attach-recovered");
+    });
+    previousBackend = getBackendConnectionSnapshot();
+
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      detachBackend?.();
+    };
   }, []);
 
   const focusPendingBlankTarget = useCallback(() => {

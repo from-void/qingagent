@@ -9,7 +9,7 @@ let snapshot: ElectronBackendConnectionSnapshot | null = (() => {
 let detachBridge: (() => void) | null = null;
 const listeners = new Set<Listener>();
 
-function subscribe(listener: Listener): () => void {
+export function subscribeBackendConnection(listener: Listener): () => void {
   listeners.add(listener);
   if (!detachBridge && typeof window !== "undefined") {
     try {
@@ -35,7 +35,7 @@ export function getBackendConnectionSnapshot(): ElectronBackendConnectionSnapsho
 }
 
 export function useBackendConnection(): ElectronBackendConnectionSnapshot | null {
-  return useSyncExternalStore(subscribe, getBackendConnectionSnapshot, () => null);
+  return useSyncExternalStore(subscribeBackendConnection, getBackendConnectionSnapshot, () => null);
 }
 
 export function attachCapabilityEnabled(name: string): boolean {

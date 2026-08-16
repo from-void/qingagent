@@ -2547,7 +2547,7 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(offlineEditedDoc);
   }, 60_000);
 
-  it("attach 重认证恢复事件会自动重发等待重存的正文", async () => {
+  it("attach generation 递增会幂等地自动重发等待重存的正文", async () => {
     window.location.hash = "#/workspace?session=s-1";
     let backendSnapshot: ElectronBackendConnectionSnapshot = {
       mode: "attach",
@@ -2634,13 +2634,14 @@ describe("WorkspacePage review controls", () => {
     expect(updateDocCommands(stream)).toHaveLength(3);
 
     await act(async () => {
-      publishBackend({ ...backendSnapshot, status: "reauthenticating" });
+      publishBackend({ ...backendSnapshot, status: "revalidating" });
       publishBackend({
         ...backendSnapshot,
         status: "attached",
         generation: 1,
         instanceId: "00000000-0000-4000-8000-000000000021",
       });
+      publishBackend({ ...backendSnapshot });
       await Promise.resolve();
       await Promise.resolve();
     });

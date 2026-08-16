@@ -14,6 +14,10 @@ import {
 } from "@qingagent/pm-schema";
 import type { Command } from "@qingagent/contract-ts";
 import { acknowledgedDocWriteContentHash } from "../data/docWriteResultOwnership";
+import {
+  getBackendConnectionSnapshot,
+  subscribeBackendConnection,
+} from "../../../system/backendConnectionStore";
 import { validateCommand } from "../../../system/validators";
 import type { DocumentSnapshotViewHandle } from "../components/DocumentSnapshotView";
 import type { StarterBlankTarget } from "../components/StarterPanel";
@@ -355,15 +359,17 @@ export function useWorkspaceDocumentEditor(input: {
     };
 
     const onOnline = () => retryFailedDocWrite("online");
-    let previousBackend = window.electron?.getBackendConnection?.() ?? null;
-    const detachBackend = window.electron?.onBackendConnectionChanged?.((nextBackend) => {
+    let previousBackend = getBackendConnectionSnapshot();
+    const detachBackend = subscribeBackendConnection(() => {
+      const nextBackend = getBackendConnectionSnapshot();
       const attachRecovered = previousBackend?.mode === "attach"
-        && previousBackend.status === "reauthenticating"
-        && nextBackend.mode === "attach"
-        && nextBackend.status === "attached";
+        && nextBackend?.mode === "attach"
+        && nextBackend.status === "attached"
+        && nextBackend.generation > previousBackend.generation;
       previousBackend = nextBackend;
       if (attachRecovered) retryFailedDocWrite("attach-recovered");
     });
+    previousBackend = getBackendConnectionSnapshot();
 
     window.addEventListener("online", onOnline);
     return () => {

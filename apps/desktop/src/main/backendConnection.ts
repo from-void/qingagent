@@ -24,8 +24,8 @@ const ATTACH_IDLE_TTL_MS = 2 * 60 * 60 * 1_000;
 const REAUTH_RECOVERY_BUDGET_MS = 30_000;
 const REAUTH_REDISCOVERY_INITIAL_BACKOFF_MS = 1_000;
 const REAUTH_REDISCOVERY_MAX_BACKOFF_MS = 8_000;
-const REDISCOVERY_RATE_WINDOW_MS = 60_000;
-const REDISCOVERY_RATE_LIMIT = 2;
+const REDISCOVERY_RATE_WINDOW_MS = 30_000;
+const REDISCOVERY_RATE_LIMIT = 4;
 
 export type BackendConnectionListener = (snapshot: BackendConnectionSnapshot) => void;
 
@@ -195,6 +195,29 @@ function typedUnavailable(code: string, status = 503): Response {
   });
 }
 
+function waitForPromiseOrAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new DOMException("请求已取消", "AbortError"));
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      finish(() => reject(signal.reason ?? new DOMException("请求已取消", "AbortError")));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
 abstract class BaseBackendConnection implements BackendConnection {
   abstract readonly mode: BackendMode;
   protected listeners = new Set<BackendConnectionListener>();
@@ -320,12 +343,14 @@ export class AttachBackendConnection extends BaseBackendConnection {
   #fetchImpl: typeof fetch;
   #rediscover?: (libraryId: string) => Promise<AttachRediscoveryResult>;
   #now: () => number;
-  #sleep: (delayMs: number) => Promise<void>;
+  #sleep?: (delayMs: number) => Promise<void>;
   #rediscoveryStartedAtMs: number[] = [];
   #renewTimer: ReturnType<typeof setTimeout> | null = null;
   #recoveryFlight: Promise<void> | null = null;
   #queuedReads = 0;
   #proxyFetch: (request: Request) => Promise<Response>;
+  #disposed = false;
+  #disposeController = new AbortController();
 
   constructor(
     instance: DiscoveredInstance,
@@ -340,7 +365,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
     this.#fetchImpl = options.fetchImpl ?? fetch;
     this.#rediscover = options.rediscover;
     this.#now = options.now ?? Date.now;
-    this.#sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+    this.#sleep = options.sleep;
     this.current = {
       mode: "attach",
       status: "attached",
@@ -365,7 +390,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
       }
       this.#queuedReads += 1;
       try {
-        await this.#recoveryFlight;
+        await waitForPromiseOrAbort(this.#recoveryFlight, request.signal);
       } catch {
         return typedUnavailable("BACKEND_UNAVAILABLE");
       } finally {
@@ -433,7 +458,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   async retry(): Promise<void> {
-    if (!["dead", "incompatible", "conflict"].includes(this.current.status)) return;
+    if (this.#disposed || !["dead", "incompatible", "conflict"].includes(this.current.status)) return;
     this.#clearRenewal();
     this.publish({
       status: "connecting",
@@ -442,13 +467,28 @@ export class AttachBackendConnection extends BaseBackendConnection {
       conflictKind: null,
     });
     if (this.#rediscover && this.current.libraryId) {
-      const next = await this.#runRediscovery();
+      // 用户显式重试不受自动自愈限频窗口约束。
+      this.#rediscoveryStartedAtMs = [];
+      let next: AttachRediscoveryResult;
+      try {
+        next = await waitForPromiseOrAbort(
+          this.#runRediscovery(),
+          this.#disposeController.signal,
+        );
+      } catch (error) {
+        if (this.#disposed) return;
+        throw error;
+      }
+      if (this.#disposed) return;
       if (isDiscoveredInstance(next)) this.#instance = next;
     }
     await this.#authenticate("authenticating");
   }
 
   override dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#disposeController.abort();
     this.#clearRenewal();
     this.#sessionToken = "";
     super.dispose();
@@ -459,10 +499,11 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   #startRevalidate(errorCode: string): void {
-    if (this.current.status !== "attached" || this.#recoveryFlight) return;
+    if (this.#disposed || this.current.status !== "attached" || this.#recoveryFlight) return;
     this.publish({ status: "revalidating", errorCode });
     const operation = (async () => {
       const result = await this.#probeIdentity();
+      if (this.#disposed) return;
       if (result === "ok") this.publish({ status: "attached", errorCode: null });
       else if (result === "conflict") {
         this.#clearRenewal();
@@ -479,7 +520,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   #startReauthenticate(visible = true): void {
-    if (this.current.status !== "attached" || this.#recoveryFlight) return;
+    if (this.#disposed || this.current.status !== "attached" || this.#recoveryFlight) return;
     const operation = this.#authenticate("reauthenticating", visible);
     const flight = operation.finally(() => {
       if (this.#recoveryFlight === flight) this.#recoveryFlight = null;
@@ -491,11 +532,16 @@ export class AttachBackendConnection extends BaseBackendConnection {
     status: "authenticating" | "reauthenticating",
     publishPending = true,
   ): Promise<void> {
+    if (this.#disposed) return;
     if (publishPending) this.publish({ status, errorCode: null });
     try {
-      const handshake = await handshakeAttachInstance(this.#instance, this.#fetchImpl);
+      const handshake = await waitForPromiseOrAbort(
+        handshakeAttachInstance(this.#instance, this.#fetchImpl),
+        this.#disposeController.signal,
+      );
       this.#applyHandshake(handshake);
     } catch (error) {
+      if (this.#disposed) return;
       if (
         status === "reauthenticating"
         && error instanceof AttachConnectionError
@@ -511,11 +557,13 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   #applyHandshake(handshake: AttachHandshakeResponse, recovered = false): void {
+    if (this.#disposed) return;
     if (this.current.libraryId && handshake.libraryId !== this.current.libraryId) {
       this.#clearRenewal();
       this.publish({ status: "conflict", errorCode: "CONFLICT", conflictKind: "conflict" });
       return;
     }
+    this.#rediscoveryStartedAtMs = [];
     this.#sessionToken = handshake.attachSessionToken;
     this.#absoluteExpiresAtMs = Date.parse(handshake.absoluteExpiresAt);
     this.#idleExpiresAtMs = Date.parse(handshake.idleExpiresAt);
@@ -532,6 +580,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   #publishAuthenticationFailure(error: unknown): void {
+    if (this.#disposed) return;
     this.#clearRenewal();
     const code = error instanceof AttachConnectionError ? error.code : "UNREACHABLE";
     this.publish({
@@ -542,6 +591,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   async #recoverRestartedInstance(): Promise<void> {
+    if (this.#disposed) return;
     if (!this.#rediscover || !this.current.libraryId) {
       this.#publishAuthenticationFailure(new AttachConnectionError("AUTH_FAILED", 401));
       return;
@@ -551,29 +601,49 @@ export class AttachBackendConnection extends BaseBackendConnection {
     const previousInstanceId = this.#instance.instanceId;
     let backoffMs = REAUTH_REDISCOVERY_INITIAL_BACKOFF_MS;
 
-    while (this.#now() < deadlineMs) {
+    while (!this.#disposed && this.#now() < deadlineMs) {
       const rateLimitDelayMs = this.#rediscoveryRateLimitDelayMs();
       if (rateLimitDelayMs > 0) {
-        await this.#sleepWithinRecoveryBudget(Math.max(backoffMs, rateLimitDelayMs), deadlineMs);
+        const canRetry = await this.#sleepWithinRecoveryBudget(
+          Math.max(backoffMs, rateLimitDelayMs),
+          deadlineMs,
+        );
+        if (!canRetry) break;
         backoffMs = Math.min(backoffMs * 2, REAUTH_REDISCOVERY_MAX_BACKOFF_MS);
         continue;
       }
 
-      const discovered = await this.#runRediscovery().catch(() => null);
+      const discovered = await waitForPromiseOrAbort(
+        this.#runRediscovery(),
+        this.#disposeController.signal,
+      ).catch(() => null);
+      if (this.#disposed) return;
       if (isDiscoveredInstance(discovered)) {
         this.#instance = discovered;
         try {
-          const handshake = await handshakeAttachInstance(discovered, this.#fetchImpl);
+          const handshake = await waitForPromiseOrAbort(
+            handshakeAttachInstance(discovered, this.#fetchImpl),
+            this.#disposeController.signal,
+          );
+          if (this.#disposed) return;
           this.#applyHandshake(handshake, true);
           return;
         } catch (error) {
+          if (this.#disposed) return;
           if (
             error instanceof AttachConnectionError
-            && error.code === "AUTH_FAILED"
-            && error.status === 401
-            && discovered.instanceId !== previousInstanceId
+            && (
+              error.code === "UNREACHABLE"
+              || error.code === "MALFORMED"
+              || (
+                error.code === "AUTH_FAILED"
+                && error.status === 401
+                && discovered.instanceId !== previousInstanceId
+              )
+            )
           ) {
-            await this.#sleepWithinRecoveryBudget(backoffMs, deadlineMs);
+            const canRetry = await this.#sleepBeforeNextRediscovery(backoffMs, deadlineMs);
+            if (!canRetry) break;
             backoffMs = Math.min(backoffMs * 2, REAUTH_REDISCOVERY_MAX_BACKOFF_MS);
             continue;
           }
@@ -581,18 +651,47 @@ export class AttachBackendConnection extends BaseBackendConnection {
           return;
         }
       }
+      if (discovered?.errorCode === "STARTING_LEASE") {
+        this.publish({ errorCode: "STARTING_LEASE" });
+      }
 
-      await this.#sleepWithinRecoveryBudget(backoffMs, deadlineMs);
+      const canRetry = await this.#sleepBeforeNextRediscovery(backoffMs, deadlineMs);
+      if (!canRetry) break;
       backoffMs = Math.min(backoffMs * 2, REAUTH_REDISCOVERY_MAX_BACKOFF_MS);
     }
 
+    if (this.#disposed) return;
     this.#publishAuthenticationFailure(new AttachConnectionError("AUTH_FAILED", 401));
   }
 
-  async #sleepWithinRecoveryBudget(delayMs: number, deadlineMs: number): Promise<void> {
+  async #sleepBeforeNextRediscovery(backoffMs: number, deadlineMs: number): Promise<boolean> {
+    const delayMs = Math.max(backoffMs, this.#rediscoveryRateLimitDelayMs());
+    return this.#sleepWithinRecoveryBudget(delayMs, deadlineMs);
+  }
+
+  async #sleepWithinRecoveryBudget(delayMs: number, deadlineMs: number): Promise<boolean> {
     const remainingMs = deadlineMs - this.#now();
-    if (remainingMs <= 0) return;
-    await this.#sleep(Math.min(delayMs, remainingMs));
+    if (this.#disposed || remainingMs <= 0 || delayMs >= remainingMs) return false;
+    if (this.#sleep) {
+      try {
+        await waitForPromiseOrAbort(this.#sleep(delayMs), this.#disposeController.signal);
+      } catch (error) {
+        if (!this.#disposed) throw error;
+      }
+      return !this.#disposed;
+    }
+    await new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = () => {
+        if (timer) clearTimeout(timer);
+        this.#disposeController.signal.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => finish();
+      this.#disposeController.signal.addEventListener("abort", onAbort, { once: true });
+      timer = setTimeout(() => finish(), delayMs);
+    });
+    return !this.#disposed;
   }
 
   #rediscoveryRateLimitDelayMs(): number {
@@ -608,7 +707,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   async #runRediscovery(): Promise<AttachRediscoveryResult> {
-    if (!this.#rediscover || !this.current.libraryId) return null;
+    if (this.#disposed || !this.#rediscover || !this.current.libraryId) return null;
     const delayMs = this.#rediscoveryRateLimitDelayMs();
     if (delayMs > 0) return null;
     this.#rediscoveryStartedAtMs.push(this.#now());
@@ -630,6 +729,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   #touchIdleExpiry(): void {
+    if (this.#disposed) return;
     this.#idleExpiresAtMs = Math.min(
       this.#absoluteExpiresAtMs,
       this.#now() + ATTACH_IDLE_TTL_MS,
@@ -639,7 +739,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
 
   #scheduleRenewal(): void {
     this.#clearRenewal();
-    if (this.current.status !== "attached") return;
+    if (this.#disposed || this.current.status !== "attached") return;
     const renewAt = Math.min(this.#absoluteExpiresAtMs, this.#idleExpiresAtMs) - RENEW_EARLY_MS;
     const delay = Math.max(1_000, renewAt - this.#now());
     this.#renewTimer = setTimeout(() => {

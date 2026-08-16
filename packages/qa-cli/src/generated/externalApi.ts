@@ -193,9 +193,14 @@ export type ExternalProposeOp =
   | { kind: "strReplace"; old: string; new: string; nth?: number }
   /**
    * `line` 在该 op 执行时按整篇 Markdown 解释；同批较早操作可能令原行号失效。
-   * 目标落在表格等多行块内部时会拒绝，调用方应拆批或改用块/内容锚点。
+   * 目标落在表格等多行块内部时会拒绝，调用方应拆批或改用 insertAfterBlock。
    */
   | { kind: "insertAfterLine"; line: number; markdown: string }
+  /**
+   * 列表项锚点会在同一列表、同一深度插入一个同类项；其它顶层块锚点会在块后插入 Markdown 顶层块。
+   * 暂不支持表格 cell 内锚点。
+   */
+  | { kind: "insertAfterBlock"; blockId: string; markdown: string }
   | { kind: "appendSection"; markdown: string }
   | { kind: "deleteBlock"; blockId: string }
   | { kind: "deleteListItem"; blockId: string };
@@ -203,6 +208,7 @@ export type ExternalProposeOp =
 export interface ExternalProposalRequest {
   expectedDocVersion: number;
   clientMutationId?: string;
+  /** 结构操作的请求级幂等键；同一 opId 只能对应同一请求体。 */
   opId?: string;
   ops: ExternalProposeOp[];
 }

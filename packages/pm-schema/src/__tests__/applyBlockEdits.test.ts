@@ -416,6 +416,45 @@ describe("applyBlockEdits", () => {
     expect(r.applied.every((id) => !id.startsWith("ai-block-"))).toBe(true);
   });
 
+  it("insertListItem 在嵌套列表中按 parentRef 插入同深度兄弟，并携带新项子级", () => {
+    const nested = bulletList("nested-list", [
+      { blockId: "nested-a", paragraphId: "nested-a-p", text: "子项 A" },
+      { blockId: "nested-b", paragraphId: "nested-b-p", text: "子项 B" },
+    ]);
+    const base = doc([bulletList("root-list", [{
+      blockId: "root-item",
+      paragraphId: "root-item-p",
+      text: "父项",
+      children: [nested],
+    }])]);
+
+    const result = applyBlockEdits(base, [{
+      action: "insertListItem",
+      parentRef: "nested-list",
+      at: "after",
+      ref: "nested-a",
+      item: {
+        runs: [{ text: "新子项" }],
+        children: [{ type: "bulletList", items: [{ runs: [{ text: "新子项后代" }] }] }],
+      },
+    }]);
+
+    expect(result.ok).toBe(true);
+    const root = result.doc?.content[0];
+    expect(root?.type).toBe("bulletList");
+    if (root?.type !== "bulletList") return;
+    const nestedAfter = root.content[0]!.content[1];
+    expect(nestedAfter?.type).toBe("bulletList");
+    if (nestedAfter?.type !== "bulletList") return;
+    expect(nestedAfter.content.map((item) => firstText(item))).toEqual([
+      "子项 A", "新子项新子项后代", "子项 B",
+    ]);
+    expect(nestedAfter.content[1]!.content[1]).toMatchObject({ type: "bulletList" });
+    expect(result.doc?.content).toHaveLength(1);
+    const ids = collectBlockIds(result.doc);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("deleteListItem 删除行；最后一行删除时级联清理父列表", () => {
     const base = doc([
       bulletList("list-a", [

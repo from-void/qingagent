@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  EXTERNAL_STRUCTURAL_OP_KINDS,
+  type ExternalProposeOp,
+} from "../../ExternalPropose";
 import { tableSelectionTextSignature } from "../../TableSelection";
 import { commandSchema, COMMAND_KINDS, COMMAND_KIND_SET } from "../command";
 import { MAX_COMMAND_ARRAY_LENGTH, MAX_COMMAND_STRING_LENGTH } from "../common";
@@ -105,6 +109,47 @@ describe("commandSchema", () => {
         ],
       },
     }).success).toBe(false);
+  });
+
+  it("externalPropose 接受 insertAfterBlock，并要求结构操作携带请求级 opId", () => {
+    const base = {
+      kind: "externalPropose",
+      data: { sessionId: "s", expectedDocVersion: 1 },
+    } as const;
+    const op = { kind: "insertAfterBlock", blockId: "block-1", markdown: "新增段" } as const;
+
+    expect(commandSchema.safeParse({
+      ...base,
+      data: { ...base.data, opId: "insert-1", ops: [op] },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: { ...base.data, ops: [op] },
+    }).success).toBe(false);
+    expect(commandSchema.safeParse({
+      ...base,
+      data: {
+        ...base.data,
+        opId: "insert-2",
+        ops: [{ ...op, blockId: "" }],
+      },
+    }).success).toBe(false);
+
+    const structuralOps = {
+      insertAfterBlock: op,
+      deleteBlock: { kind: "deleteBlock", blockId: "block-1" },
+      deleteListItem: { kind: "deleteListItem", blockId: "item-1" },
+    } satisfies Record<(typeof EXTERNAL_STRUCTURAL_OP_KINDS)[number], ExternalProposeOp>;
+    for (const kind of EXTERNAL_STRUCTURAL_OP_KINDS) {
+      expect(commandSchema.safeParse({
+        ...base,
+        data: { ...base.data, ops: [structuralOps[kind]] },
+      }).success, `${kind} 缺少 opId 时必须拒绝`).toBe(false);
+      expect(commandSchema.safeParse({
+        ...base,
+        data: { ...base.data, opId: `op-${kind}`, ops: [structuralOps[kind]] },
+      }).success, `${kind} 携带 opId 时必须通过`).toBe(true);
+    }
   });
 
   it("接受三种衍生稿 dtype，翻译要求目标语言并拒绝未知 dtype", () => {

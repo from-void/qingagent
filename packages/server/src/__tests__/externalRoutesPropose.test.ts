@@ -4,9 +4,19 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
 import { getDocumentsClient } from "@qingagent/core";
-import { qingmlParse } from "@qingagent/pm-schema";
+import {
+  assertUniquePmBlockIds,
+  getPmContentHash,
+  pmToMarkdown,
+  pmToPlainText,
+  qingmlParse,
+  type PmDoc,
+  type PmTaskItemNode,
+  type PmTaskListNode,
+} from "@qingagent/pm-schema";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
+import insertAfterBlockW1 from "./fixtures/insert-after-block-w1.json";
 
 const dirs: string[] = [];
 let token = "";
@@ -468,6 +478,230 @@ describe("external proposals", () => {
       .toEqual(["插入段。"]);
   });
 
+  it("insertAfterBlock 纳入 opId digest 幂等，并在接受后拒绝重放", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。\n\n第二段。" }],
+    });
+    const canonical = await getOrRestoreSession(sessionId);
+    const anchorId = canonical!.doc!.content[0]!.attrs.blockId;
+    const request = {
+      expectedDocVersion: 1,
+      opId: "insert-after-block-idempotent",
+      ops: [{ kind: "insertAfterBlock" as const, blockId: anchorId, markdown: "插入段。" }],
+    };
+
+    const inserted = await propose(sessionId, request);
+    expect(inserted.status).toBe(200);
+    const firstBody = await inserted.json() as {
+      status: string;
+      patchIds: string[];
+      count: number;
+      charCount: number;
+      seq: number;
+    };
+    expect(firstBody).toMatchObject({ status: "review", count: 1 });
+    const pending = await getOrRestoreSession(sessionId);
+    const candidate = pending!.docDraftCandidateDoc!;
+    assertUniquePmBlockIds(candidate);
+    expect([...pending!.suggestions.values()].map((record) => record.diffHunk)).toEqual([
+      expect.objectContaining({ op: "insert", afterText: "插入段。" }),
+    ]);
+    const candidateHash = getPmContentHash(candidate);
+
+    const replayed = await propose(sessionId, request);
+    expect(replayed.status).toBe(200);
+    const replayedBody = await replayed.json() as typeof firstBody;
+    expect(replayedBody).toMatchObject({
+      status: firstBody.status,
+      patchIds: firstBody.patchIds,
+      count: firstBody.count,
+      charCount: firstBody.charCount,
+    });
+    expect(getPmContentHash((await getOrRestoreSession(sessionId))!.docDraftCandidateDoc!))
+      .toBe(candidateHash);
+
+    const reusedWithDifferentBody = await propose(sessionId, {
+      ...request,
+      ops: [{ kind: "insertAfterBlock", blockId: anchorId, markdown: "另一段。" }],
+    });
+    expect(reusedWithDifferentBody.status).toBe(400);
+    expect(await reusedWithDifferentBody.json()).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("opId 已用于另一份操作内容"),
+    });
+
+    const accepted = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "accept_all" }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 2,
+      acceptedCount: 1,
+      rejectedCount: 0,
+      remainingCount: 0,
+    });
+    const settled = await getOrRestoreSession(sessionId);
+    expect(pmToMarkdown(settled!.doc!)).toBe("第一段。\n\n插入段。\n\n第二段。");
+    expect(getPmContentHash(settled!.doc!)).toBe(candidateHash);
+
+    const replayedAfterAccept = await propose(sessionId, request);
+    expect(replayedAfterAccept.status).toBe(400);
+    expect(await replayedAfterAccept.json()).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("已结束审阅，不能重放"),
+    });
+  });
+
+  it("相邻重复 insertAfterBlock 使含前序删除的整批失败，且不记账 opId", async () => {
+    const sessionId = await createSession();
+    const initialMarkdown = "段A\n\n段B\n\n段C";
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: initialMarkdown }],
+    });
+    const before = await getOrRestoreSession(sessionId);
+    const beforeHash = getPmContentHash(before!.doc!);
+    const anchorId = before!.doc!.content[0]!.attrs.blockId;
+    const deleteId = before!.doc!.content[2]!.attrs.blockId;
+    const opId = "insert-after-block-adjacent-duplicate";
+
+    const failed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      opId,
+      ops: [
+        { kind: "deleteBlock", blockId: deleteId },
+        { kind: "insertAfterBlock", blockId: anchorId, markdown: "段B" },
+      ],
+    });
+
+    expect(failed.status).toBe(400);
+    expect(await failed.json()).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("插入内容与锚点后相邻块重复"),
+    });
+    const afterFailed = await getOrRestoreSession(sessionId);
+    expect(getPmContentHash(afterFailed!.doc!)).toBe(beforeHash);
+    expect(pmToMarkdown(afterFailed!.doc!)).toBe(initialMarkdown);
+    expect(afterFailed!.docDraftCandidateDoc).toBeNull();
+    expect(afterFailed!.suggestions.size).toBe(0);
+    expect(afterFailed!.externalStructuralOpDigests.has(opId)).toBe(false);
+
+    const retried = await propose(sessionId, {
+      expectedDocVersion: 1,
+      opId,
+      ops: [
+        { kind: "deleteBlock", blockId: deleteId },
+        { kind: "insertAfterBlock", blockId: anchorId, markdown: "新段" },
+      ],
+    });
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ status: "review", count: 2 });
+    const afterRetry = await getOrRestoreSession(sessionId);
+    expect(pmToMarkdown(afterRetry!.docDraftCandidateDoc!)).toBe("段A\n\n新段\n\n段B");
+    expect(afterRetry!.externalStructuralOpDigests.has(opId)).toBe(true);
+  });
+
+  it("insertAfterBlock 拒绝审阅后 canonical 保持不变", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "原段一。\n\n原段二。" }],
+    });
+    const before = await getOrRestoreSession(sessionId);
+    const beforeHash = getPmContentHash(before!.doc!);
+    const anchorId = before!.doc!.content[0]!.attrs.blockId;
+
+    const inserted = await propose(sessionId, {
+      expectedDocVersion: 1,
+      opId: "insert-after-block-reject",
+      ops: [{ kind: "insertAfterBlock", blockId: anchorId, markdown: "拒绝此段。" }],
+    });
+    expect(inserted.status).toBe(200);
+    const rejected = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+    });
+    expect(rejected.status).toBe(200);
+    expect(await rejected.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 1,
+      acceptedCount: 0,
+      rejectedCount: 1,
+      remainingCount: 0,
+    });
+    const settled = await getOrRestoreSession(sessionId);
+    expect(getPmContentHash(settled!.doc!)).toBe(beforeHash);
+    expect(pmToMarkdown(settled!.doc!)).toBe("原段一。\n\n原段二。");
+    expect(settled!.docDraftCandidateDoc).toBeNull();
+  });
+
+  it("w1 固化：单批删二加一后候选与结算均为唯一 7 项非空 taskList", async () => {
+    const sessionId = await createSession();
+    const initialMarkdown = insertAfterBlockW1.initialItems
+      .map((item) => `- [ ] ${item}`)
+      .join("\n");
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: initialMarkdown }],
+    });
+    const canonical = await getOrRestoreSession(sessionId);
+    const initialList = getOnlyTaskList(canonical!.doc!);
+    const deleteBlockIds = insertAfterBlockW1.deleteIndexes.map(
+      (index) => initialList.content[index]!.attrs.blockId,
+    );
+    const anchorBlockId = initialList.content[insertAfterBlockW1.anchorIndex]!.attrs.blockId;
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      opId: "w1-delete-two-insert-one",
+      ops: [
+        ...deleteBlockIds.map((blockId) => ({ kind: "deleteListItem" as const, blockId })),
+        {
+          kind: "insertAfterBlock",
+          blockId: anchorBlockId,
+          markdown: insertAfterBlockW1.insertMarkdown,
+        },
+      ],
+    });
+    expect(proposed.status).toBe(200);
+    expect(await proposed.json()).toMatchObject({ status: "review", count: 1 });
+    const pending = await getOrRestoreSession(sessionId);
+    const candidate = pending!.docDraftCandidateDoc!;
+    const candidateSnapshot = taskListSnapshot(candidate);
+    expect(candidateSnapshot).toEqual({
+      taskLists: 1,
+      taskItems: 7,
+      emptyTaskItems: 0,
+      labels: insertAfterBlockW1.expectedLabels,
+    });
+    assertUniquePmBlockIds(candidate);
+    const candidateHash = getPmContentHash(candidate);
+
+    const accepted = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "accept_all" }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 2,
+      acceptedCount: 1,
+      rejectedCount: 0,
+      remainingCount: 0,
+    });
+    const settled = await getOrRestoreSession(sessionId);
+    expect(taskListSnapshot(settled!.doc!)).toEqual(candidateSnapshot);
+    expect(getPmContentHash(settled!.doc!)).toBe(candidateHash);
+    assertUniquePmBlockIds(settled!.doc!);
+  });
+
   it("结构操作失败文案不向外部调用方泄漏内部工具名", async () => {
     const sessionId = await createSession();
     await propose(sessionId, {
@@ -636,6 +870,38 @@ async function propose(sessionId: string, body: unknown, headers: HeadersInit = 
     headers: { ...authHeaders(), ...headers },
     body: JSON.stringify(body),
   });
+}
+
+function getOnlyTaskList(doc: PmDoc): PmTaskListNode {
+  const taskLists = doc.content.filter((block): block is PmTaskListNode => block.type === "taskList");
+  expect(taskLists).toHaveLength(1);
+  return taskLists[0]!;
+}
+
+function taskItemText(item: PmTaskItemNode, schemaVersion: PmDoc["attrs"]["schemaVersion"]): string {
+  return pmToPlainText({
+    type: "doc",
+    attrs: { schemaVersion },
+    content: item.content,
+  }, { skipTaskMarkers: true }).trim();
+}
+
+function taskListSnapshot(doc: PmDoc): {
+  taskLists: number;
+  taskItems: number;
+  emptyTaskItems: number;
+  labels: string[];
+} {
+  const taskList = getOnlyTaskList(doc);
+  const texts = taskList.content.map((item) => taskItemText(item, doc.attrs.schemaVersion));
+  return {
+    taskLists: 1,
+    taskItems: taskList.content.length,
+    emptyTaskItems: texts.filter((text) => text.length === 0).length,
+    labels: texts.map((text) =>
+      insertAfterBlockW1.expectedLabels.find((label) => text.includes(label)) ?? text
+    ),
+  };
 }
 
 function authHeaders(): HeadersInit {

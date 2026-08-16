@@ -5,15 +5,20 @@ import type {
   ExternalProposeOp,
   WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
+import { EXTERNAL_STRUCTURAL_OP_KINDS } from "@qingagent/contract-ts";
 import {
   compileAiDocumentToPm,
   applyBlockEdits,
   assertUniquePmBlockIds,
+  blockToAi,
   markdownToPm,
   normalizePmDoc,
+  pmToPlainText,
   pmToMarkdownWithLineMap,
   qingmlTagSkeleton,
+  type PmBlockNode,
   type PmDoc,
+  type PmNode,
 } from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import {
@@ -136,6 +141,7 @@ export function applyExternalProposalOps(
   ops: ExternalProposeOp[],
 ): { ok: true; doc: PmDoc } | { ok: false; error: string } {
   let workingDoc = candidateDoc;
+  const insertCursorByAnchor = new Map<string, string>();
   for (const op of ops) {
     if (op.kind === "strReplace") {
       const blocks = collectTopLevelTextBlocks(workingDoc);
@@ -168,6 +174,97 @@ export function applyExternalProposalOps(
       };
       continue;
     }
+    if (op.kind === "insertAfterBlock") {
+      const anchor = findInsertAfterBlockAnchor(workingDoc, op.blockId);
+      if (anchor.kind === "missing") {
+        const existedBeforeBatch = findInsertAfterBlockAnchor(candidateDoc, op.blockId).kind !== "missing";
+        return {
+          ok: false,
+          error: existedBeforeBatch
+            ? "锚点块已被同批前序操作删除"
+            : `锚点块 ${op.blockId} 不存在，请重新读取文档并使用最新 blockId`,
+        };
+      }
+      if (anchor.kind === "tableCell") {
+        return { ok: false, error: "暂不支持表格内锚点" };
+      }
+      if (anchor.kind === "unsupported") {
+        return { ok: false, error: "blockId 必须指向列表项或顶层块" };
+      }
+
+      const insertDoc = normalizePmDoc(markdownToPm(op.markdown));
+      if (insertDoc.content.length === 0) {
+        return { ok: false, error: "insertAfterBlock 的 markdown 不能为空" };
+      }
+      if (hasEmptyTaskItem(insertDoc)) {
+        return { ok: false, error: "insertAfterBlock 的 taskItem 内容不能为空" };
+      }
+      const cursorRef = insertCursorByAnchor.get(op.blockId) ?? op.blockId;
+      if (anchor.kind === "listItem") {
+        const listBlock = insertDoc.content[0];
+        if (
+          insertDoc.content.length !== 1 ||
+          !listBlock ||
+          listBlock.type !== anchor.parentList.type ||
+          listBlock.content.length !== 1
+        ) {
+          return {
+            ok: false,
+            error: "列表项锚点的 markdown 必须恰好包含 1 条同类列表项",
+          };
+        }
+        const listItem = listBlock.content[0]!;
+        const firstBlock = listItem.content[0];
+        if (
+          !firstBlock ||
+          pmToPlainText({
+            type: "doc",
+            attrs: { schemaVersion: workingDoc.attrs.schemaVersion },
+            content: [firstBlock],
+          }).trim().length === 0
+        ) {
+          return { ok: false, error: "insertAfterBlock 的列表项内容不能为空" };
+        }
+        const aiList = blockToAi(listBlock);
+        if (
+          (aiList.type !== "bulletList" && aiList.type !== "orderedList" && aiList.type !== "taskList") ||
+          aiList.items.length !== 1
+        ) {
+          return { ok: false, error: "列表项 markdown 编译失败" };
+        }
+        const edited = applyBlockEdits(workingDoc, [{
+          action: "insertListItem",
+          parentRef: anchor.parentList.attrs.blockId,
+          at: "after",
+          ref: cursorRef,
+          item: aiList.items[0]!,
+        }]);
+        if (!edited.ok || !edited.doc) {
+          return { ok: false, error: edited.error ?? "列表项插入失败" };
+        }
+        const insertedRef = edited.applied.at(-1);
+        if (insertedRef) insertCursorByAnchor.set(op.blockId, insertedRef);
+        workingDoc = edited.doc;
+        continue;
+      }
+
+      const edited = applyBlockEdits(workingDoc, [{
+        action: "insertBlock",
+        position: "after",
+        ref: cursorRef,
+        blocks: insertDoc.content.map(blockToAi),
+      }]);
+      if (!edited.ok || !edited.doc) {
+        return { ok: false, error: edited.error ?? "顶层块插入失败" };
+      }
+      if (edited.skippedDuplicateInserts > 0) {
+        return { ok: false, error: "插入内容与锚点后相邻块重复" };
+      }
+      const insertedRef = edited.applied.at(-1);
+      if (insertedRef) insertCursorByAnchor.set(op.blockId, insertedRef);
+      workingDoc = edited.doc;
+      continue;
+    }
     if (op.kind === "deleteBlock" || op.kind === "deleteListItem") {
       const edited = applyBlockEdits(workingDoc, [{
         action: op.kind,
@@ -193,6 +290,80 @@ export function applyExternalProposalOps(
   return { ok: true, doc: workingDoc };
 }
 
+type ExternalListBlock = Extract<PmBlockNode, { type: "bulletList" | "orderedList" | "taskList" }>;
+
+type InsertAfterBlockAnchor =
+  | { kind: "topLevel" }
+  | { kind: "listItem"; parentList: ExternalListBlock }
+  | { kind: "tableCell" }
+  | { kind: "unsupported" }
+  | { kind: "missing" };
+
+function findInsertAfterBlockAnchor(doc: PmDoc, blockId: string): InsertAfterBlockAnchor {
+  for (const block of doc.content) {
+    if (block.attrs.blockId === blockId) return { kind: "topLevel" };
+    const nested = findNestedInsertAfterBlockAnchor(block, blockId, false, null);
+    if (nested.kind !== "missing") return nested;
+  }
+  return { kind: "missing" };
+}
+
+function findNestedInsertAfterBlockAnchor(
+  node: PmNode,
+  blockId: string,
+  insideTableCell: boolean,
+  parentList: ExternalListBlock | null,
+): InsertAfterBlockAnchor {
+  const nextInsideTableCell =
+    insideTableCell || node.type === "tableCell" || node.type === "tableHeader";
+  const attrs = "attrs" in node ? node.attrs as { blockId?: unknown } : null;
+  if (attrs?.blockId === blockId) {
+    if (nextInsideTableCell) return { kind: "tableCell" };
+    if ((node.type === "listItem" || node.type === "taskItem") && parentList) {
+      return { kind: "listItem", parentList };
+    }
+    return { kind: "unsupported" };
+  }
+
+  if (!("content" in node) || !Array.isArray(node.content)) return { kind: "missing" };
+  const childParentList = isExternalListBlock(node) ? node : null;
+  for (const child of node.content) {
+    const nested = findNestedInsertAfterBlockAnchor(
+      child as PmNode,
+      blockId,
+      nextInsideTableCell,
+      childParentList,
+    );
+    if (nested.kind !== "missing") return nested;
+  }
+  return { kind: "missing" };
+}
+
+function isExternalListBlock(node: PmNode): node is ExternalListBlock {
+  return node.type === "bulletList" || node.type === "orderedList" || node.type === "taskList";
+}
+
+function hasEmptyTaskItem(doc: PmDoc): boolean {
+  const visit = (node: PmNode): boolean => {
+    if (node.type === "taskItem") {
+      const firstBlock = node.content[0];
+      if (
+        !firstBlock ||
+        pmToPlainText({
+          type: "doc",
+          attrs: { schemaVersion: doc.attrs.schemaVersion },
+          content: [firstBlock],
+        }).trim().length === 0
+      ) {
+        return true;
+      }
+    }
+    return "content" in node && Array.isArray(node.content) &&
+      node.content.some((child) => visit(child as PmNode));
+  };
+  return doc.content.some(visit);
+}
+
 function blockIndexForMarkdownLine(
   doc: PmDoc,
   line: number,
@@ -207,7 +378,7 @@ function blockIndexForMarkdownLine(
   if (span.contentEndLine > span.startLine && line < span.contentEndLine) {
     return {
       ok: false,
-      error: `第 ${line} 行位于多行 ${span.blockType} 块 ${span.blockId} 内部，不能使用 insertAfterLine；请改用 blockId 或内容锚点。${staleHint}`,
+      error: `第 ${line} 行位于多行 ${span.blockType} 块 ${span.blockId} 内部，不能使用 insertAfterLine；请改用 insertAfterBlock 并传入 blockId。${staleHint}`,
     };
   }
   return { ok: true, index: span.blockIndex };
@@ -222,12 +393,16 @@ interface ExternalStructuralOpIdentity {
   source: string;
 }
 
+export function hasExternalStructuralOp(ops: readonly ExternalProposeOp[]): boolean {
+  return EXTERNAL_STRUCTURAL_OP_KINDS.some((kind) =>
+    ops.some((op) => op.kind === kind)
+  );
+}
+
 function externalStructuralOpIdentity(
   data: Extract<Command, { kind: "externalPropose" }>["data"],
 ): ExternalStructuralOpIdentity | null {
-  const hasStructuralOp = data.ops.some(
-    (op) => op.kind === "deleteBlock" || op.kind === "deleteListItem",
-  );
+  const hasStructuralOp = hasExternalStructuralOp(data.ops);
   if (!hasStructuralOp || !data.opId) return null;
   const digest = crypto
     .createHash("sha256")

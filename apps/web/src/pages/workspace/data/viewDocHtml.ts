@@ -35,10 +35,11 @@ export function viewDocumentSyncRevision(doc: ViewDocumentSnapshot): string {
 
 export function hasMissingPresentationBlockId(doc: unknown): boolean {
   let missing = false;
-  const visit = (node: unknown) => {
+  const visit = (node: unknown, trailingScaffold = false) => {
     if (missing || !node || typeof node !== "object") return;
     const record = node as { type?: unknown; attrs?: unknown; content?: unknown };
     if (
+      !trailingScaffold &&
       (record.type === "paragraph" || record.type === "listItem") &&
       !readNonEmptyBlockId(record.attrs)
     ) {
@@ -46,7 +47,18 @@ export function hasMissingPresentationBlockId(doc: unknown): boolean {
       return;
     }
     if (!Array.isArray(record.content)) return;
-    for (const child of record.content) visit(child);
+    for (const [index, child] of record.content.entries()) {
+      const childRecord = child && typeof child === "object"
+        ? child as { type?: unknown; content?: unknown }
+        : null;
+      visit(
+        child,
+        record.type === "doc" &&
+          index === record.content.length - 1 &&
+          childRecord?.type === "paragraph" &&
+          (!Array.isArray(childRecord.content) || childRecord.content.length === 0),
+      );
+    }
   };
 
   visit(doc);

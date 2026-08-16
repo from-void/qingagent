@@ -228,6 +228,27 @@ const AppendLocalDuplicateAfterRemote = Extension.create({
 });
 
 describe("DedupeBlockIds", () => {
+  it("trailingNode 为列表追加的文末空段不分配 blockId", () => {
+    const editor = createEditor(doc([paragraph("before", "旧正文")]));
+    try {
+      editor.chain()
+        .setMeta(APPLYING_REMOTE_META, true)
+        .setContent(doc([
+          orderedList("list-1", [
+            listItem("item-1", [paragraph("item-1-p", "第一项")]),
+          ]),
+        ]))
+        .run();
+
+      const blocks = topLevelBlocks(editor);
+      expect(blocks.map((block) => block.type)).toEqual(["orderedList", "paragraph"]);
+      expect(blocks[1]?.content).toBeUndefined();
+      expect(blocks[1]?.attrs?.blockId).toBeNull();
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
   it("R9：原子块后 Enter 新建的段落在本地事务内获得 blockId", () => {
     const editor = createEditor(doc([
       paragraph("before", "前文"),

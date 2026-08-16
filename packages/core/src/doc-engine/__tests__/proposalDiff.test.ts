@@ -804,6 +804,33 @@ describe("P28 列表项级 hunk", () => {
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
+  it("item 锚被手动删除后 insert 失效并跳过，不按旧序号猜位", () => {
+    const base = doc([bulletList("list-missing-item-anchor", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+    const draft = doc([bulletList("list-missing-item-anchor", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+    const [insertB] = buildDraftDiff(base, draft);
+    if (!insertB) throw new Error("fixture missing item insert hunk");
+    expect(insertB.anchor).toMatchObject({ blockId: "item-a", gravity: "after" });
+    const current = doc([bulletList("list-missing-item-anchor", [
+      { blockId: "item-c", text: "丙" },
+    ])]);
+
+    const result = applyDiffHunks(current, [insertB]);
+
+    expect(result.doc).toEqual(current);
+    expect(result.applied).toEqual([]);
+    expect(result.skipped).toEqual([insertB]);
+    expect(result.skippedDetails).toEqual([
+      expect.objectContaining({ reason: `missing target block for ${insertB.hunkId}` }),
+    ]);
+  });
+
   it("首缝 delete+insert 部分采纳时 insert 回退父列表定位，不随待删锚点丢失", () => {
     const base = doc([bulletList("list-leading-gap", [
       { blockId: "item-a", text: "A" },

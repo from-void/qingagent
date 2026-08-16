@@ -349,6 +349,7 @@ describe("buildPatchDecorations", () => {
     };
     const afterA = item("item-a", "新甲");
     const afterB = item("item-b", "新乙");
+    const afterList = { ...beforeList, content: [afterA, afterB] };
     const listBaseline: PmDoc = {
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -362,7 +363,13 @@ describe("buildPatchDecorations", () => {
       op: "replace",
       anchorBlockId: "merged-list",
       anchorIndex: 0,
-      blocks: [],
+      blocks: [{
+        kind: "list",
+        blockId: "merged-list",
+        ordered: false,
+        items: ["新甲", "新乙"],
+        node: afterList,
+      }],
       beforePmNodes: [beforeList],
       blockCount: 1,
       granular: true,
@@ -374,6 +381,7 @@ describe("buildPatchDecorations", () => {
           order: 0,
           op: "replace",
           itemIndex: 0,
+          anchorBlockId: "item-a",
           beforeItem: beforeList.content[0],
           afterItem: afterA,
         },
@@ -384,6 +392,7 @@ describe("buildPatchDecorations", () => {
           order: 1,
           op: "replace",
           itemIndex: 1,
+          anchorBlockId: "item-b",
           beforeItem: beforeList.content[1],
           afterItem: afterB,
         },

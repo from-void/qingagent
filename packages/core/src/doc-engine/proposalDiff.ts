@@ -1766,9 +1766,13 @@ function resolveApplyBlockIndex(
         }
       }
       const projectedParent = nodeToBlock(hunk.beforeBlock) ?? nodeToBlock(hunk.afterBlock);
-      // insert 的 item 锚可能被同轮其它裁决移除；此时回退父列表 blockId +
-      // blockPath[1] 定位。delete/replace 不能这样回退，否则会误伤同位置 sibling。
-      if (hunk.op === "insert" && isListBlock(projectedParent)) {
+      // 首缝 insert 直接锚父列表，此时才用 blockPath[1] 定位。普通 item 锚
+      // 缺失必须失效，不能按旧序号猜位误插到同位置 sibling。
+      if (
+        hunk.op === "insert" &&
+        isListBlock(projectedParent) &&
+        anchorBlockId === projectedParent.attrs.blockId
+      ) {
         const itemIndex = hunk.blockPath[1];
         const blockIndex = doc.content.findIndex((block) => block.attrs.blockId === projectedParent.attrs.blockId);
         return itemIndex === undefined || blockIndex < 0 ? null : { blockIndex, itemIndex };

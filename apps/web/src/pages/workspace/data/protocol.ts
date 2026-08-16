@@ -1410,6 +1410,8 @@ function buildListItemRowReplace(
       ...(input.order !== undefined ? { order: input.order } : {}),
       op: hunk.op,
       itemIndex,
+      ...(hunk.anchor.blockId ? { anchorBlockId: hunk.anchor.blockId } : {}),
+      ...(hunk.anchor.gravity ? { gravity: hunk.anchor.gravity } : {}),
       ...(beforeItem ? { beforeItem } : {}),
       ...(afterItem ? { afterItem } : {}),
     }],
@@ -1515,10 +1517,30 @@ function buildMergedGranularListPatch(
 
   const inserts = members
     .filter((member) => member.op === "insert")
-    .sort((left, right) => left.itemIndex - right.itemIndex || (left.order ?? 0) - (right.order ?? 0));
+    .sort((left, right) => {
+      // 与 core compareHunksForApply 同序：同一 before 锚从前向后落；其它插入
+      // 按文档逆序落，确保共享 after 锚的多项插入仍保持草稿顺序。
+      if (
+        left.anchorBlockId === right.anchorBlockId &&
+        left.gravity === "before" &&
+        right.gravity === "before"
+      ) {
+        return left.itemIndex - right.itemIndex;
+      }
+      return right.itemIndex - left.itemIndex || (left.order ?? 0) - (right.order ?? 0);
+    });
   for (const member of inserts) {
     if (!member.afterItem) return null;
-    const insertAt = Math.max(0, Math.min(member.itemIndex, items.length));
+    let insertAt = member.itemIndex;
+    if (member.anchorBlockId) {
+      const anchorIndex = items.findIndex((item) => listItemBlockId(item) === member.anchorBlockId);
+      if (anchorIndex >= 0) {
+        insertAt = member.gravity === "before" ? anchorIndex : anchorIndex + 1;
+      } else if (member.anchorBlockId !== beforeParent.attrs.blockId) {
+        return null;
+      }
+    }
+    if (insertAt < 0 || insertAt > items.length) return null;
     items.splice(insertAt, 0, member.afterItem);
   }
 
@@ -1607,6 +1629,7 @@ export function projectGranularListBlockPatchInput(
 ): BlockPatchInput | null {
   if (!input.listItemPatches || input.listItemPatches.length < 2) return input;
   const members = input.listItemPatches.filter((member) => includedPatchIds.has(member.patchId));
+  if (members.length === input.listItemPatches.length) return input;
   return buildMergedGranularListPatch(input, members);
 }
 
@@ -2135,6 +2158,8 @@ export type GranularListItemPatch = {
   order?: number;
   op: "insert" | "delete" | "replace";
   itemIndex: number;
+  anchorBlockId?: string;
+  gravity?: "before" | "after";
   beforeItem?: ListPmBlock["content"][number];
   afterItem?: ListPmBlock["content"][number];
 };

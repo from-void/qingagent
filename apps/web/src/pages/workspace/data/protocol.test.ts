@@ -6,6 +6,7 @@ import {
   derivePatchPresentation,
   cloneListRowDiff,
   mergeGranularListBlockPatchInputs,
+  projectGranularListBlockPatchInput,
   suggestionToBlockPatchInput,
   suggestionToBlockPatchInputs,
   pmDocToViewDocumentSnapshot,
@@ -1435,6 +1436,59 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(projected.rowDiff?.filter((row) => row.status === "added").map((row) => row.patchId)).toEqual(
       hunks.map((hunk) => hunk.hunkId),
     );
+  });
+
+  it("多缝多 hunk 的每个裁决子集，聚合预览都与 applyDiffHunks 落盘序列一致", () => {
+    const list = (items: Array<{ id: string; text: string }>): PmBlockNode => ({
+      type: "bulletList",
+      attrs: { blockId: "p28-subset-list" },
+      content: items.map((item) => ({
+        type: "listItem",
+        attrs: { blockId: item.id },
+        content: [pmParagraph(`${item.id}-p`, item.text)],
+      })),
+    } as PmBlockNode);
+    const base = pmDoc([list([
+      { id: "subset-a", text: "A" },
+      { id: "subset-b", text: "B" },
+      { id: "subset-c", text: "C" },
+      { id: "subset-d", text: "D" },
+    ])]);
+    const draft = pmDoc([list([
+      { id: "subset-x", text: "X" },
+      { id: "subset-a", text: "A" },
+      { id: "subset-y", text: "Y" },
+      { id: "subset-b", text: "B" },
+      { id: "subset-c", text: "C2" },
+      { id: "subset-z", text: "Z" },
+      { id: "subset-d", text: "D2" },
+      { id: "subset-w", text: "W" },
+    ])]);
+    const hunks = buildDraftDiff(base, draft);
+    expect(hunks).toHaveLength(6);
+    const [merged] = mergeGranularListBlockPatchInputs(hunks.flatMap((hunk, order) =>
+      suggestionToBlockPatchInputs(blockSuggestion(hunk.hunkId, hunk), order)
+    ));
+    if (!merged) throw new Error("missing merged list projection");
+    expect(merged.listItemPatches).toHaveLength(hunks.length);
+
+    const allPatchIds = new Set(hunks.map((hunk) => hunk.hunkId));
+    expect(projectGranularListBlockPatchInput(merged, allPatchIds)).toBe(merged);
+
+    for (let mask = 1; mask < 2 ** hunks.length; mask += 1) {
+      const included = hunks.filter((_, index) => (mask & (1 << index)) !== 0);
+      const projectedInput = projectGranularListBlockPatchInput(
+        merged,
+        new Set(included.map((hunk) => hunk.hunkId)),
+      );
+      if (!projectedInput) throw new Error(`missing subset projection for mask ${mask}`);
+      const previewList = projectedInput.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+      const applied = applyDiffHunks(base, included);
+      expect(applied.skipped, `subset ${mask} should apply without skips`).toEqual([]);
+      const appliedList = pmDocToViewDocumentSnapshot(applied.doc, 1, "t")
+        .sections[0] as Extract<ViewBlock, { kind: "list" }>;
+      expect(previewList.items, `subset ${mask}`).toEqual(appliedList.items);
+    }
   });
 
   it("列表纯删与纯增保持孤立状态，不被误配成 replace", () => {

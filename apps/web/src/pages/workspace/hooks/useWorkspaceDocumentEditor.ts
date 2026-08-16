@@ -13,6 +13,7 @@ import {
   type PmDoc,
 } from "@qingagent/pm-schema";
 import type { Command } from "@qingagent/contract-ts";
+import { acknowledgedDocWriteContentHash } from "../data/docWriteResultOwnership";
 import { validateCommand } from "../../../system/validators";
 import type { DocumentSnapshotViewHandle } from "../components/DocumentSnapshotView";
 import type { StarterBlankTarget } from "../components/StarterPanel";
@@ -615,7 +616,8 @@ export function useWorkspaceDocumentEditor(input: {
               if (frame.data.ok && pendingPmDoc) {
                 resolve({
                   expectedDocumentSnapshot: frame.data.docVersion,
-                  baseContentHash: getPmContentHash(pendingPmDoc),
+                  // 等价短路时服务端 canonical 与本地物化表示哈希不同,基线必须取 ack 回传值。
+                  baseContentHash: acknowledgedDocWriteContentHash(frame.data, pendingPmDoc),
                 });
                 return;
               }

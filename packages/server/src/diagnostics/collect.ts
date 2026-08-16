@@ -778,6 +778,9 @@ const L1_FRAME_RULES = {
     ok: "structural",
     clientMutationId: "structural",
     docVersion: "structural",
+    // 等价短路诊断关键字段:createdNewVersion:false 即短路铁证;contentHash 为摘要不含正文。
+    contentHash: "structural",
+    createdNewVersion: "structural",
     reason: "structural",
     conflict: "redactedDeep",
   },

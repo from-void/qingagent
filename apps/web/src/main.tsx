@@ -13,8 +13,8 @@ import {
 } from "./system/preloadRecovery";
 import { installDesktopDataTransport } from "./system/desktopDataTransport";
 
-// 标题栏带上打包信息(桌面原生标题栏/浏览器标签都能看到),便于一眼确认这个包是什么时候打的。
-document.title = `青简 · ${__BUILD_INFO__}`;
+// 桌面原生标题栏与浏览器标签统一使用固定产品名。
+document.title = "青简";
 
 // vite:preloadError:动态 import 的 chunk 预加载失败(最常见于 VPS 部署后换了 chunk hash、
 // 旧 tab 点进 lazy 路由,旧 chunk URL 已 404)。自动 reload 一次拉取最新 index.html + chunk;

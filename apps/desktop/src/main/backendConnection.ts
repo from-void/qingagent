@@ -21,6 +21,11 @@ import { isDesktopCommandMutationPath } from "./desktopCommandAuth.js";
 const DATA_REQUEST_QUEUE_LIMIT = 32;
 const RENEW_EARLY_MS = 5 * 60 * 1_000;
 const ATTACH_IDLE_TTL_MS = 2 * 60 * 60 * 1_000;
+const REAUTH_RECOVERY_BUDGET_MS = 30_000;
+const REAUTH_REDISCOVERY_INITIAL_BACKOFF_MS = 1_000;
+const REAUTH_REDISCOVERY_MAX_BACKOFF_MS = 8_000;
+const REDISCOVERY_RATE_WINDOW_MS = 60_000;
+const REDISCOVERY_RATE_LIMIT = 2;
 
 export type BackendConnectionListener = (snapshot: BackendConnectionSnapshot) => void;
 
@@ -42,13 +47,21 @@ export interface EmbeddedBackendInfo extends AttachIdentity {
 
 export interface AttachBackendOptions {
   fetchImpl?: typeof fetch;
-  rediscover?: (libraryId: string) => Promise<DiscoveredInstance | null>;
+  dataProxyFetch?: (request: Request) => Promise<Response>;
+  rediscover?: (libraryId: string) => Promise<AttachRediscoveryResult>;
   now?: () => number;
+  sleep?: (delayMs: number) => Promise<void>;
 }
+
+export type AttachRediscoveryResult =
+  | DiscoveredInstance
+  | { errorCode: "STARTING_LEASE" }
+  | null;
 
 export class AttachConnectionError extends Error {
   constructor(
     readonly code: "AUTH_FAILED" | "INCOMPATIBLE" | "CONFLICT" | "UNREACHABLE" | "MALFORMED",
+    readonly status: number | null = null,
   ) {
     super(`attach connection failed: ${code}`);
     this.name = "AttachConnectionError";
@@ -122,7 +135,7 @@ export async function handshakeAttachInstance(
     throw new AttachConnectionError("UNREACHABLE");
   }
   if (response.status === 401 || response.status === 403) {
-    throw new AttachConnectionError("AUTH_FAILED");
+    throw new AttachConnectionError("AUTH_FAILED", response.status);
   }
   if (!response.ok) throw new AttachConnectionError("UNREACHABLE");
   let payload: unknown;
@@ -305,12 +318,14 @@ export class AttachBackendConnection extends BaseBackendConnection {
   #absoluteExpiresAtMs: number;
   #idleExpiresAtMs: number;
   #fetchImpl: typeof fetch;
-  #rediscover?: (libraryId: string) => Promise<DiscoveredInstance | null>;
+  #rediscover?: (libraryId: string) => Promise<AttachRediscoveryResult>;
   #now: () => number;
+  #sleep: (delayMs: number) => Promise<void>;
+  #rediscoveryStartedAtMs: number[] = [];
   #renewTimer: ReturnType<typeof setTimeout> | null = null;
   #recoveryFlight: Promise<void> | null = null;
   #queuedReads = 0;
-  #proxyFetch: ReturnType<typeof createNodeHttpProxyFetch>;
+  #proxyFetch: (request: Request) => Promise<Response>;
 
   constructor(
     instance: DiscoveredInstance,
@@ -325,6 +340,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
     this.#fetchImpl = options.fetchImpl ?? fetch;
     this.#rediscover = options.rediscover;
     this.#now = options.now ?? Date.now;
+    this.#sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
     this.current = {
       mode: "attach",
       status: "attached",
@@ -335,7 +351,7 @@ export class AttachBackendConnection extends BaseBackendConnection {
       errorCode: null,
       conflictKind: null,
     };
-    this.#proxyFetch = createNodeHttpProxyFetch({
+    this.#proxyFetch = options.dataProxyFetch ?? createNodeHttpProxyFetch({
       onResponseBodyFinished: (_request, outcome) => this.#handleBodyOutcome(outcome),
     });
     this.#scheduleRenewal();
@@ -426,8 +442,8 @@ export class AttachBackendConnection extends BaseBackendConnection {
       conflictKind: null,
     });
     if (this.#rediscover && this.current.libraryId) {
-      const next = await this.#rediscover(this.current.libraryId);
-      if (next) this.#instance = next;
+      const next = await this.#runRediscovery();
+      if (isDiscoveredInstance(next)) this.#instance = next;
     }
     await this.#authenticate("authenticating");
   }
@@ -478,30 +494,125 @@ export class AttachBackendConnection extends BaseBackendConnection {
     if (publishPending) this.publish({ status, errorCode: null });
     try {
       const handshake = await handshakeAttachInstance(this.#instance, this.#fetchImpl);
-      if (this.current.libraryId && handshake.libraryId !== this.current.libraryId) {
-        this.publish({ status: "conflict", errorCode: "CONFLICT", conflictKind: "conflict" });
+      this.#applyHandshake(handshake);
+    } catch (error) {
+      if (
+        status === "reauthenticating"
+        && error instanceof AttachConnectionError
+        && error.code === "AUTH_FAILED"
+        && error.status === 401
+      ) {
+        if (!publishPending) this.publish({ status: "reauthenticating", errorCode: null });
+        await this.#recoverRestartedInstance();
         return;
       }
-      this.#sessionToken = handshake.attachSessionToken;
-      this.#absoluteExpiresAtMs = Date.parse(handshake.absoluteExpiresAt);
-      this.#idleExpiresAtMs = Date.parse(handshake.idleExpiresAt);
-      this.publish({
-        status: "attached",
-        libraryId: handshake.libraryId,
-        instanceId: handshake.instanceId,
-        effectiveCapabilities: { ...handshake.effectiveCapabilities },
-        errorCode: null,
-      });
-      this.#scheduleRenewal();
-    } catch (error) {
-      this.#clearRenewal();
-      const code = error instanceof AttachConnectionError ? error.code : "UNREACHABLE";
-      this.publish({
-        status: code === "INCOMPATIBLE" ? "incompatible" : code === "CONFLICT" ? "conflict" : "dead",
-        errorCode: code,
-        conflictKind: code === "CONFLICT" ? "conflict" : null,
-      });
+      this.#publishAuthenticationFailure(error);
     }
+  }
+
+  #applyHandshake(handshake: AttachHandshakeResponse, recovered = false): void {
+    if (this.current.libraryId && handshake.libraryId !== this.current.libraryId) {
+      this.#clearRenewal();
+      this.publish({ status: "conflict", errorCode: "CONFLICT", conflictKind: "conflict" });
+      return;
+    }
+    this.#sessionToken = handshake.attachSessionToken;
+    this.#absoluteExpiresAtMs = Date.parse(handshake.absoluteExpiresAt);
+    this.#idleExpiresAtMs = Date.parse(handshake.idleExpiresAt);
+    this.publish({
+      status: "attached",
+      generation: recovered ? this.current.generation + 1 : this.current.generation,
+      libraryId: handshake.libraryId,
+      instanceId: handshake.instanceId,
+      effectiveCapabilities: { ...handshake.effectiveCapabilities },
+      errorCode: null,
+      conflictKind: null,
+    });
+    this.#scheduleRenewal();
+  }
+
+  #publishAuthenticationFailure(error: unknown): void {
+    this.#clearRenewal();
+    const code = error instanceof AttachConnectionError ? error.code : "UNREACHABLE";
+    this.publish({
+      status: code === "INCOMPATIBLE" ? "incompatible" : code === "CONFLICT" ? "conflict" : "dead",
+      errorCode: code,
+      conflictKind: code === "CONFLICT" ? "conflict" : null,
+    });
+  }
+
+  async #recoverRestartedInstance(): Promise<void> {
+    if (!this.#rediscover || !this.current.libraryId) {
+      this.#publishAuthenticationFailure(new AttachConnectionError("AUTH_FAILED", 401));
+      return;
+    }
+    const recoveryStartedAtMs = this.#now();
+    const deadlineMs = recoveryStartedAtMs + REAUTH_RECOVERY_BUDGET_MS;
+    const previousInstanceId = this.#instance.instanceId;
+    let backoffMs = REAUTH_REDISCOVERY_INITIAL_BACKOFF_MS;
+
+    while (this.#now() < deadlineMs) {
+      const rateLimitDelayMs = this.#rediscoveryRateLimitDelayMs();
+      if (rateLimitDelayMs > 0) {
+        await this.#sleepWithinRecoveryBudget(Math.max(backoffMs, rateLimitDelayMs), deadlineMs);
+        backoffMs = Math.min(backoffMs * 2, REAUTH_REDISCOVERY_MAX_BACKOFF_MS);
+        continue;
+      }
+
+      const discovered = await this.#runRediscovery().catch(() => null);
+      if (isDiscoveredInstance(discovered)) {
+        this.#instance = discovered;
+        try {
+          const handshake = await handshakeAttachInstance(discovered, this.#fetchImpl);
+          this.#applyHandshake(handshake, true);
+          return;
+        } catch (error) {
+          if (
+            error instanceof AttachConnectionError
+            && error.code === "AUTH_FAILED"
+            && error.status === 401
+            && discovered.instanceId !== previousInstanceId
+          ) {
+            await this.#sleepWithinRecoveryBudget(backoffMs, deadlineMs);
+            backoffMs = Math.min(backoffMs * 2, REAUTH_REDISCOVERY_MAX_BACKOFF_MS);
+            continue;
+          }
+          this.#publishAuthenticationFailure(error);
+          return;
+        }
+      }
+
+      await this.#sleepWithinRecoveryBudget(backoffMs, deadlineMs);
+      backoffMs = Math.min(backoffMs * 2, REAUTH_REDISCOVERY_MAX_BACKOFF_MS);
+    }
+
+    this.#publishAuthenticationFailure(new AttachConnectionError("AUTH_FAILED", 401));
+  }
+
+  async #sleepWithinRecoveryBudget(delayMs: number, deadlineMs: number): Promise<void> {
+    const remainingMs = deadlineMs - this.#now();
+    if (remainingMs <= 0) return;
+    await this.#sleep(Math.min(delayMs, remainingMs));
+  }
+
+  #rediscoveryRateLimitDelayMs(): number {
+    const nowMs = this.#now();
+    this.#rediscoveryStartedAtMs = this.#rediscoveryStartedAtMs.filter(
+      (startedAtMs) => nowMs - startedAtMs < REDISCOVERY_RATE_WINDOW_MS,
+    );
+    if (this.#rediscoveryStartedAtMs.length < REDISCOVERY_RATE_LIMIT) return 0;
+    return Math.max(
+      1,
+      this.#rediscoveryStartedAtMs[0]! + REDISCOVERY_RATE_WINDOW_MS - nowMs,
+    );
+  }
+
+  async #runRediscovery(): Promise<AttachRediscoveryResult> {
+    if (!this.#rediscover || !this.current.libraryId) return null;
+    const delayMs = this.#rediscoveryRateLimitDelayMs();
+    if (delayMs > 0) return null;
+    this.#rediscoveryStartedAtMs.push(this.#now());
+    return this.#rediscover(this.current.libraryId);
   }
 
   async #probeIdentity(): Promise<"ok" | "dead" | "conflict"> {
@@ -546,6 +657,12 @@ export class AttachBackendConnection extends BaseBackendConnection {
 
 function isReadMethod(method: string): boolean {
   return method === "GET" || method === "HEAD" || method === "OPTIONS";
+}
+
+function isDiscoveredInstance(
+  result: AttachRediscoveryResult,
+): result is DiscoveredInstance {
+  return result !== null && "instanceId" in result;
 }
 
 export async function connectAttachBackend(

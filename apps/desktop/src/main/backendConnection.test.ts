@@ -58,15 +58,36 @@ const instance: DiscoveredInstance = {
 };
 
 function handshake(): AttachHandshakeResponse {
+  return handshakeFor(instance);
+}
+
+function handshakeFor(
+  target: DiscoveredInstance,
+  sessionTokenCharacter = "b",
+): AttachHandshakeResponse {
   const now = Date.now();
+  const { token: _token, endpoint: _endpoint, source: _source, ...identity } = target;
   return {
-    ...instance,
-    attachSessionToken: `qa_attach_${"b".repeat(64)}`,
+    ...identity,
+    attachSessionToken: `qa_attach_${sessionTokenCharacter.repeat(64)}`,
     absoluteExpiresAt: new Date(now + 12 * 60 * 60 * 1_000).toISOString(),
     idleExpiresAt: new Date(now + 2 * 60 * 60 * 1_000).toISOString(),
     serverCapabilities: { ...DESKTOP_ATTACH_CAPABILITIES },
     effectiveCapabilities: { ...DESKTOP_ATTACH_CAPABILITIES },
   };
+}
+
+function waitForConnectionStatus(
+  connection: AttachBackendConnection,
+  status: ReturnType<AttachBackendConnection["snapshot"]>["status"],
+): Promise<void> {
+  return new Promise((resolve) => {
+    const detach = connection.subscribe((snapshot) => {
+      if (snapshot.status !== status) return;
+      detach();
+      resolve();
+    });
+  });
 }
 
 test("握手只在主进程携带 instance token，并校验完整身份/能力", async () => {
@@ -223,6 +244,207 @@ test("并发 ATTACH_SESSION_EXPIRED 只单飞重握手", async () => {
   connection.dispose();
 });
 
+test("旧 session 401 后握手 401 会发现新实例、自愈 attached 并发出恢复快照", async () => {
+  let rediscoverCount = 0;
+  const restarted: DiscoveredInstance = {
+    ...instance,
+    pid: instance.pid + 1,
+    instanceId: "00000000-0000-4000-8000-000000000021",
+    token: `qa_instance_${"c".repeat(64)}`,
+    startedAt: "2026-01-01T00:01:00.000Z",
+  };
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { code: "ATTACH_SESSION_EXPIRED" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async (_input, init) => (
+      new Headers(init?.headers).get("authorization") === `Bearer ${restarted.token}`
+        ? Response.json(handshakeFor(restarted, "d"))
+        : Response.json({ error: { code: "INSTANCE_AUTH_FAILED" } }, { status: 401 })
+    )) as typeof fetch,
+    rediscover: async () => {
+      rediscoverCount += 1;
+      return restarted;
+    },
+  });
+  const snapshots = [] as ReturnType<AttachBackendConnection["snapshot"]>[];
+  const detach = connection.subscribe((snapshot) => snapshots.push(snapshot));
+  const recovered = waitForConnectionStatus(connection, "attached");
+
+  const response = await connection.forwardDataRequest(
+    new Request("qingagent-data://library/api/v1/home"),
+  );
+  assert.equal(response.status, 401);
+  await recovered;
+
+  assert.equal(rediscoverCount, 1);
+  assert.equal(connection.snapshot().status, "attached");
+  assert.equal(connection.snapshot().instanceId, restarted.instanceId);
+  assert.equal(connection.snapshot().generation, 1);
+  assert.deepEqual(snapshots.map((snapshot) => snapshot.status), [
+    "reauthenticating",
+    "attached",
+  ]);
+  detach();
+  connection.dispose();
+});
+
+test("STARTING_LEASE 窗口按退避重试后连接新实例", async () => {
+  let nowMs = Date.now();
+  const sleeps: number[] = [];
+  let rediscoverCount = 0;
+  const restarted: DiscoveredInstance = {
+    ...instance,
+    pid: instance.pid + 1,
+    instanceId: "00000000-0000-4000-8000-000000000031",
+    token: `qa_instance_${"e".repeat(64)}`,
+    startedAt: "2026-01-01T00:02:00.000Z",
+  };
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { code: "ATTACH_SESSION_EXPIRED" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async (_input, init) => (
+      new Headers(init?.headers).get("authorization") === `Bearer ${restarted.token}`
+        ? Response.json(handshakeFor(restarted, "e"))
+        : new Response(null, { status: 401 })
+    )) as typeof fetch,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      sleeps.push(delayMs);
+      nowMs += delayMs;
+    },
+    rediscover: async () => {
+      rediscoverCount += 1;
+      return rediscoverCount === 1 ? { errorCode: "STARTING_LEASE" } : restarted;
+    },
+  });
+  const recovered = waitForConnectionStatus(connection, "attached");
+
+  await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
+  await recovered;
+
+  assert.equal(rediscoverCount, 2);
+  assert.deepEqual(sleeps, [1_000]);
+  assert.equal(connection.snapshot().instanceId, restarted.instanceId);
+  connection.dispose();
+});
+
+test("rediscover 空结果在约 30 秒预算耗尽后 dead，且 60 秒内最多启动两次发现", async () => {
+  const recoveryEpochMs = Date.now();
+  let nowMs = recoveryEpochMs;
+  const rediscoveryStartedAtMs: number[] = [];
+  const sleeps: number[] = [];
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { code: "ATTACH_SESSION_EXPIRED" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async () => new Response(null, { status: 401 })) as typeof fetch,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      sleeps.push(delayMs);
+      nowMs += delayMs;
+    },
+    rediscover: async () => {
+      rediscoveryStartedAtMs.push(nowMs);
+      return null;
+    },
+  });
+  const died = waitForConnectionStatus(connection, "dead");
+
+  await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
+  await died;
+
+  assert.equal(nowMs - recoveryEpochMs, 30_000);
+  assert.equal(sleeps.reduce((sum, delayMs) => sum + delayMs, 0), 30_000);
+  assert.deepEqual(
+    rediscoveryStartedAtMs.map((startedAtMs) => startedAtMs - recoveryEpochMs),
+    [0, 1_000],
+  );
+  assert.equal(connection.snapshot().errorCode, "AUTH_FAILED");
+  connection.dispose();
+});
+
+test("重握手 403 直接 dead 且不消耗 rediscover 预算", async () => {
+  let rediscoverCount = 0;
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { code: "ATTACH_SESSION_EXPIRED" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async () => new Response(null, { status: 403 })) as typeof fetch,
+    rediscover: async () => {
+      rediscoverCount += 1;
+      return null;
+    },
+  });
+  const died = waitForConnectionStatus(connection, "dead");
+
+  await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
+  await died;
+
+  assert.equal(rediscoverCount, 0);
+  assert.equal(connection.snapshot().errorCode, "AUTH_FAILED");
+  connection.dispose();
+});
+
+test("数据面无 code 的 401 保持透传，不触发重握手或 rediscover", async () => {
+  let handshakeCount = 0;
+  let rediscoverCount = 0;
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { message: "unauthorized" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async () => {
+      handshakeCount += 1;
+      return new Response(null, { status: 401 });
+    }) as typeof fetch,
+    rediscover: async () => {
+      rediscoverCount += 1;
+      return null;
+    },
+  });
+
+  const response = await connection.forwardDataRequest(
+    new Request("qingagent-data://library/api/v1/home"),
+  );
+
+  assert.equal(response.status, 401);
+  assert.equal(connection.snapshot().status, "attached");
+  assert.equal(handshakeCount, 0);
+  assert.equal(rediscoverCount, 0);
+  connection.dispose();
+});
+
+test("rediscover 返回原 instanceId 且重握手仍 401 时直接 dead", async () => {
+  let rediscoverCount = 0;
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { code: "ATTACH_SESSION_EXPIRED" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async () => Response.json(
+      { error: { code: "INSTANCE_AUTH_FAILED" } },
+      { status: 401 },
+    )) as typeof fetch,
+    rediscover: async () => {
+      rediscoverCount += 1;
+      return instance;
+    },
+  });
+  const died = waitForConnectionStatus(connection, "dead");
+
+  await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
+  await died;
+
+  assert.equal(rediscoverCount, 1);
+  connection.dispose();
+});
+
 test("dead 后旧续期 timer 不能复活连接或发起握手", async () => {
   let handshakeCount = 0;
   const { port } = await startServer((request, response) => {
@@ -291,6 +513,17 @@ test("must-enable 任一关闭都进入 INCOMPATIBLE", async () => {
     handshakeAttachInstance(instance, (async () => Response.json(payload)) as typeof fetch),
     (error: unknown) => error instanceof AttachConnectionError && error.code === "INCOMPATIBLE",
   );
+});
+
+test("握手 AUTH_FAILED 保留 401/403 status", async () => {
+  for (const status of [401, 403]) {
+    await assert.rejects(
+      handshakeAttachInstance(instance, (async () => new Response(null, { status })) as typeof fetch),
+      (error: unknown) => error instanceof AttachConnectionError
+        && error.code === "AUTH_FAILED"
+        && error.status === status,
+    );
+  }
 });
 
 test("深链在 embedded/attach 均由最终 BackendConnection 解析", async () => {

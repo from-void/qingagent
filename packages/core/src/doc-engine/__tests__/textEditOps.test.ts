@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aiRunMarkToPmMark,
   getStablePmJson,
+  normalizePmDoc,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
@@ -357,6 +358,61 @@ describe("textEditOps", () => {
         { text: "水", marks: [highlight] },
       ],
     });
+  });
+
+  it("tx-markText-link-remove-normalized: link add 后同参 remove,缺省和显式 title 均可摘除", () => {
+    const cases = [
+      aiRunMarkToPmMark({ type: "link", href: "https://example.com/a" }),
+      aiRunMarkToPmMark({ type: "link", href: "https://example.com/b", title: "示例" }),
+    ];
+
+    for (const link of cases) {
+      const base = doc([paragraph("block-a", "目标")]);
+      const addMatches = findLiteralMatches(collectTopLevelTextBlocks(base), "目标", false);
+      const added = markTextRuns(base, addMatches, link, "add");
+      const removeMatches = findLiteralMatches(collectTopLevelTextBlocks(added), "目标", false);
+      const removed = markTextRuns(added, removeMatches, link, "remove");
+
+      expect(added.content[0]).toMatchObject({
+        content: [{ text: "目标", marks: [link] }],
+      });
+      expect(removed.content[0]).toMatchObject({ content: [{ text: "目标" }] });
+      expect(JSON.stringify(removed)).not.toContain('"type":"link"');
+    }
+  });
+
+  it("tx-markText-add-replaces-same-type: link 换 href、highlight 换色后只保留新 attrs", () => {
+    const oldLink = aiRunMarkToPmMark({ type: "link", href: "https://example.com/a" });
+    const newLink = aiRunMarkToPmMark({ type: "link", href: "https://example.com/b" });
+    const oldHighlight = aiRunMarkToPmMark({ type: "highlight", color: "yellow" });
+    const newHighlight = aiRunMarkToPmMark({ type: "highlight", color: "green" });
+    const base = doc([paragraph("block-a", [
+      text("链接", [oldLink]),
+      text("高亮", [oldHighlight]),
+    ])]);
+
+    const linkMatches = findLiteralMatches(collectTopLevelTextBlocks(base), "链接", false);
+    const relinked = markTextRuns(base, linkMatches, newLink, "add");
+    const highlightMatches = findLiteralMatches(collectTopLevelTextBlocks(relinked), "高亮", false);
+    const settled = normalizePmDoc(markTextRuns(
+      relinked,
+      highlightMatches,
+      newHighlight,
+      "add",
+    ));
+
+    expect(settled.content[0]).toMatchObject({
+      content: [
+        { text: "链接", marks: [newLink] },
+        { text: "高亮", marks: [newHighlight] },
+      ],
+    });
+    const content = (settled.content[0] as Extract<PmBlockNode, { type: "paragraph" }>).content ?? [];
+    for (const node of content) {
+      if (node.type !== "text") continue;
+      const types = (node.marks ?? []).map((mark) => mark.type);
+      expect(new Set(types).size).toBe(types.length);
+    }
   });
 
   it("tx-markText-overlap: mark 区间套和部分 remove 正确切分", () => {

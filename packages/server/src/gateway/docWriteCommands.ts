@@ -43,6 +43,7 @@ import {
   hasCanonicalDoc,
   invalidateDraftStateAfterCanonicalWrite,
   mapAnnotationGroupsThroughSteps,
+  mastra,
   persistSessionMetadata,
   parseAiDocumentFromQingml,
   replaceDraftCandidateDoc,
@@ -163,9 +164,9 @@ export async function applyExternalProposalOps(
         if (matches.length === 0) {
           return {
             ok: false,
-            error: hasCodeBlock
-              ? "代码块不支持行内标记，或文本未命中"
-              : "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true",
+            error: `文本未命中或未唯一命中,请缩小 withinRef 或设 all:true${
+              hasCodeBlock ? "；注:代码块内文本不参与行内标记" : ""
+            }`,
           };
         }
         const markedDoc = markTextRuns(
@@ -178,15 +179,20 @@ export async function applyExternalProposalOps(
           return {
             ok: false,
             error: op.op === "add"
-              ? "标记已存在，无需重复添加；如需替换请先 remove 再 add"
+              ? "标记已存在，无需重复添加；同类型不同属性可直接 add 替换"
               : "标记不存在，无需重复移除；请检查 mark 后重试",
           };
         }
         workingDoc = markedDoc;
-      } catch {
+      } catch (error) {
+        mastra.getLogger().warn("[external-proposal] markText failed", {
+          markType: op.mark.type,
+          operation: op.op,
+          error: error instanceof Error ? error.message : String(error),
+        });
         return {
           ok: false,
-          error: "行内标记应用失败，请重新读取文档并避开代码块后重试",
+          error: "操作失败:行内标记应用异常,请重新读取文档后重试",
         };
       }
       continue;

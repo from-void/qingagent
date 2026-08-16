@@ -250,11 +250,20 @@ function setTextNodeMarks(
 }
 
 function addMark(marks: readonly PmMark[] | undefined, mark: PmMark): PmMark[] | undefined {
-  const current = marks ? [...marks] : [];
-  if (!current.some((candidate) => sameMark(candidate, mark))) {
-    current.push(mark);
+  const next: PmMark[] = [];
+  let replacedSameType = false;
+  for (const candidate of marks ?? []) {
+    if (candidate.type !== mark.type) {
+      next.push(candidate);
+      continue;
+    }
+    if (!replacedSameType) {
+      next.push(mark);
+      replacedSameType = true;
+    }
   }
-  return current.length > 0 ? current : undefined;
+  if (!replacedSameType) next.push(mark);
+  return next.length > 0 ? next : undefined;
 }
 
 function removeMark(marks: readonly PmMark[] | undefined, mark: PmMark): PmMark[] | undefined {
@@ -453,8 +462,12 @@ function markInlineContentBatch(
     const appendPiece = (pieceTo: number): void => {
       if (pieceTo <= pieceFrom) return;
       const value = node.text.slice(pieceFrom - nodeFrom, pieceTo - nodeFrom);
-      const hasMark = (node.marks ?? []).some((candidate) => sameMark(candidate, mark));
-      const pieceChanged = activeRanges > 0 && (op === "add" ? !hasMark : hasMark);
+      const marksOfSameType = (node.marks ?? []).filter(
+        (candidate) => candidate.type === mark.type,
+      );
+      const hasMark = marksOfSameType.some((candidate) => sameMark(candidate, mark));
+      const alreadyAdded = marksOfSameType.length === 1 && hasMark;
+      const pieceChanged = activeRanges > 0 && (op === "add" ? !alreadyAdded : hasMark);
       const marks = pieceChanged
         ? (op === "add" ? addMark(node.marks, mark) : removeMark(node.marks, mark))
         : node.marks ? [...node.marks] : undefined;
@@ -596,6 +609,7 @@ export function replaceTextRuns(
   return normalizePmDoc({ ...doc, content: content as PmBlockNode[] });
 }
 
+/** 无命中或 mark 状态无变化时直接返回入参 doc 的原始引用，供调用方识别幂等操作。 */
 export function markTextRuns(
   doc: PmDoc,
   matches: QuoteMatch[],

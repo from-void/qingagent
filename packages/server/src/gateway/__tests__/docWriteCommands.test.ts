@@ -100,6 +100,22 @@ describe("compileExternalQingmlDraft", () => {
     expect(JSON.stringify(result.doc)).not.toContain('"type":"bold"');
   });
 
+  it("markText link add 后同参 remove 可摘除缺省或显式 title 的链接", async () => {
+    for (const mark of [
+      { type: "link" as const, href: "https://example.com/a" },
+      { type: "link" as const, href: "https://example.com/b", title: "示例" },
+    ]) {
+      const result = await applyExternalProposalOps(markdownToPm("目标"), [
+        { kind: "markText", find: "目标", mark, op: "add" },
+        { kind: "markText", find: "目标", mark, op: "remove" },
+      ]);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(JSON.stringify(result.doc)).not.toContain('"type":"link"');
+    }
+  });
+
   it("markText all:true 应用全部命中", async () => {
     const result = await applyExternalProposalOps(markdownToPm("目标一\n\n目标二"), [{
       kind: "markText",
@@ -168,7 +184,19 @@ describe("compileExternalQingmlDraft", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: "代码块不支持行内标记，或文本未命中",
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true；注:代码块内文本不参与行内标记",
+    });
+  });
+
+  it("markText 含代码块时非 all 多义命中同时返回 all 与代码块自纠说明", async () => {
+    const result = await applyExternalProposalOps(
+      markdownToPm("```ts\nconst 目标 = 1;\n```\n\n段落目标一\n\n段落目标二"),
+      [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true；注:代码块内文本不参与行内标记",
     });
   });
 
@@ -196,7 +224,7 @@ describe("compileExternalQingmlDraft", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: "标记已存在，无需重复添加；如需替换请先 remove 再 add",
+      error: "标记已存在，无需重复添加；同类型不同属性可直接 add 替换",
     });
   });
 
@@ -211,6 +239,20 @@ describe("compileExternalQingmlDraft", () => {
     expect(result).toEqual({
       ok: false,
       error: "标记不存在，无需重复移除；请检查 mark 后重试",
+    });
+  });
+
+  it("markText 异常返回通用操作失败文案,不再单一归因代码块", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "math" } as never,
+      op: "add",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "操作失败:行内标记应用异常,请重新读取文档后重试",
     });
   });
 

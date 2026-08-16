@@ -32,7 +32,11 @@ describe("aiRunMarkToPmMark", () => {
     });
     expect(aiRunMarkToPmMark({ type: "link", href: "#intro" })).toEqual({
       type: "link",
-      attrs: { href: "#intro", title: null },
+      attrs: { href: "#intro" },
+    });
+    expect(aiRunMarkToPmMark({ type: "link", href: "#intro", title: null })).toEqual({
+      type: "link",
+      attrs: { href: "#intro" },
     });
   });
 

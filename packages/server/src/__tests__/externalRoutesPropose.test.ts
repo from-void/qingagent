@@ -310,8 +310,32 @@ describe("external proposals", () => {
     expect(proposed.status).toBe(400);
     expect(await proposed.json()).toMatchObject({
       code: "VALIDATION",
-      error: "代码块不支持行内标记，或文本未命中",
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true；注:代码块内文本不参与行内标记",
     });
+  });
+
+  it("markText 含代码块时非 all 多义命中同时返回 all 与代码块自纠说明", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{
+        kind: "fullDraft",
+        markdown: "```ts\nconst 目标 = 1;\n```\n\n段落目标一\n\n段落目标二",
+      }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    });
+
+    expect(proposed.status).toBe(400);
+    const body = await proposed.json() as { code: string; error: string };
+    expect(body).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("all:true"),
+    });
+    expect(body.error).toContain("代码块内文本不参与行内标记");
   });
 
   it("markText 混合命中代码块与段落时正常标记段落", async () => {
@@ -353,7 +377,7 @@ describe("external proposals", () => {
     expect(proposed.status).toBe(400);
     expect(await proposed.json()).toMatchObject({
       code: "VALIDATION",
-      error: "标记已存在，无需重复添加；如需替换请先 remove 再 add",
+      error: "标记已存在，无需重复添加；同类型不同属性可直接 add 替换",
     });
   });
 

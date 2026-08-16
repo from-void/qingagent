@@ -43,7 +43,7 @@ export type BridgeFrame =
   | { kind: "lexiconEntriesListed"; data: { resourceId: string; entries: LexiconEntrySummary[] } }
   | { kind: "restoreReset"; data: { epoch: number; snapshotSeq: number } }
   | { kind: "sessionRestoreCompleted"; data: { sessionId: string } }
-  | { kind: "sessionMeta"; data: { title: string; sessionId: string } }
+  | { kind: "sessionMeta"; data: { title: string; sessionId: string; notice?: { kind: "title_truncated"; maxChars: number } } }
   | { kind: "chatMessageAdded"; data: { message: ChatMessage; appendSeq?: number } }
   | { kind: "chatMessageAppended"; data: { messageId: string; seq: number; part: MessagePart } }
   | { kind: "actionCardUpdated"; data: { messageId: string; card: Extract<MessagePart, { kind: "actionCard" }>["data"] } }
@@ -71,7 +71,7 @@ export type BridgeFrame =
   | { kind: "annotationPreviewCleared"; data: Record<string, never> }
   | { kind: "docWriteResult"; data:
       | { ok: true; clientMutationId: string; docVersion: number }
-      | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error"; diagnostic?: WriteDraftFailureDiagnostic }
+      | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error"; diagnostic?: WriteDraftFailureDiagnostic; validationMessage?: string }
       | { ok: false; clientMutationId: string; conflict: { expectedDocumentSnapshot: number; actualDocumentSnapshot: number } } }
   | {
       kind: "docStateChanged";

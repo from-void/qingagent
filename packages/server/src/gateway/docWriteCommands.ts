@@ -7,10 +7,11 @@ import type {
 } from "@qingagent/contract-ts";
 import {
   compileAiDocumentToPm,
+  applyBlockEdits,
   assertUniquePmBlockIds,
   markdownToPm,
   normalizePmDoc,
-  pmToMarkdown,
+  pmToMarkdownWithLineMap,
   qingmlTagSkeleton,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -40,8 +41,10 @@ import {
   replaceTextRuns,
   settleDraftCandidate,
   transitionDocState,
+  MAX_TITLE_CHARS,
+  truncateTitleWithNotice,
 } from "./bridgeCore";
-import { persistMappedAnnotationGroups } from "@qingagent/db";
+import { documentDraftRepo, persistMappedAnnotationGroups } from "@qingagent/db";
 import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { USER_VERSION_WINDOW_MS } from "./docWriteConfig";
@@ -51,6 +54,7 @@ function docWriteReason(
   clientMutationId: string,
   reason: "agent_busy" | "not_editable" | "not_found" | "validation_error",
   diagnostic?: WriteDraftFailureDiagnostic,
+  validationMessage?: string,
 ): BridgeFrame {
   return {
     kind: "docWriteResult",
@@ -59,12 +63,13 @@ function docWriteReason(
       clientMutationId,
       reason,
       ...(diagnostic ? { diagnostic } : {}),
+      ...(validationMessage ? { validationMessage } : {}),
     },
   };
 }
 
 type ExternalQingmlDraftResult =
-  | { ok: true; doc: PmDoc; title: string | null }
+  | { ok: true; doc: PmDoc; title: string | null; titleTruncated: boolean }
   | { ok: false; diagnostic: WriteDraftFailureDiagnostic };
 
 export function compileExternalQingmlDraft(
@@ -85,12 +90,16 @@ export function compileExternalQingmlDraft(
         },
       };
     }
+    const titleResult = truncateTitleWithNotice(
+      typeof parsed.document.title === "string" && parsed.document.title.trim()
+        ? parsed.document.title
+        : null,
+    );
     return {
       ok: true,
       doc: compiled.doc,
-      title: typeof parsed.document.title === "string" && parsed.document.title.trim()
-        ? parsed.document.title.trim()
-        : null,
+      title: titleResult.title,
+      titleTruncated: titleResult.truncated,
     };
   } catch (error) {
     if (error instanceof AiDocumentParseError) {
@@ -147,16 +156,30 @@ export function applyExternalProposalOps(
     }
     if (op.kind === "insertAfterLine") {
       const insertDoc = normalizePmDoc(markdownToPm(op.markdown));
-      const index = blockIndexForMarkdownLine(workingDoc, op.line);
-      if (index < 0) return { ok: false, error: "行号超出范围" };
+      const location = blockIndexForMarkdownLine(workingDoc, op.line);
+      if (!location.ok) return location;
       workingDoc = {
         ...workingDoc,
         content: [
-          ...workingDoc.content.slice(0, index + 1),
+          ...workingDoc.content.slice(0, location.index + 1),
           ...insertDoc.content,
-          ...workingDoc.content.slice(index + 1),
+          ...workingDoc.content.slice(location.index + 1),
         ],
       };
+      continue;
+    }
+    if (op.kind === "deleteBlock" || op.kind === "deleteListItem") {
+      const edited = applyBlockEdits(workingDoc, [{
+        action: op.kind,
+        ref: op.blockId,
+      }]);
+      if (!edited.ok || !edited.doc) {
+        return {
+          ok: false,
+          error: edited.error ?? `结构操作 ${op.kind} 失败`,
+        };
+      }
+      workingDoc = edited.doc;
       continue;
     }
     if (op.kind === "setTitle") continue;
@@ -170,23 +193,68 @@ export function applyExternalProposalOps(
   return { ok: true, doc: workingDoc };
 }
 
-function blockIndexForMarkdownLine(doc: PmDoc, line: number): number {
-  if (!hasCanonicalDoc({ doc })) return -1;
-  let consumedLines = 0;
-  for (let index = 0; index < doc.content.length; index += 1) {
-    const blockDoc = normalizePmDoc({ ...doc, content: [doc.content[index]!] });
-    const blockLineCount = countMarkdownLines(pmToMarkdown(blockDoc));
-    const trailingBlankLineCount = index < doc.content.length - 1 ? 1 : 0;
-    const blockEndLine = consumedLines + blockLineCount + trailingBlankLineCount;
-    if (line <= blockEndLine) return index;
-    consumedLines = blockEndLine;
+function blockIndexForMarkdownLine(
+  doc: PmDoc,
+  line: number,
+): { ok: true; index: number } | { ok: false; error: string } {
+  const staleHint = "同批前序操作会使后续行号过期；请重读文档后拆批提交";
+  if (!hasCanonicalDoc({ doc })) return { ok: false, error: `文档为空，无法定位行号；${staleHint}` };
+  const serialized = pmToMarkdownWithLineMap(doc);
+  const span = serialized.blocks.find((item) => line >= item.startLine && line <= item.endLine);
+  if (!span) {
+    return { ok: false, error: `第 ${line} 行超出当前 Markdown 正文范围；${staleHint}` };
   }
-  return line <= consumedLines + 1 ? doc.content.length - 1 : -1;
+  if (span.contentEndLine > span.startLine && line < span.contentEndLine) {
+    return {
+      ok: false,
+      error: `第 ${line} 行位于多行 ${span.blockType} 块 ${span.blockId} 内部，不能使用 insertAfterLine；请改用 blockId 或内容锚点。${staleHint}`,
+    };
+  }
+  return { ok: true, index: span.blockIndex };
 }
 
-function countMarkdownLines(markdown: string): number {
-  if (markdown.length === 0) return 1;
-  return markdown.split(/\r?\n/).length;
+const EXTERNAL_OP_SOURCE_PREFIX = "external-op:";
+const MAX_EXTERNAL_STRUCTURAL_OP_RECORDS = 64;
+
+interface ExternalStructuralOpIdentity {
+  opId: string;
+  digest: string;
+  source: string;
+}
+
+function externalStructuralOpIdentity(
+  data: Extract<Command, { kind: "externalPropose" }>["data"],
+): ExternalStructuralOpIdentity | null {
+  const hasStructuralOp = data.ops.some(
+    (op) => op.kind === "deleteBlock" || op.kind === "deleteListItem",
+  );
+  if (!hasStructuralOp || !data.opId) return null;
+  const digest = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ expectedDocVersion: data.expectedDocVersion, ops: data.ops }))
+    .digest("hex");
+  return {
+    opId: data.opId,
+    digest,
+    source: `${EXTERNAL_OP_SOURCE_PREFIX}${encodeURIComponent(data.opId)}:${digest}`,
+  };
+}
+
+function externalOpSourcePrefix(opId: string): string {
+  return `${EXTERNAL_OP_SOURCE_PREFIX}${encodeURIComponent(opId)}:`;
+}
+
+function rememberExternalStructuralOp(
+  records: Map<string, string>,
+  identity: ExternalStructuralOpIdentity,
+): void {
+  records.delete(identity.opId);
+  while (records.size >= MAX_EXTERNAL_STRUCTURAL_OP_RECORDS) {
+    const oldest = records.keys().next().value as string | undefined;
+    if (!oldest) break;
+    records.delete(oldest);
+  }
+  records.set(identity.opId, identity.digest);
 }
 
 type DocWriteCommand = Extract<Command, { kind: "updateDoc" | "externalPropose" }>;
@@ -385,13 +453,89 @@ export async function* handleDocWriteCommand(
         return;
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      const structuralOpIdentity = externalStructuralOpIdentity(command.data);
+      const structuralOpSource = structuralOpIdentity?.source ?? null;
+      const firstOp = command.data.ops[0];
+      const fullDraftOp = firstOp?.kind === "fullDraft" ? firstOp : null;
+      const qingmlDraftOp = firstOp?.kind === "qingmlDraft" ? firstOp : null;
+      const titleOp = command.data.ops.find((op) => op.kind === "setTitle");
+      const titleResult = truncateTitleWithNotice(titleOp?.title ?? null);
 
       if (deriveAgentBusy(session) || deriveActiveOverlay(session) !== null) {
         yield docWriteReason(clientMutationId, "agent_busy");
         return;
       }
       const contentState = deriveContentState(session);
+      if (structuralOpIdentity) {
+        const recordedDigest = session.externalStructuralOpDigests.get(
+          structuralOpIdentity.opId,
+        );
+        if (recordedDigest && recordedDigest !== structuralOpIdentity.digest) {
+          yield docWriteReason(
+            clientMutationId,
+            "validation_error",
+            undefined,
+            "opId 已用于另一份操作内容；请为新操作生成新的 opId",
+          );
+          return;
+        }
+        if (recordedDigest === structuralOpIdentity.digest && contentState.kind !== "pendingReview") {
+          yield docWriteReason(
+            clientMutationId,
+            "validation_error",
+            undefined,
+            "该 opId 对应的操作已结束审阅，不能重放；如需再次操作，请重读文档并生成新的 opId",
+          );
+          return;
+        }
+      }
       if (contentState.kind === "pendingReview") {
+        if (structuralOpIdentity) {
+          const pending = await documentDraftRepo.load(session.docId).catch(() => null);
+          if (pending?.sourceToolCallId === structuralOpSource && session.suggestions.size > 0) {
+            if (titleResult.truncated) {
+              yield {
+                kind: "sessionMeta",
+                data: {
+                  sessionId: session.sessionId,
+                  title: session.title,
+                  notice: { kind: "title_truncated", maxChars: MAX_TITLE_CHARS },
+                },
+              };
+            }
+            yield {
+              kind: "docDiffReady",
+              data: {
+                baseVersion: session.suggestionBaseVersion ?? session.docVersion,
+                suggestions: Array.from(session.suggestions.values(), (record) => record.suggestion),
+                previewDoc: session.suggestionBaseDoc ?? session.doc ?? undefined,
+                editedDoc: pending.draftPmDoc,
+              },
+            };
+            return;
+          }
+          const recordedDigest = session.externalStructuralOpDigests.get(
+            structuralOpIdentity.opId,
+          );
+          if (recordedDigest === structuralOpIdentity.digest) {
+            yield docWriteReason(
+              clientMutationId,
+              "validation_error",
+              undefined,
+              "该 opId 对应的操作已结束审阅，不能重放；如需再次操作，请重读文档并生成新的 opId",
+            );
+            return;
+          }
+          if (pending?.sourceToolCallId?.startsWith(externalOpSourcePrefix(structuralOpIdentity.opId))) {
+            yield docWriteReason(
+              clientMutationId,
+              "validation_error",
+              undefined,
+              "opId 已用于另一份操作内容；请为新操作生成新的 opId",
+            );
+            return;
+          }
+        }
         yield docWriteReason(clientMutationId, "not_editable");
         return;
       }
@@ -410,10 +554,6 @@ export async function* handleDocWriteCommand(
         return;
       }
 
-      const firstOp = command.data.ops[0];
-      const fullDraftOp = firstOp?.kind === "fullDraft" ? firstOp : null;
-      const qingmlDraftOp = firstOp?.kind === "qingmlDraft" ? firstOp : null;
-      const titleOp = command.data.ops.find((op) => op.kind === "setTitle");
       const qingmlDraft = qingmlDraftOp
         ? compileExternalQingmlDraft(qingmlDraftOp.qingml)
         : null;
@@ -427,11 +567,23 @@ export async function* handleDocWriteCommand(
           yield docWriteReason(clientMutationId, "validation_error");
           return;
         }
-        const titleChanged = titleOp.title !== session.title;
+        const nextTitle = titleResult.title!;
+        const titleChanged = nextTitle !== session.title;
         const pinChanged = !session.titlePinned;
         if (titleChanged) {
-          session.title = titleOp.title;
-          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
+          session.title = nextTitle;
+        }
+        if (titleChanged || titleResult.truncated) {
+          yield {
+            kind: "sessionMeta",
+            data: {
+              sessionId: session.sessionId,
+              title: session.title,
+              ...(titleResult.truncated
+                ? { notice: { kind: "title_truncated" as const, maxChars: MAX_TITLE_CHARS } }
+                : {}),
+            },
+          };
         }
         session.titlePinned = true;
         if (titleChanged || pinChanged) {
@@ -496,9 +648,18 @@ export async function* handleDocWriteCommand(
         const nextTitle = session.titlePinned
           ? null
           : submittedTitle ?? deriveTitleFromDoc(session.doc);
-        if (nextTitle && nextTitle !== session.title) {
+        if (nextTitle && (nextTitle !== session.title || qingmlDraft?.titleTruncated)) {
           session.title = nextTitle;
-          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
+          yield {
+            kind: "sessionMeta",
+            data: {
+              sessionId: session.sessionId,
+              title: session.title,
+              ...(qingmlDraft?.titleTruncated
+                ? { notice: { kind: "title_truncated" as const, maxChars: MAX_TITLE_CHARS } }
+                : {}),
+            },
+          };
         }
         await persistSessionMetadata(session);
         yield* emitProjectedDocState(session, qingmlDraft ? "external_qingml_draft" : "external_full_draft");
@@ -511,7 +672,8 @@ export async function* handleDocWriteCommand(
         return;
       }
 
-      const baseCandidate = ensureDraftCandidateDoc(session);
+      // 先在会话外纯计算整批；任一 op 失败时不能连空候选壳都留进 session。
+      const baseCandidate = session.docDraftCandidateDoc ?? clonePmDoc(currentPmDoc(session));
       let workingDoc: PmDoc;
       if (qingmlDraft) {
         workingDoc = clonePmDoc(qingmlDraft.doc);
@@ -519,11 +681,12 @@ export async function* handleDocWriteCommand(
         workingDoc = baseCandidate;
         const applied = applyExternalProposalOps(workingDoc, contentOps);
         if (!applied.ok) {
-          yield docWriteReason(clientMutationId, "validation_error");
+          yield docWriteReason(clientMutationId, "validation_error", undefined, applied.error);
           return;
         }
         workingDoc = applied.doc;
       }
+      ensureDraftCandidateDoc(session);
       replaceDraftCandidateDoc(
         session,
         workingDoc,
@@ -544,16 +707,6 @@ export async function* handleDocWriteCommand(
         chips: null,
       };
 
-      if (titleOp) {
-        const titleChanged = titleOp.title !== session.title;
-        const pinChanged = !session.titlePinned;
-        if (titleChanged) {
-          session.title = titleOp.title;
-          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
-        }
-        session.titlePinned = true;
-        if (titleChanged || pinChanged) await persistSessionMetadata(session);
-      }
       const settled = yield* settleDraftCandidate({
         state: session,
         agentMessageId,
@@ -561,19 +714,57 @@ export async function* handleDocWriteCommand(
         runId,
         wholeDocument: qingmlDraft !== null,
         ignoreBlockIdentityOnlyReplacements: true,
+        sourceToolCallId: structuralOpSource,
       });
       if (settled.hunkCount <= 0) {
         yield docWriteReason(clientMutationId, "validation_error");
         return;
       }
+      let metadataChanged = false;
+      if (structuralOpIdentity) {
+        rememberExternalStructuralOp(session.externalStructuralOpDigests, structuralOpIdentity);
+        metadataChanged = true;
+      }
+      if (titleOp) {
+        const nextTitle = titleResult.title!;
+        const titleChanged = nextTitle !== session.title;
+        const pinChanged = !session.titlePinned;
+        if (titleChanged) {
+          session.title = nextTitle;
+        }
+        if (titleChanged || titleResult.truncated) {
+          yield {
+            kind: "sessionMeta",
+            data: {
+              sessionId: session.sessionId,
+              title: session.title,
+              ...(titleResult.truncated
+                ? { notice: { kind: "title_truncated" as const, maxChars: MAX_TITLE_CHARS } }
+                : {}),
+            },
+          };
+        }
+        session.titlePinned = true;
+        metadataChanged ||= titleChanged || pinChanged;
+      }
       if (qingmlDraft && !session.titlePinned) {
         const nextTitle = qingmlDraft.title ?? deriveTitleFromDoc(qingmlDraft.doc);
-        if (nextTitle && nextTitle !== session.title) {
+        if (nextTitle && (nextTitle !== session.title || qingmlDraft.titleTruncated)) {
           session.title = nextTitle;
-          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
-          await persistSessionMetadata(session);
+          yield {
+            kind: "sessionMeta",
+            data: {
+              sessionId: session.sessionId,
+              title: session.title,
+              ...(qingmlDraft.titleTruncated
+                ? { notice: { kind: "title_truncated" as const, maxChars: MAX_TITLE_CHARS } }
+                : {}),
+            },
+          };
+          metadataChanged = true;
         }
       }
+      if (metadataChanged) await persistSessionMetadata(session);
       agentMessage.parts.push({
         kind: "patchSummary",
         data: { count: settled.hunkCount, hunkIds: Array.from(session.suggestions.keys()) },

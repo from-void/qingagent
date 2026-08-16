@@ -187,6 +187,8 @@ export interface QingagentThreadMetadata {
   selectedSkillsHadSelection?: boolean;
   suggestions?: SuggestionRecordJson[];
   patchVerdicts?: Record<string, "accepted" | "rejected">;
+  /** 外部结构操作幂等记录；拒审清理 pending draft 后仍保留。 */
+  externalStructuralOpDigests?: Record<string, string>;
   /** Fallback conversation history if Mastra memory recall is unavailable. */
   messages?: CoreMessage[];
   /** Frozen Working Memory snapshot for this session. Null is meaningful when loaded with no WM. */
@@ -264,6 +266,16 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+function deserializeExternalStructuralOpDigests(value: unknown): Map<string, string> {
+  const restored = new Map<string, string>();
+  if (!isRecord(value)) return restored;
+  for (const [opId, digest] of Object.entries(value)) {
+    if (!opId || typeof digest !== "string" || !/^[0-9a-f]{64}$/u.test(digest)) continue;
+    restored.set(opId, digest);
+  }
+  return restored;
 }
 
 function deserializeConfirmAuditDegraded(value: unknown): ConfirmAuditDegradedMarker | null {
@@ -643,6 +655,7 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
     selectedSkillsHadSelection: state.selectedSkillsHadSelection,
     suggestions: serializeSuggestions(state.suggestions),
     patchVerdicts: serializePatchVerdicts(state.patchVerdicts),
+    externalStructuralOpDigests: Object.fromEntries(state.externalStructuralOpDigests),
     messages: state.messages,
     workingMemorySnapshot: state._workingMemorySnapshot ?? null,
     workingMemorySnapshotLoaded:
@@ -2044,6 +2057,9 @@ export async function loadSessionFromThread(
     _draftMutationRevision: 0,
     suggestionBaseDoc: meta.doc ?? null,
     suggestionBaseVersion: meta.docVersion ?? null,
+    externalStructuralOpDigests: deserializeExternalStructuralOpDigests(
+      meta.externalStructuralOpDigests,
+    ),
     seqCounters: new Map(),
     materials: deserializeMaterials(meta.materials ?? []),
     folderSources: new Map(restoredFolderSources.map((source) => [source.id, source])),

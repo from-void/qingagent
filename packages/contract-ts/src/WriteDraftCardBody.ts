@@ -24,6 +24,8 @@ export type WriteDraftCardBody = {
   phase: "writing" | "revising" | "finalizing" | "done" | "failed";
   /** 已写正文可见字符数(流式期间为实时估计,结束后为最终值)。 */
   charCount: number;
+  /** 生成流中为 true；完成卡的数字一律是引擎 canonical 终态值。 */
+  charCountApproximate?: boolean;
   /** 正文滚动摘录(最近写出的一小段),done/failed 后为 null。 */
   excerpt: string | null;
   /** 仅 failed 进度帧可带的脱敏诊断；前端不展示为用户错误文案。 */

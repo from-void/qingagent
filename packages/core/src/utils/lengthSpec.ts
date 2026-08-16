@@ -136,6 +136,36 @@ export function countByUnit(text: string, unit: LengthUnit): number {
   return unit === "noPunct" ? countCharsNoPunct(text) : countVisibleChars(text);
 }
 
+/**
+ * 把用户指定的计数 unit 换算成终态 canonical（含标点）口径。
+ *
+ * 换算比来自同一份候选正文，因此 `canonicalCount` 对换算后规格的验收结论，
+ * 与原 unit 对 `unitCount` 的语义等价；终态展示的数字和区间也不会再混用两把尺。
+ */
+export function convertLengthSpecToCanonical(
+  spec: LengthSpec,
+  unitCount: number,
+  canonicalCount: number,
+): LengthSpec {
+  if (spec.unit === "withPunct") return spec;
+
+  const scale = unitCount > 0
+    ? canonicalCount / unitCount
+    : canonicalCount > 0
+      ? canonicalCount + 1
+      : 1;
+  const convert = (value: number): number => Math.round(value * scale);
+  return {
+    ...spec,
+    target: convert(spec.target),
+    min: convert(spec.min),
+    ...(typeof spec.max === "number" ? { max: convert(spec.max) } : {}),
+    ...(typeof spec.softMax === "number" ? { softMax: convert(spec.softMax) } : {}),
+    workingTarget: convert(spec.workingTarget),
+    unit: "withPunct",
+  };
+}
+
 export function withinSpec(count: number, spec: LengthSpec): boolean {
   switch (spec.bound) {
     case "min":

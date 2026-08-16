@@ -83,10 +83,10 @@ describe("external API v1 golden contract", () => {
   it("GET /sessions/:id/doc", async () => {
     const { sessionId } = await createSession();
     const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?lines=1`);
-    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "markdownWithLineNumbers", "title"]);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "charCount", "markdown", "markdownWithLineNumbers", "title"]);
     expect(body).toEqual({
       sessionId, docVersion: 0, state: "empty", agentBusy: false,
-      markdown: "", markdownWithLineNumbers: "   1 | ", title: null,
+      charCount: 0, markdown: "", markdownWithLineNumbers: "   1 | ", title: null,
     });
   });
 
@@ -98,12 +98,13 @@ describe("external API v1 golden contract", () => {
     });
 
     const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
-    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "qingml", "title"]);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "charCount", "markdown", "qingml", "title"]);
     expect(body).toEqual({
       sessionId,
       docVersion: 1,
       state: "editing",
       agentBusy: false,
+      charCount: 7,
       markdown: expect.stringContaining("正文标题"),
       qingml: "<h1>正文标题</h1><p>正文。</p>",
       title: "Golden QingML",
@@ -121,6 +122,7 @@ describe("external API v1 golden contract", () => {
       "contentHash",
       "state",
       "agentBusy",
+      "charCount",
       "title",
       "ts",
       "pmDoc",
@@ -131,6 +133,7 @@ describe("external API v1 golden contract", () => {
       contentHash: expect.stringMatching(/^pmv1-/),
       state: "empty",
       agentBusy: false,
+      charCount: 0,
       title: null,
       ts: expect.any(String),
       pmDoc: { type: "doc", attrs: { schemaVersion: 1 }, content: [] },
@@ -161,25 +164,27 @@ describe("external API v1 golden contract", () => {
       request,
     );
     if (!body.ok) throw new Error("expected direct save success");
-    exactKeys(body, ["ok", "clientMutationId", "docVersion", "contentHash", "ts"]);
+    exactKeys(body, ["ok", "clientMutationId", "docVersion", "contentHash", "ts", "charCount"]);
     expect(body).toEqual({
       ok: true,
       clientMutationId: request.clientMutationId,
       docVersion: 1,
       contentHash: expect.stringMatching(/^pmv1-/),
       ts: expect.any(String),
+      charCount: 10,
     });
   });
 
   it("GET 空文档 format=qingml 返回空 QingML", async () => {
     const { sessionId } = await createSession();
     const body = await getJson<ExternalDocReadResponse>(`/sessions/${sessionId}/doc?format=qingml`);
-    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "markdown", "qingml", "title"]);
+    exactKeys(body, ["sessionId", "docVersion", "state", "agentBusy", "charCount", "markdown", "qingml", "title"]);
     expect(body).toEqual({
       sessionId,
       docVersion: 0,
       state: "empty",
       agentBusy: false,
+      charCount: 0,
       markdown: "",
       qingml: "",
       title: null,
@@ -306,8 +311,8 @@ describe("external API v1 golden contract", () => {
     });
     expect(body.status).toBe("committed");
     if (body.status !== "committed") throw new Error("expected committed proposal");
-    exactKeys(body, ["status", "docVersion", "seq"]);
-    expect(body).toEqual({ status: "committed", docVersion: 1, seq: expect.any(Number) });
+    exactKeys(body, ["status", "docVersion", "charCount", "seq"]);
+    expect(body).toEqual({ status: "committed", docVersion: 1, charCount: 6, seq: expect.any(Number) });
   });
 
   it("POST /sessions/:id/proposals 的 VALIDATION 诊断体锁定公开字段", async () => {

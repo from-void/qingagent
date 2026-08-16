@@ -1,4 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
+import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 import { pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { runSideChannel } from "../llm/sideChannel.js";
 import type { SessionState } from "./sessionState.js";
@@ -10,7 +11,12 @@ import { deriveTitleFromDoc } from "./title.js";
 const MAX_TITLE_SOURCE_CHARS = 1_600;
 const MAX_TITLE_OUTLINE_HEADINGS = 15;
 const MAX_TITLE_LEAD_CHARS = 500;
-const MAX_TITLE_CHARS = 48;
+export const MAX_TITLE_CHARS = 48;
+
+export interface GeneratedTitleResult {
+  title: string | null;
+  truncated: boolean;
+}
 
 /**
  * 组装起标题用的源文本:优先「各级标题构成的大纲 + 开头引子」,而不是正文前 N 千字。
@@ -57,21 +63,29 @@ export async function generateTitleAfterFirstDraft(
   state: SessionState,
   requestContext?: RequestContext,
 ): Promise<string | null> {
-  if (state.titlePinned) return null;
-  if (state.branchTitleGenerated === true) return null;
+  return (await generateTitleAfterFirstDraftWithNotice(state, requestContext)).title;
+}
+
+/** 与旧标题 API 同源，但同时把截断事实交给响应层显式告知调用方。 */
+export async function generateTitleAfterFirstDraftWithNotice(
+  state: SessionState,
+  requestContext?: RequestContext,
+): Promise<GeneratedTitleResult> {
+  if (state.titlePinned) return { title: null, truncated: false };
+  if (state.branchTitleGenerated === true) return { title: null, truncated: false };
   const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
-  if (abortSignal?.aborted) return null;
+  if (abortSignal?.aborted) return { title: null, truncated: false };
   const fallbackTitle = deriveTitleFromDoc(state.doc);
   if (!state.doc) {
     state.branchTitleGenerated = true;
-    return fallbackTitle;
+    return truncateTitleWithNotice(fallbackTitle);
   }
   const documentText = buildTitleSource(state.doc);
   if (!documentText) {
     // 连图表源码/图注都没有(空文档或纯装饰),没有任何依据可起标题 —— 直接用 H1 兜底,
     // 不浪费一次模型请求。
     state.branchTitleGenerated = true;
-    return fallbackTitle;
+    return truncateTitleWithNotice(fallbackTitle);
   }
   let result;
   try {
@@ -87,25 +101,42 @@ export async function generateTitleAfterFirstDraft(
 ${JSON.stringify(documentText)}
 
 只输出标题本身，不要引号、书名号、Markdown 标记、解释或句号；不超过 ${MAX_TITLE_CHARS} 个字符。`,
-      parse: normalizeGeneratedTitle,
-      fallback: async () => fallbackTitle,
+      parse: (raw) => {
+        const normalized = normalizeGeneratedTitleWithNotice(raw);
+        return normalized.title ? normalized : null;
+      },
+      fallback: async () => truncateTitleWithNotice(fallbackTitle),
     });
   } catch (error) {
-    if (abortSignal?.aborted || (error instanceof Error && error.name === "AbortError")) return null;
+    if (abortSignal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      return { title: null, truncated: false };
+    }
     throw error;
   }
-  if (abortSignal?.aborted) return null;
+  if (abortSignal?.aborted) return { title: null, truncated: false };
   state.branchTitleGenerated = true;
   return result.value;
 }
 
 export function normalizeGeneratedTitle(raw: string): string | null {
+  return normalizeGeneratedTitleWithNotice(raw).title;
+}
+
+export function normalizeGeneratedTitleWithNotice(raw: string): GeneratedTitleResult {
   const firstLine = raw.trim().split(/\r?\n/, 1)[0] ?? "";
-  const title = firstLine
+  const normalized = firstLine
     .replace(/^#{1,6}\s*/, "")
     .replace(/^[《“"']+|[》”"'。]+$/g, "")
-    .trim()
-    .slice(0, MAX_TITLE_CHARS)
     .trim();
-  return title || null;
+  return truncateTitleWithNotice(normalized);
+}
+
+export function truncateTitleWithNotice(raw: string | null): GeneratedTitleResult {
+  const normalized = raw?.trim() ?? "";
+  if (!normalized) return { title: null, truncated: false };
+  const truncated = countGraphemes(normalized) > MAX_TITLE_CHARS;
+  return {
+    title: truncateGraphemes(normalized, MAX_TITLE_CHARS).trim() || null,
+    truncated,
+  };
 }

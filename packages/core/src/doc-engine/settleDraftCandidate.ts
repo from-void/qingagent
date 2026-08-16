@@ -40,7 +40,7 @@ import {
   recordStateChangeSpan,
 } from "../agent-run/agentSpans.js";
 import { deriveTitleFromDoc } from "../session/title.js";
-import { generateTitleAfterFirstDraft } from "../session/titleGeneration.js";
+import { generateTitleAfterFirstDraftWithNotice } from "../session/titleGeneration.js";
 import {
   buildAnnotationMappingSteps,
   mapAnnotationGroupsThroughSteps,
@@ -64,6 +64,8 @@ export async function* settleDraftCandidate(opts: {
   emitGenerationEvent?: boolean;
   /** 仅外部提案编译开启：忽略全文重编译造成的纯 blockId replace。 */
   ignoreBlockIdentityOnlyReplacements?: boolean;
+  /** 外部结构操作的持久化幂等身份；随 pending draft 一起保存。 */
+  sourceToolCallId?: string | null;
 }): AsyncGenerator<BridgeFrame, { hunkCount: number; docWritten: boolean }> {
   const {
     state,
@@ -76,6 +78,7 @@ export async function* settleDraftCandidate(opts: {
     generationLastSeq = 0,
     emitGenerationEvent = false,
     ignoreBlockIdentityOnlyReplacements = false,
+    sourceToolCallId = null,
   } = opts;
   {
     const draftDoc = state.docDraftCandidateDoc;
@@ -132,6 +135,8 @@ export async function* settleDraftCandidate(opts: {
               batchId,
               reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
               groupMode: suggestions[0]?.groupMode ?? null,
+              sourceStreamId: streamId,
+              sourceToolCallId,
             },
             suggestions,
           });
@@ -494,16 +499,23 @@ export async function* settleDraftCandidate(opts: {
     }
 
     const isFirstSuccessfulDraft = previousDocVersion === 0;
-    const nextTitle = state.titlePinned
-      ? null
+    const generatedTitle = state.titlePinned
+      ? { title: null, truncated: false }
       : isFirstSuccessfulDraft
-        ? await generateTitleAfterFirstDraft(state, requestContext)
-        : deriveTitleFromDoc(state.doc);
+        ? await generateTitleAfterFirstDraftWithNotice(state, requestContext)
+        : { title: deriveTitleFromDoc(state.doc), truncated: false };
+    const nextTitle = generatedTitle.title;
     if (nextTitle) {
       state.title = nextTitle;
       yield {
         kind: "sessionMeta",
-        data: { sessionId: state.sessionId, title: state.title },
+        data: {
+          sessionId: state.sessionId,
+          title: state.title,
+          ...(generatedTitle.truncated
+            ? { notice: { kind: "title_truncated" as const, maxChars: 48 } }
+            : {}),
+        },
       };
     }
     recordSettleResultSpan(state, {

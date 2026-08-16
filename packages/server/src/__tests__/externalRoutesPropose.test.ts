@@ -346,7 +346,7 @@ describe("external proposals", () => {
     });
   });
 
-  it("setTitle 与正文 no-op 同批时标题仍落库，正文按空提案拒绝", async () => {
+  it("setTitle 与正文 no-op 同批时整批拒绝，标题也不越过 all-or-nothing 落库", async () => {
     const sessionId = await createSession();
     await propose(sessionId, {
       expectedDocVersion: 0,
@@ -365,8 +365,8 @@ describe("external proposals", () => {
     expect(await proposed.json()).toMatchObject({ code: "VALIDATION" });
     const session = await getOrRestoreSession(sessionId);
     expect(session).toMatchObject({
-      title: "独立落库标题",
-      titlePinned: true,
+      title: "",
+      titlePinned: false,
       docVersion: 1,
       docState: { kind: "editing" },
     });
@@ -466,6 +466,156 @@ describe("external proposals", () => {
     expect(candidateIds).toEqual(beforeIds);
     expect([...session!.suggestions.values()].map((record) => record.diffHunk?.afterText))
       .toEqual(["插入段。"]);
+  });
+
+  it("结构操作失败文案不向外部调用方泄漏内部工具名", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "原正文。" }],
+    });
+
+    const response = await propose(sessionId, {
+      expectedDocVersion: 1,
+      opId: "missing-block",
+      ops: [{ kind: "deleteBlock", blockId: "missing-block-id" }],
+    });
+
+    expect(response.status).toBe(400);
+    const body = await response.json() as { error: string };
+    expect(body.error).toContain("请重新读取文档并使用最新 blockId");
+    expect(body.error).not.toContain("readDraft");
+  });
+
+  it("RC1/r18c：按 blockId 原子删除整节，不留下空 h2/h3/p，并按 opId 回放原审阅批次", async () => {
+    const sessionId = await createSession();
+    const sectionMarkdown = [
+      "## 第一节", "第一节正文",
+      "## 第二节", "第二节正文",
+      "## 第三节", "### 第三节甲", "第三节甲正文", "### 第三节乙", "第三节乙正文",
+      "## 第四节", "第四节正文",
+      "## 第五节", "第五节正文",
+    ].join("\n\n");
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: sectionMarkdown }],
+    });
+    const canonical = await getOrRestoreSession(sessionId);
+    const targetIds = canonical!.doc!.content.slice(4, 9).map((block) => block.attrs.blockId);
+    const request = {
+      expectedDocVersion: 1,
+      opId: "r18c-delete-third-section",
+      ops: [
+        ...targetIds.map((blockId) => ({ kind: "deleteBlock" as const, blockId })),
+        { kind: "setTitle" as const, title: "题".repeat(60) },
+      ],
+    };
+
+    const deleted = await propose(sessionId, request);
+    expect(deleted.status).toBe(200);
+    const firstBody = await deleted.json() as {
+      status: string;
+      patchIds: string[];
+      count: number;
+      charCount: number;
+      notices: Array<{ code: string; message: string; maxChars: number }>;
+      seq: number;
+    };
+    expect(firstBody.status).toBe("review");
+    expect(firstBody.notices).toEqual([{
+      code: "TITLE_TRUNCATED",
+      message: "标题超过 48 个字符，已截断",
+      maxChars: 48,
+    }]);
+    const pending = await getOrRestoreSession(sessionId);
+    const candidate = pending!.docDraftCandidateDoc!;
+    const serialized = JSON.stringify(candidate);
+    expect(serialized).not.toContain("第三节");
+    expect(candidate.content.some((block) =>
+      (block.type === "heading" || block.type === "paragraph") &&
+      (!block.content || block.content.length === 0)
+    )).toBe(false);
+
+    const replayed = await propose(sessionId, request);
+    expect(replayed.status).toBe(200);
+    const replayedBody = await replayed.json() as typeof firstBody;
+    expect(replayedBody).toEqual({ ...firstBody, seq: replayedBody.seq });
+    expect(replayedBody.seq).toBeGreaterThan(firstBody.seq);
+    expect((await getOrRestoreSession(sessionId))!.suggestions.size).toBe(firstBody.count);
+
+    const reused = await propose(sessionId, {
+      ...request,
+      ops: [{ kind: "deleteBlock", blockId: canonical!.doc!.content[0]!.attrs.blockId }],
+    });
+    expect(reused.status).toBe(400);
+    expect(await reused.json()).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("opId 已用于另一份操作内容"),
+    });
+
+    const rejected = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+    });
+    expect(rejected.status).toBe(200);
+    expect(await rejected.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 1,
+      acceptedCount: 0,
+      rejectedCount: firstBody.count,
+      remainingCount: 0,
+    });
+
+    const settledAfterReject = await getOrRestoreSession(sessionId);
+    expect(settledAfterReject?.docState).toEqual({ kind: "editing" });
+    expect(settledAfterReject?.suggestions.size).toBe(0);
+    expect(settledAfterReject?.docDraftCandidateDoc).toBeNull();
+    await sessionManager.disposeSession(sessionId);
+    const replayedAfterReject = await propose(sessionId, request);
+    expect(replayedAfterReject.status).toBe(400);
+    expect(await replayedAfterReject.json()).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("已结束审阅，不能重放"),
+    });
+  });
+
+  it("P20/P39：QingML 长标题显式告知截断，响应字数使用 canonical 口径", async () => {
+    const sessionId = await createSession();
+    const response = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{
+        kind: "qingmlDraft",
+        qingml: `<title>${"长".repeat(60)}</title><tasks><task>甲 乙</task></tasks><p>正文。</p>`,
+      }],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "committed",
+      charCount: 5,
+      notices: [{ code: "TITLE_TRUNCATED", maxChars: 48 }],
+    });
+
+    const read = await app.request(`/api/v1/external/sessions/${sessionId}/doc`, {
+      headers: authHeaders(),
+    });
+    expect(await read.json()).toMatchObject({ charCount: 5, title: "长".repeat(48) });
+  });
+
+  it("P20：setTitle write 通道接受长标题，显式截断并返回 notice", async () => {
+    const sessionId = await createSession();
+    const response = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "setTitle", title: "题".repeat(60) }],
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "committed",
+      docVersion: 0,
+      notices: [{ code: "TITLE_TRUNCATED", maxChars: 48 }],
+    });
+    expect((await getOrRestoreSession(sessionId))?.title).toBe("题".repeat(48));
   });
 });
 

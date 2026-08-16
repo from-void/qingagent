@@ -49,6 +49,10 @@ describe("commandSchema", () => {
     });
     expect(commandSchema.safeParse({
       ...base,
+      data: { ...base.data, ops: [{ kind: "setTitle", title: "长".repeat(60) }] },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      ...base,
       data: {
         ...base.data,
         ops: [

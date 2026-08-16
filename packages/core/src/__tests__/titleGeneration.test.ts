@@ -17,6 +17,7 @@ import {
   buildTitleSource,
   generateTitleAfterFirstDraft,
   normalizeGeneratedTitle,
+  normalizeGeneratedTitleWithNotice,
 } from "../session/titleGeneration.js";
 
 function draftedState(id: string) {
@@ -69,10 +70,32 @@ describe("首稿后 BranchCall 标题", () => {
     warn.mockRestore();
   });
 
+  it("模型返回空标题时按 parse_failed 降级文档 H1，并保留归因日志", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.branchCall.mockResolvedValueOnce({
+      ok: true,
+      text: "  《》。  ",
+      attempts: 1,
+      toolCallRetries: 0,
+    });
+    const state = draftedState("title-empty-fallback");
+
+    await expect(generateTitleAfterFirstDraft(state)).resolves.toBe("旧 H1 标题");
+    expect(state.branchTitleGenerated).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      "[sideChannel] site=generateTitle fallback engaged reason=parse_failed snapshot=true",
+    );
+    warn.mockRestore();
+  });
+
   it("标题清洗去掉 Markdown、书名号与句号，并限制长度", () => {
     expect(normalizeGeneratedTitle("## 《一个标题》。\n说明")).toBe("一个标题");
     expect(normalizeGeneratedTitle("  ")).toBeNull();
     expect(normalizeGeneratedTitle("长".repeat(80))).toHaveLength(48);
+    expect(normalizeGeneratedTitleWithNotice("长".repeat(80))).toEqual({
+      title: "长".repeat(48),
+      truncated: true,
+    });
   });
 
   it("用户已手动指定标题时首稿起题让路且不结算 once 标记", async () => {

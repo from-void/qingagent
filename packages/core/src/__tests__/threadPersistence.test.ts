@@ -365,6 +365,7 @@ function expectRestoredStableFields(restored: SessionState | null, original: Ses
   expect(restored?.lastContentEditedAt).toBe(original.lastContentEditedAt);
   expect(restored?.suggestions).toEqual(original.suggestions);
   expect(restored?.patchVerdicts).toEqual(original.patchVerdicts);
+  expect(restored?.externalStructuralOpDigests).toEqual(original.externalStructuralOpDigests);
   expect(restored?.materials).toEqual(original.materials);
   expect(restored?.lastSyncedDocumentSnapshot).toBe(original.lastSyncedDocumentSnapshot);
   expect(restored?.selectedSkills).toEqual(original.selectedSkills);
@@ -1125,6 +1126,7 @@ describe("thread persistence", () => {
     state.modelKnownDocVersion = 3;
     addSuggestion(state);
     state.patchVerdicts.set("patch-1", "accepted");
+    state.externalStructuralOpDigests.set("external-op-1", "a".repeat(64));
     state.materials.set("material-1", {
       id: "material-1",
       filename: "source.txt",

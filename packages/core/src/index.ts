@@ -14,6 +14,10 @@ export {
   getSessionThreadTitles,
 } from "./session/usageThreadMetadata.js";
 export {
+  MAX_TITLE_CHARS,
+  truncateTitleWithNotice,
+} from "./session/titleGeneration.js";
+export {
   MODEL_CALL_SITES,
   isModelCallSite,
   resolveAgentModelCallSite,

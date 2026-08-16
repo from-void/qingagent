@@ -70,6 +70,8 @@ export interface ExternalDocReadResponse {
   docVersion: number;
   state: ExternalDocumentState;
   agentBusy: boolean;
+  /** 引擎 canonical 口径：NFC 后排除空白、任务标记、脚注与媒体。 */
+  charCount: number;
   markdown: string;
   markdownWithLineNumbers?: string;
   qingml?: string;
@@ -83,6 +85,7 @@ export interface ExternalPmDocReadResponse {
   contentHash: string;
   state: ExternalDocumentState;
   agentBusy: boolean;
+  charCount: number;
   title: string | null;
   ts: string;
   pmDoc: PmDoc | null;
@@ -103,6 +106,7 @@ export type ExternalDocReplaceResponse =
       docVersion: number;
       contentHash: string;
       ts: string;
+      charCount: number;
     }
   | {
       ok: false;
@@ -184,18 +188,31 @@ export type ExternalProposeOp =
   | { kind: "qingmlDraft"; qingml: string }
   | { kind: "setTitle"; title: string }
   | { kind: "strReplace"; old: string; new: string; nth?: number }
+  /**
+   * `line` 在该 op 执行时按整篇 Markdown 解释；同批较早操作可能令原行号失效。
+   * 目标落在表格等多行块内部时会拒绝，调用方应拆批或改用块/内容锚点。
+   */
   | { kind: "insertAfterLine"; line: number; markdown: string }
-  | { kind: "appendSection"; markdown: string };
+  | { kind: "appendSection"; markdown: string }
+  | { kind: "deleteBlock"; blockId: string }
+  | { kind: "deleteListItem"; blockId: string };
 
 export interface ExternalProposalRequest {
   expectedDocVersion: number;
   clientMutationId?: string;
+  opId?: string;
   ops: ExternalProposeOp[];
 }
 
+export interface ExternalProposalNotice {
+  code: "TITLE_TRUNCATED";
+  message: string;
+  maxChars: number;
+}
+
 export type ExternalProposalResponse =
-  | { status: "review"; patchIds: string[]; count: number; seq?: number }
-  | { status: "committed"; docVersion: number; seq?: number };
+  | { status: "review"; patchIds: string[]; count: number; charCount: number; notices?: ExternalProposalNotice[]; seq?: number }
+  | { status: "committed"; docVersion: number; charCount: number; notices?: ExternalProposalNotice[]; seq?: number };
 
 export interface ExternalValidationDiagnostic {
   failureKind: string;

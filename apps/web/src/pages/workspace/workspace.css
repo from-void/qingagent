@@ -217,16 +217,6 @@
     margin-top:4px;font-size:10.5px;color:var(--ink-4);
     user-select:none;text-align:right;
   }
-  /* 编辑器右下角字数徽标(debug 取向):固定在视口右下角,
-     pointer-events:none 不挡选区/点击。 */
-  #view-workspace .ws-wordcount{
-    position:fixed;right:24px;bottom:18px;z-index:3;
-    width:fit-content;
-    padding:2px 8px;border-radius:0;
-    font-size:11.5px;color:var(--ink-3);
-    background:color-mix(in srgb, var(--bg-canvas) 82%, transparent);
-    pointer-events:none;user-select:none;
-  }
   /* ============ 大 Plan 右侧面板 (bigplan 态) ============ */
   #view-workspace .bigplan-panel{
     height:100%;width:100%;

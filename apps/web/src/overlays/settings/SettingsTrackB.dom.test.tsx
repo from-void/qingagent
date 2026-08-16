@@ -365,7 +365,7 @@ describe("Settings Track B", () => {
     expect(legend[1]).toContain("40%");
   });
 
-  it("看板花费卡直显本机范围、精确覆盖率、未知调用与账户余额对照", async () => {
+  it("看板花费卡只显示标签与金额", async () => {
     await setVisitorModelKey("deepseek", "deepseek-local-key");
     const today = localYmd(new Date());
     const fallbackFetch = makeFetchMock();
@@ -405,15 +405,18 @@ describe("Settings Track B", () => {
     await render(<ModelSettingsPanel />);
 
     const metric = host?.querySelector(".md-metric");
+    await waitForCondition(
+      () => metric?.textContent?.includes("¥0.010") ?? false,
+      "近 7 天花费金额动画完成",
+    );
     const text = metric?.textContent?.replace(/\s+/g, " ") ?? "";
-    expect(text).toContain("本机本实例");
-    expect(text).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    expect(text).toContain("精确覆盖 70%");
-    expect(text).toContain("估算 ¥0.004");
-    expect(text).toContain("另有 2 次旧链路调用未计价");
-    expect(text).toContain("结果未知的失败调用 1 次");
-    expect(text).toContain("账户余额 ¥18.00");
-    expect(text).toContain("充值会使变动失真，仅供对照");
+    expect(metric?.children).toHaveLength(2);
+    expect(text).toBe("近 7 天花费¥0.010");
+    expect(metric?.querySelector('[data-wf="UsageEstimatedCost"]')).toBeNull();
+    expect(metric?.querySelector('[data-wf="UsagePricingCoverageRecent"]')).toBeNull();
+    expect(metric?.querySelector('[data-wf="UsageCoverageWarning"]')).toBeNull();
+    expect(metric?.querySelector('[data-wf="UsageBillingUnknown"]')).toBeNull();
+    expect(metric?.querySelector('[data-wf="UsageProviderBalanceChange"]')).toBeNull();
   });
 
   it("近 7 天用量按本地日历窗口统计，不混入更早的稀疏数据", async () => {
@@ -445,8 +448,12 @@ describe("Settings Track B", () => {
       "timeZone",
     )).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     const recentMetric = host?.querySelector(".md-metric");
-    expect(recentMetric?.textContent).toContain("100 tokens");
-    expect(recentMetric?.textContent).not.toContain("1.1k tokens");
+    await waitForCondition(
+      () => recentMetric?.textContent?.includes("¥0.001") ?? false,
+      "近 7 天窗口花费金额动画完成",
+    );
+    expect(recentMetric?.textContent).toContain("¥0.001");
+    expect(recentMetric?.textContent).not.toContain("¥0.011");
   });
 
   it("模型分布按原始 modelId 聚合，未知模型保留原名且互不合并", async () => {

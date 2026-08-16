@@ -86,7 +86,6 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     usageSettled, setUsageSettled, usageStatus, setUsageStatus,
     usageDate, setUsageDate, excludedModels, setExcludedModels,
     dayUsage, setDayUsage, totalUsage, setTotalUsage, docStats, setDocStats,
-    providerBalance, setProviderBalance,
     scheduleRevision, setScheduleRevision,
     dashboardSettled, setDashboardSettled,
   } = useModelUsageState();
@@ -278,10 +277,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       const body = res.ok ? ((await res.json()) as Partial<UsageSummaryResponse>) : null;
       const rows = body?.rows ?? [];
       if (mountedRef.current && !signal?.aborted) {
-        if (view === "day") {
-          setDayUsage(rows);
-          setProviderBalance(body?.providerBalance);
-        }
+        if (view === "day") setDayUsage(rows);
         else setTotalUsage(rows);
         if (typeof body?.scheduleRevision === "string") setScheduleRevision(body.scheduleRevision);
       }
@@ -994,9 +990,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     handleModelTierChange,
     handleSaveCustom,
     recent,
-    providerBalance,
     scheduleRevision,
-    usageTimeZone,
     docStats,
     modelDist,
     trend,

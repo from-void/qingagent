@@ -1,6 +1,7 @@
 import type { Client, Row } from "@qingagent/db";
 import type { PatchConflict } from "@qingagent/contract-ts";
 import {
+  arePmDocsPersistenceEquivalent,
   getDeterministicId,
   getPmContentHash,
   safeParsePmDoc,
@@ -458,13 +459,18 @@ export async function commitDocumentOp(
     // 乐观锁必须先于等值判断：旧基线即使提交内容碰巧与当前 canonical 相同，
     // 也不能伪装成已消费当前版本。基线有效且用户整篇保存的正文未变时直接确认
     // 当前版本，不写 documents / document_versions / document_ops，也不滚动
-    // coalesce 窗口。patch/生成保留既有结算与幂等语义，不在这里扩大 no-op 范围。
+    // coalesce 窗口。TipTap 物化的默认 attrs 与尾随空段也属于等值表示；blockId
+    // 仍参与持久等价比较，因此合法的块身份自愈不会被吞掉。patch/生成保留既有
+    // 结算与幂等语义，不在这里扩大 no-op 范围。
     if (
       !creating &&
       providedClientMutationId &&
       input.opKind === "replace_doc" &&
       input.actorType === "user" &&
-      contentHash === current.contentHash
+      (
+        contentHash === current.contentHash ||
+        arePmDocsPersistenceEquivalent(nextDoc, current.pmDoc)
+      )
     ) {
       const currentVersion = await getVersionSnapshotByDocumentSnapshot(
         input.docId,

@@ -474,6 +474,9 @@ function applyListItemHunkToDoc(
   }
 
   if (hunk.op === "delete") {
+    if (items.length === 1) {
+      return { ok: false, reason: "target list emptied" };
+    }
     items.splice(target.itemIndex, 1);
     return { ok: true, doc: normalizePmDoc(doc) };
   }
@@ -585,9 +588,9 @@ function withListItems(list: ListBlock, items: readonly ListItemNode[]): ListBlo
 }
 
 function listItemAlignmentKey(item: ListItemNode): string {
-  const blockId = item.attrs.blockId;
-  if (blockId) return `id:${blockId}`;
-  return `fingerprint:${item.type}:${blockPlainText(item).normalize("NFC")}`;
+  // pm-schema validators 保证 listItem/taskItem 的 blockId 非空；不再保留不可达的
+  // 文本 fingerprint 兜底，避免无身份项在同缝插入时引入另一套有序性语义。
+  return `id:${item.attrs.blockId}`;
 }
 
 function listItemAlignmentKeys(items: readonly ListItemNode[]): string[] {
@@ -730,6 +733,7 @@ function appendMatchedBlockHunks(input: {
   )
     return;
 
+  const hunksBeforeListDiff = input.hunks.length;
   if (
     isListBlock(input.baseBlock) &&
     isListBlock(input.draftBlock) &&
@@ -737,6 +741,14 @@ function appendMatchedBlockHunks(input: {
     blockAttrsEqualIgnoringId(input.baseBlock, input.draftBlock) &&
     appendMatchedListHunks(input as Parameters<typeof appendMatchedListHunks>[0])
   ) {
+    // 父列表只换 blockId、全部 item 同时，项级 diff 不会产生 hunk；必须恢复整列
+    // identity-only replace，供 annotation step map 与 pending draft 冷恢复迁移身份。
+    if (
+      input.hunks.length === hunksBeforeListDiff &&
+      input.baseBlock.attrs.blockId !== input.draftBlock.attrs.blockId
+    ) {
+      input.hunks.push(createBlockReplaceHunk(input));
+    }
     return;
   }
 
@@ -1319,7 +1331,6 @@ function createListItemInsertHunk(input: {
 }): DiffHunk {
   const baseItems = input.baseBlock.content as ListItemNode[];
   const previous = baseItems[input.baseInsertIndex - 1];
-  const next = baseItems[input.baseInsertIndex];
   const afterText = blockPlainText(input.draftItem);
   const itemStart = listItemPmStart(input.baseBlock, input.baseInsertIndex, input.textStart);
   const afterItems = [...baseItems];
@@ -1338,7 +1349,9 @@ function createListItemInsertHunk(input: {
     op: "insert",
     blockPath: [input.baseIndex, input.draftItemIndex],
     anchor: {
-      blockId: previous?.attrs.blockId ?? next?.attrs.blockId ?? input.baseBlock.attrs.blockId,
+      // 只锚 gap 前最近的存活配对项；首缝没有前项时直接锚父列表。不能锚本缝
+      // 待删首项，否则 delete 先落后 insert 会因锚点消失而整条丢失。
+      blockId: previous?.attrs.blockId ?? input.baseBlock.attrs.blockId,
       quoteAfter: afterText,
       pmFrom: itemStart,
       pmTo: itemStart,
@@ -1753,9 +1766,11 @@ function resolveApplyBlockIndex(
         }
       }
       const projectedParent = nodeToBlock(hunk.beforeBlock) ?? nodeToBlock(hunk.afterBlock);
-      if (isListBlock(projectedParent) && projectedParent.attrs.blockId === anchorBlockId) {
+      // insert 的 item 锚可能被同轮其它裁决移除；此时回退父列表 blockId +
+      // blockPath[1] 定位。delete/replace 不能这样回退，否则会误伤同位置 sibling。
+      if (hunk.op === "insert" && isListBlock(projectedParent)) {
         const itemIndex = hunk.blockPath[1];
-        const blockIndex = doc.content.findIndex((block) => block.attrs.blockId === anchorBlockId);
+        const blockIndex = doc.content.findIndex((block) => block.attrs.blockId === projectedParent.attrs.blockId);
         return itemIndex === undefined || blockIndex < 0 ? null : { blockIndex, itemIndex };
       }
       return null;
@@ -2098,29 +2113,18 @@ function inlineTextTargetForDoc(
   doc: PmDoc,
   blockPath: readonly number[],
 ): { block: InlineTextBlock; textStart: number } | null {
+  // 深路径属于列表项级 hunk，早已在 applyListItemHunkToDoc 分流；行内 range
+  // 解析只服务顶层文本块，避免保留一条实际不可达且坐标语义不同的分支。
+  if (blockPath.length !== 1) return null;
   const blockIndex = blockPath[0];
   if (blockIndex === undefined) return null;
   const block = doc.content[blockIndex];
   const blockStart = doc.content
     .slice(0, blockIndex)
     .reduce<number>((sum, node) => sum + nodeSize(node), 0);
-  if (blockPath.length === 1) {
-    return block && isInlineTextBlock(block)
-      ? { block, textStart: blockStart + 1 }
-      : null;
-  }
-  const itemIndex = blockPath[1];
-  if (!isListBlock(block) || itemIndex === undefined) return null;
-  const item = block.content[itemIndex];
-  if (!item) return null;
-  let childStart = blockStart + 1 + block.content
-    .slice(0, itemIndex)
-    .reduce<number>((sum, node) => sum + nodeSize(node), 0) + 1;
-  for (const child of item.content) {
-    if (isInlineTextBlock(child)) return { block: child, textStart: childStart + 1 };
-    childStart += nodeSize(child);
-  }
-  return null;
+  return block && isInlineTextBlock(block)
+    ? { block, textStart: blockStart + 1 }
+    : null;
 }
 
 function relativeRangeFromHunk(

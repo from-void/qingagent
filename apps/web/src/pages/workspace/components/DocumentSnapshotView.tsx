@@ -1674,6 +1674,7 @@ function useReviewPatchDecorations({
       input.gravity ?? "",
       input.blocks.length,
       input.blockCount ?? "",
+      input.listItemPatches?.map((member) => `${member.patchId}:${member.op}:${member.itemIndex}`).join(",") ?? "",
     ].join(":")).join("|"),
     [blockPatches],
   );

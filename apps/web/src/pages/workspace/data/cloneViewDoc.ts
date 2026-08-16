@@ -167,6 +167,7 @@ function cloneViewListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowD
       case "changed":
         return {
           status: "changed",
+          ...(row.patchId ? { patchId: row.patchId } : {}),
           spans: cloneViewSpans(row.spans),
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
@@ -176,6 +177,7 @@ function cloneViewListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowD
       case "added":
         return {
           status: "added",
+          ...(row.patchId ? { patchId: row.patchId } : {}),
           spans: cloneViewSpans(row.spans),
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
           ...cloneChildLists(row),
@@ -183,6 +185,7 @@ function cloneViewListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowD
       case "removed":
         return {
           status: "removed",
+          ...(row.patchId ? { patchId: row.patchId } : {}),
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
           ...cloneChildLists(row),

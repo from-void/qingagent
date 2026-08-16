@@ -4,10 +4,19 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
 import { applyBlockEdits, normalizePmDoc, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
-import type { DocSuggestion } from "@qingagent/contract-ts";
+import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
-import { deriveReviewTargets, pmDocToViewDocumentSnapshot, type AppliedPatch, type BlockPatchInput, type ViewBlock } from "../../data/protocol";
+import { buildDraftDiff } from "../../../../../../../packages/core/src/doc-engine/proposalDiff.js";
+import {
+  deriveReviewTargets,
+  mergeGranularListBlockPatchInputs,
+  pmDocToViewDocumentSnapshot,
+  suggestionToBlockPatchInputs,
+  type AppliedPatch,
+  type BlockPatchInput,
+  type ViewBlock,
+} from "../../data/protocol";
 
 vi.mock("mermaid", () => ({
   default: {
@@ -755,6 +764,68 @@ describe("审阅态 PM patch decorations", () => {
     const same = inserted?.querySelector(".wf-list-row--same");
     expect(same?.textContent).toContain("保留项");
     expect(same?.querySelector(".wf-row-del")).toBeNull();
+  });
+
+  it("同一列表两个 item hunk 只渲染一份列表副本，并让两行分别绑定各自 patch", async () => {
+    const item = (blockId: string, value: string) => ({
+      type: "listItem" as const,
+      attrs: { blockId },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: `${blockId}-p` },
+        content: [{ type: "text" as const, text: value }],
+      }],
+    });
+    const list = (second: string, fourth: string): PmDoc => ({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "bulletList",
+        attrs: { blockId: "dom-merged-list" },
+        content: [
+          item("dom-item-a", "保留甲"),
+          item("dom-item-b", second),
+          item("dom-item-c", "保留丙"),
+          item("dom-item-d", fourth),
+        ],
+      }],
+    });
+    const base = list("旧乙", "旧丁");
+    const draft = list("新乙", "新丁");
+    const hunks = buildDraftDiff(base, draft);
+    const inputs = mergeGranularListBlockPatchInputs(hunks.flatMap((hunk, order) =>
+      suggestionToBlockPatchInputs(suggestionFromHunk(hunk), order)
+    ));
+    const applied = hunks.map((hunk, index) =>
+      appliedPatch(hunk.hunkId, index + 1, "replace", hunk.beforeText ?? "", hunk.afterText ?? "")
+    );
+    const targets = deriveReviewTargets(applied, inputs);
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(base, 1)}
+          editable
+          interactiveEditable={false}
+          showPatches
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          reviewBlockPatches={inputs}
+          reviewAppliedPatches={applied}
+          reviewTargets={targets}
+        />,
+      );
+    });
+    await flush();
+
+    expect(host.querySelectorAll(".wf-blockmark.insert")).toHaveLength(1);
+    const changedRows = host.querySelectorAll(".wf-blockmark.insert .wf-list-row--changed");
+    expect(changedRows).toHaveLength(2);
+    expect(Array.from(changedRows).map((row) => row.textContent)).toEqual(["新乙", "新丁"]);
+    expect(Array.from(changedRows).map((row) => row.getAttribute("data-review-target-id"))).toEqual(
+      targets.map((target) => target.id),
+    );
+    expect(targets.map((target) => target.patchId)).toEqual(hunks.map((hunk) => hunk.hunkId));
   });
 
   it("granular 列表 changed 行 hover 只弹本行原文(旧勾选/旧格式),不弹整块列表卡(回归)", async () => {
@@ -1925,6 +1996,32 @@ function appliedPatch(
     after,
     kind,
     index,
+  };
+}
+
+function suggestionFromHunk(hunk: DiffHunk): DocSuggestion {
+  return {
+    id: hunk.hunkId,
+    reviewBatchId: hunk.reviewBatchId,
+    groupMode: hunk.groupMode,
+    docId: "dom-merged-list-doc",
+    baseVersion: 1,
+    baseSchemaVersion: 1,
+    status: "reviewing",
+    anchor: {
+      blockId: hunk.anchor.blockId ?? hunk.hunkId,
+      pmFrom: hunk.anchor.pmFrom ?? 0,
+      pmTo: hunk.anchor.pmTo ?? hunk.anchor.pmFrom ?? 0,
+      quote: hunk.beforeText ?? hunk.afterText ?? hunk.summary,
+      textHash: `hash-${hunk.hunkId}`,
+    },
+    patch: { kind: "prosemirror_steps", steps: [] },
+    preview: {
+      deleteText: hunk.beforeText ?? "",
+      insertText: hunk.afterText ?? "",
+    },
+    diffHunk: hunk,
+    summary: hunk.summary,
   };
 }
 

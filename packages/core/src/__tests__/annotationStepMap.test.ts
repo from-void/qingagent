@@ -328,6 +328,26 @@ describe("annotation StepMap", () => {
     });
   });
 
+  it("列表父 blockId 变化而 items 全同时仍生成整列迁移 step", () => {
+    const items = [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+    ];
+    const baseDoc = doc([bulletList("list-old", items)]);
+    const finalDoc = doc([bulletList("list-new", items)]);
+
+    const steps = buildAnnotationMappingSteps(baseDoc, finalDoc);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      stepType: "replace",
+      from: 0,
+      slice: {
+        content: [{ type: "bulletList", attrs: { blockId: "list-new" } }],
+      },
+    });
+  });
+
   it("脏 step 兜底校验保留含 hardBreak 与 inlineMath 的未改批注", () => {
     const finalDoc = doc([{
       type: "paragraph",

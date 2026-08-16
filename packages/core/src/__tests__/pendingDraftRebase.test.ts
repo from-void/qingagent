@@ -229,6 +229,47 @@ describe("rebaseRemainingPendingDraft", () => {
     expect(applyDiffHunks(committed, result.hunks).doc).toEqual(draft);
   });
 
+  it("同 gap 多项插入在接受别处裁决后按 apply 顺序 rebase，并以正确顺序持久化", async () => {
+    const base = doc([
+      bulletList("list-same-gap", [
+        { blockId: "item-a", text: "A" },
+        { blockId: "item-d", text: "D" },
+      ]),
+      paragraph("block-tail", "旧尾段"),
+    ]);
+    const draft = doc([
+      bulletList("list-same-gap", [
+        { blockId: "item-a", text: "A" },
+        { blockId: "item-x", text: "X" },
+        { blockId: "item-y", text: "Y" },
+        { blockId: "item-d", text: "D" },
+      ]),
+      paragraph("block-tail", "新尾段"),
+    ]);
+    const records = recordsFromDiff(base, draft, 1);
+    const tail = records.find((record) => record.diffHunk?.anchor.blockId === "block-tail");
+    const inserts = records.filter((record) => record.diffHunk?.op === "insert");
+    if (!tail || inserts.length !== 2) throw new Error("fixture missing same-gap hunks");
+    const committed = applyDiffHunks(base, [tail.diffHunk!]).doc;
+
+    const result = await rebaseRemainingPendingDraft({
+      docId: "doc-same-gap-order",
+      threadId: "thread-same-gap-order",
+      oldBaseDoc: base,
+      oldDraftDoc: draft,
+      committedDoc: committed,
+      committedVersion: 2,
+      remainingRecords: inserts,
+    });
+
+    expect(result.status).toBe("pending");
+    if (result.status !== "pending") return;
+    expect(result.nextDraftDoc).toEqual(draft);
+    expect(result.dropped).toEqual([]);
+    const persisted = await documentDraftRepo.load("doc-same-gap-order");
+    expect(persisted?.draftPmDoc).toEqual(draft);
+  });
+
   it("同段部分采纳后 rebase 剩余 hunk 不因重复文本误定位", async () => {
     const base = doc([paragraph("block-a", "df eeffba  efdefe b ")]);
     const draft = doc([paragraph("block-a", "df eeffbbac ed befee ebff ")]);

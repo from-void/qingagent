@@ -332,6 +332,80 @@ describe("buildPatchDecorations", () => {
     expect(widgetDom(decorations[1]).dataset.patchState).toBe("replace");
   });
 
+  it("同列表两个 granular item patch 只隐藏一次原列表并渲染一个 widget", () => {
+    const item = (blockId: string, value: string) => ({
+      type: "listItem" as const,
+      attrs: { blockId },
+      content: [{
+        type: "paragraph" as const,
+        attrs: { blockId: `${blockId}-p` },
+        content: [{ type: "text" as const, text: value }],
+      }],
+    });
+    const beforeList = {
+      type: "bulletList" as const,
+      attrs: { blockId: "merged-list" },
+      content: [item("item-a", "旧甲"), item("item-b", "旧乙")],
+    };
+    const afterA = item("item-a", "新甲");
+    const afterB = item("item-b", "新乙");
+    const listBaseline: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [beforeList],
+    };
+    const input: BlockPatchInput = {
+      patchId: "item-patch-a",
+      reviewBatchId: "item-patch-a",
+      groupMode: "independent",
+      order: 0,
+      op: "replace",
+      anchorBlockId: "merged-list",
+      anchorIndex: 0,
+      blocks: [],
+      beforePmNodes: [beforeList],
+      blockCount: 1,
+      granular: true,
+      listItemPatches: [
+        {
+          patchId: "item-patch-a",
+          reviewBatchId: "item-patch-a",
+          groupMode: "independent",
+          order: 0,
+          op: "replace",
+          itemIndex: 0,
+          beforeItem: beforeList.content[0],
+          afterItem: afterA,
+        },
+        {
+          patchId: "item-patch-b",
+          reviewBatchId: "item-patch-b",
+          groupMode: "independent",
+          order: 1,
+          op: "replace",
+          itemIndex: 1,
+          beforeItem: beforeList.content[1],
+          afterItem: afterB,
+        },
+      ],
+    };
+
+    const { decorations, dropped } = buildPatchDecorations({
+      baselineDoc: listBaseline,
+      blockPatches: [input],
+      applied: [
+        applied("item-patch-a", 1, "replace", "旧甲", "新甲"),
+        applied("item-patch-b", 2, "replace", "旧乙", "新乙"),
+      ],
+    });
+
+    expect(dropped).toEqual([]);
+    expect(decorations.filter((decoration) => decoration.from < decoration.to)).toHaveLength(1);
+    expect(decorations.filter((decoration) =>
+      typeof (decoration as unknown as { type: { toDOM?: unknown } }).type.toDOM === "function"
+    )).toHaveLength(1);
+  });
+
   it("多块替换拆成同 patchId 的 delete+insert 时,delete 半也不出块级红删标记(替换统一;回归)", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,

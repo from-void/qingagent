@@ -7,7 +7,7 @@ import {
 } from "@qingagent/pm-schema";
 import { documentDraftRepo } from "@qingagent/db";
 import { mastra } from "../mastra.js";
-import { applyDiffHunkToDoc, buildDraftDiff } from "./proposalDiff.js";
+import { applyDiffHunks, buildDraftDiff } from "./proposalDiff.js";
 import { createSuggestionBatchId } from "./draftReviewSuggestions.js";
 import type { SuggestionRecord } from "../session/sessionState.js";
 
@@ -69,27 +69,36 @@ export async function rebaseRemainingPendingDraft(
   // 文档地方开始算,不要保留原始整体内容":丢弃那一处无法落点的改动,余下能落点的继续 rebase,
   // 让评审始终可继续,绝不因一处失败而整轮锁死。
   const dropped: DroppedPendingDraftRecord[] = [];
+  const recordsWithHunks: Array<{ record: SuggestionRecord; hunk: DiffHunk }> = [];
   for (const record of input.remainingRecords) {
     const hunk = record.diffHunk;
     if (!hunk) {
       dropped.push({ record, reason: "missing diffHunk" });
       continue;
     }
-    const applied = applyDiffHunkToDoc(nextDraftDoc, hunk, {
-      oldBaseDoc: input.oldBaseDoc,
-    });
-    if (!applied.ok) {
-      dropped.push({ record, hunkId: hunk.hunkId, reason: applied.reason });
-      continue;
-    }
-    const parsed = safeParsePmDoc(applied.doc);
-    if (!parsed.success) {
-      dropped.push({ record, hunkId: hunk.hunkId, reason: parsed.error.message });
-      continue;
-    }
+    recordsWithHunks.push({ record, hunk });
+  }
+  const replayed = applyDiffHunks(
+    nextDraftDoc,
+    recordsWithHunks.map(({ hunk }) => hunk),
+    { oldBaseDoc: input.oldBaseDoc },
+  );
+  const recordByHunkId = new Map(recordsWithHunks.map(({ record, hunk }) => [hunk.hunkId, record] as const));
+  for (const detail of replayed.skippedDetails) {
+    const record = recordByHunkId.get(detail.hunk.hunkId);
+    if (record) dropped.push({ record, hunkId: detail.hunk.hunkId, reason: detail.reason });
+  }
+  const parsed = safeParsePmDoc(replayed.doc);
+  if (parsed.success) {
     nextDraftDoc = materializeDraftBlockIds(parsed.data as PmDoc, {
       namespace: "draft.rebase",
     });
+  } else {
+    for (const hunk of replayed.applied) {
+      const record = recordByHunkId.get(hunk.hunkId);
+      if (record) dropped.push({ record, hunkId: hunk.hunkId, reason: parsed.error.message });
+    }
+    nextDraftDoc = clonePmDoc(input.committedDoc);
   }
   if (dropped.length > 0) {
     // 不静默丢弃:落点失败的改动本就无法应用(其目标块已被同轮其它决定改掉),记录下来便于排查。

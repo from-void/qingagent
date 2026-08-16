@@ -1486,6 +1486,81 @@ describe("commitReviewGroups", () => {
     expect(state.suggestions.size).toBe(0);
   });
 
+  it("同列表两行保持独立裁决：接受首行、拒绝次行后只落首行", async () => {
+    const state = createSession("independent-list-item-verdicts");
+    const base = doc([bulletList("list-independent", [
+      { blockId: "item-a", text: "A 旧" },
+      { blockId: "item-b", text: "B 旧" },
+    ])]);
+    const draft = doc([bulletList("list-independent", [
+      { blockId: "item-a", text: "A 新" },
+      { blockId: "item-b", text: "B 新" },
+    ])]);
+    const hunks = await seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const hunkA = hunks.find((hunk) => hunk.anchor.blockId === "item-a");
+    const hunkB = hunks.find((hunk) => hunk.anchor.blockId === "item-b");
+    if (!hunkA || !hunkB) throw new Error("fixture missing list item hunks");
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunkA.reviewBatchId],
+      keepPendingReviewBatchIds: [hunkB.reviewBatchId],
+    }));
+    expect(firstListTexts(state.doc)).toEqual(["A 新", "B 旧"]);
+
+    const [remaining] = [...state.suggestions.values()];
+    if (!remaining?.diffHunk) throw new Error("fixture missing rebased list item hunk");
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [],
+      rejectReviewBatchIds: [remaining.diffHunk.reviewBatchId],
+    }));
+
+    expect(firstListTexts(state.doc)).toEqual(["A 新", "B 旧"]);
+    expect(state.suggestions.size).toBe(0);
+  });
+
+  it("项级 delete 会删空当前列表时提交走 patch_conflict 回滚，不冒泡 Invalid PM doc", async () => {
+    const state = createSession("list-item-delete-empty-conflict");
+    const base = doc([bulletList("list-empty-commit", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+    ]), paragraph("empty-guard-tail", "旧尾段")]);
+    const draft = doc([bulletList("list-empty-commit", [
+      { blockId: "item-a", text: "甲" },
+    ]), paragraph("empty-guard-tail", "新尾段")]);
+    const hunks = await seedDiffState(state, base, draft);
+    const deleteB = hunks.find((hunk) => hunk.op === "delete");
+    const keepTail = hunks.find((hunk) => hunk.anchor.blockId === "empty-guard-tail");
+    if (!deleteB || !keepTail) throw new Error("fixture missing list delete hunk");
+    const current = doc([bulletList("list-empty-commit", [
+      { blockId: "item-b", text: "乙" },
+    ]), paragraph("empty-guard-tail", "旧尾段")]);
+    state.doc = current;
+    await seedDocumentRow(state);
+    const errorLog = vi.spyOn(mastra.getLogger(), "error").mockImplementation(() => undefined);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [deleteB.reviewBatchId],
+      keepPendingReviewBatchIds: [keepTail.reviewBatchId],
+    }));
+
+    expect(state.doc).toEqual(current);
+    expect(state.docVersion).toBe(1);
+    expect(state.suggestions.has(deleteB.hunkId)).toBe(true);
+    expect(frames.at(-1)).toMatchObject({
+      kind: "docStateChanged",
+      data: { state: { kind: "pendingReview" } },
+    });
+    expect(errorLog).not.toHaveBeenCalledWith(
+      "Commit document operation threw while settling review records",
+      expect.anything(),
+    );
+    await expect(documentRepo.load(state.docId)).resolves.toMatchObject({
+      docVersion: 1,
+      pmDoc: current,
+    });
+  });
+
   it("先接受一处再撤销全部时会把已接受 batch 也拒绝并回到旧文档", async () => {
     const initialContentTime = "2025-01-01T00:00:00.000Z";
     const state = createSession("accept-then-reject-all", initialContentTime);

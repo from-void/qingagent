@@ -130,14 +130,15 @@ export type ViewListRowDiff =
   | ({ status: "same"; spans: ViewDocSpan[]; checked?: boolean } & ViewListRowChildren)
   | {
       status: "changed";
+      patchId?: string;
       spans: ViewDocSpan[];
       oldText: string;
       checked?: boolean;
       checkedChanged?: boolean;
       childLists?: ViewNestedListDiff[];
     }
-  | ({ status: "added"; spans: ViewDocSpan[]; checked?: boolean } & ViewListRowChildren)
-  | ({ status: "removed"; oldText: string; checked?: boolean } & ViewListRowChildren);
+  | ({ status: "added"; patchId?: string; spans: ViewDocSpan[]; checked?: boolean } & ViewListRowChildren)
+  | ({ status: "removed"; patchId?: string; oldText: string; checked?: boolean } & ViewListRowChildren);
 
 export type ViewNestedListDiff = {
   beforeListIndex?: number;
@@ -725,10 +726,14 @@ function listPmBlockFromDiffNode(node: DiffHunk["beforeBlock"] | DiffHunk["after
   return isListPmBlock(node) ? node : null;
 }
 
-function isSingleListItemNode(nodes: DiffHunk["before"] | DiffHunk["after"]): boolean {
-  if (!Array.isArray(nodes) || nodes.length !== 1) return false;
+function singleListItemPmNode(
+  nodes: DiffHunk["before"] | DiffHunk["after"],
+): ListPmBlock["content"][number] | null {
+  if (!Array.isArray(nodes) || nodes.length !== 1) return null;
   const type = nodes[0]?.type;
-  return type === "listItem" || type === "taskItem";
+  return type === "listItem" || type === "taskItem"
+    ? nodes[0] as ListPmBlock["content"][number]
+    : null;
 }
 
 function singleTablePmBlock(nodes: DiffHunk["before"] | DiffHunk["after"]): TablePmBlock | null {
@@ -1092,6 +1097,7 @@ function changedListRow(before: ListRowData, after: ListRowData, patchId: string
   const childLists = childListDiffForRows(before, after, patchId);
   return {
     status: "changed",
+    patchId,
     spans,
     oldText: before.text,
     ...(typeof after.checked === "boolean" ? { checked: after.checked } : {}),
@@ -1156,6 +1162,7 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
         const childLists = childListDiffForRows(before, undefined, patchId);
         out.push({
           status: "removed",
+          patchId,
           oldText: before.text,
           ...(typeof before.checked === "boolean" ? { checked: before.checked } : {}),
           ...(childLists ? { childLists } : {}),
@@ -1167,6 +1174,7 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
         const childLists = childListDiffForRows(undefined, after, patchId);
         out.push({
           status: "added",
+          patchId,
           spans: patchInsSpansForRow(after, patchId),
           ...(typeof after.checked === "boolean" ? { checked: after.checked } : {}),
           ...(childLists ? { childLists } : {}),
@@ -1372,23 +1380,238 @@ function buildListItemRowReplace(
   input: Omit<BlockPatchInput, "op" | "blocks" | "blockCount" | "replaceBeforeBlocks">,
 ): BlockPatchInput | null {
   if (hunk.blockPath.length !== 2) return null;
-  const hasBeforeItem = isSingleListItemNode(hunk.before);
-  const hasAfterItem = isSingleListItemNode(hunk.after);
+  if (hunk.op !== "insert" && hunk.op !== "delete" && hunk.op !== "replace") return null;
+  const beforeItem = singleListItemPmNode(hunk.before);
+  const afterItem = singleListItemPmNode(hunk.after);
   if (
-    (hunk.op === "replace" && (!hasBeforeItem || !hasAfterItem)) ||
-    (hunk.op === "insert" && !hasAfterItem) ||
-    (hunk.op === "delete" && !hasBeforeItem)
+    (hunk.op === "replace" && (!beforeItem || !afterItem)) ||
+    (hunk.op === "insert" && !afterItem) ||
+    (hunk.op === "delete" && !beforeItem)
   ) {
     return null;
   }
   const beforeParent = listPmBlockFromDiffNode(hunk.beforeBlock);
   const afterParent = listPmBlockFromDiffNode(hunk.afterBlock);
   if (!beforeParent || !afterParent || beforeParent.type !== afterParent.type) return null;
-  return buildListRowReplace(beforeParent, afterParent, {
+  const projected = buildListRowReplace(beforeParent, afterParent, {
     ...input,
     anchorBlockId: beforeParent.attrs.blockId || afterParent.attrs.blockId,
     beforePmNodes: [beforeParent],
   }, { forceGranular: true });
+  if (!projected) return null;
+  const itemIndex = hunk.blockPath[1];
+  if (itemIndex === undefined) return null;
+  return {
+    ...projected,
+    listItemPatches: [{
+      patchId: input.patchId,
+      reviewBatchId: input.reviewBatchId ?? input.patchId,
+      groupMode: input.groupMode ?? "independent",
+      ...(input.order !== undefined ? { order: input.order } : {}),
+      op: hunk.op,
+      itemIndex,
+      ...(beforeItem ? { beforeItem } : {}),
+      ...(afterItem ? { afterItem } : {}),
+    }],
+  };
+}
+
+function listItemBlockId(item: ListPmBlock["content"][number] | undefined): string {
+  return item?.attrs.blockId ?? "";
+}
+
+function sameListRow(row: ListRowData): ViewListRowDiff {
+  const childLists = childListDiffForRows(row, row, "");
+  return {
+    status: "same",
+    spans: cloneSpans(row.spans),
+    ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+    ...(childLists ? { childLists } : {}),
+  };
+}
+
+/** 按 listItem.blockId 对齐聚合后的父列表，避免文本 LCS 把独立 delete+insert 配成一行 replace。 */
+function buildMergedListItemRowDiff(
+  beforeParent: ListPmBlock,
+  afterParent: ListPmBlock,
+  members: readonly GranularListItemPatch[],
+): ViewListRowDiff[] {
+  const patchByBeforeId = new Map<string, GranularListItemPatch>();
+  const patchByAfterId = new Map<string, GranularListItemPatch>();
+  for (const member of members) {
+    const beforeId = listItemBlockId(member.beforeItem);
+    const afterId = listItemBlockId(member.afterItem);
+    if (beforeId) patchByBeforeId.set(beforeId, member);
+    if (afterId) patchByAfterId.set(afterId, member);
+  }
+  const beforeRows = listRowsFromPmBlock(beforeParent);
+  const afterRows = listRowsFromPmBlock(afterParent);
+  const raw = lcsDiff(
+    beforeRows,
+    afterRows,
+    (before, after) => listItemBlockId(before.node) === listItemBlockId(after.node),
+  );
+  const rows: ViewListRowDiff[] = [];
+  for (const entry of raw) {
+    if (entry.kind === "same") {
+      const before = entry.a!;
+      const after = entry.b!;
+      const member = patchByAfterId.get(listItemBlockId(after.node))
+        ?? patchByBeforeId.get(listItemBlockId(before.node));
+      rows.push(member ? changedListRow(before, after, member.patchId) : sameListRow(after));
+      continue;
+    }
+    if (entry.kind === "remove") {
+      const before = entry.a!;
+      const member = patchByBeforeId.get(listItemBlockId(before.node));
+      const patchId = member?.patchId ?? members[0]!.patchId;
+      const childLists = childListDiffForRows(before, undefined, patchId);
+      rows.push({
+        status: "removed",
+        patchId,
+        oldText: before.text,
+        ...(typeof before.checked === "boolean" ? { checked: before.checked } : {}),
+        ...(childLists ? { childLists } : {}),
+      });
+      continue;
+    }
+    const after = entry.b!;
+    const member = patchByAfterId.get(listItemBlockId(after.node));
+    const patchId = member?.patchId ?? members[0]!.patchId;
+    const childLists = childListDiffForRows(undefined, after, patchId);
+    rows.push({
+      status: "added",
+      patchId,
+      spans: patchInsSpansForRow(after, patchId),
+      ...(typeof after.checked === "boolean" ? { checked: after.checked } : {}),
+      ...(childLists ? { childLists } : {}),
+    });
+  }
+  return rows;
+}
+
+function buildMergedGranularListPatch(
+  prototype: BlockPatchInput,
+  members: readonly GranularListItemPatch[],
+): BlockPatchInput | null {
+  const beforeParent = prototype.beforePmNodes?.[0];
+  if (!isListPmBlock(beforeParent) || members.length === 0) return null;
+  const items = [...beforeParent.content] as Array<ListPmBlock["content"][number]>;
+
+  for (const member of members) {
+    if (member.op === "insert") continue;
+    const beforeId = listItemBlockId(member.beforeItem);
+    const itemIndex = beforeId
+      ? items.findIndex((item) => listItemBlockId(item) === beforeId)
+      : member.itemIndex;
+    if (itemIndex < 0 || itemIndex >= items.length) return null;
+    if (member.op === "delete") {
+      items.splice(itemIndex, 1);
+      continue;
+    }
+    if (!member.afterItem) return null;
+    items[itemIndex] = member.afterItem;
+  }
+
+  const inserts = members
+    .filter((member) => member.op === "insert")
+    .sort((left, right) => left.itemIndex - right.itemIndex || (left.order ?? 0) - (right.order ?? 0));
+  for (const member of inserts) {
+    if (!member.afterItem) return null;
+    const insertAt = Math.max(0, Math.min(member.itemIndex, items.length));
+    items.splice(insertAt, 0, member.afterItem);
+  }
+
+  const afterParent = { ...beforeParent, content: items } as ListPmBlock;
+  const afterBlock = pmNodesToViewBlocks([afterParent])[0];
+  const beforeBlock = pmNodesToViewBlocks([beforeParent])[0];
+  if (!afterBlock || !beforeBlock) return null;
+  const rowDiff = buildMergedListItemRowDiff(beforeParent, afterParent, members);
+  const first = members[0]!;
+  const memberOrders = members
+    .map((member) => member.order)
+    .filter((order): order is number => order !== undefined);
+  return {
+    ...prototype,
+    patchId: first.patchId,
+    reviewBatchId: first.reviewBatchId,
+    groupMode: first.groupMode,
+    ...(memberOrders.length > 0 ? { order: Math.min(...memberOrders) } : {}),
+    anchorBlockId: beforeParent.attrs.blockId,
+    op: "replace",
+    blocks: [withListRowDiff(afterBlock, rowDiff, afterParent)],
+    replaceBeforeBlocks: [beforeBlock],
+    beforePmNodes: [beforeParent],
+    blockCount: 1,
+    granular: true,
+    listItemPatches: members,
+  };
+}
+
+function granularListPatchGroupKey(input: BlockPatchInput): string | null {
+  const beforeParent = input.beforePmNodes?.[0];
+  if (!input.anchorBlockId || !isListPmBlock(beforeParent)) return null;
+  return JSON.stringify([input.anchorBlockId, input.anchorIndex ?? null, beforeParent]);
+}
+
+/** 同一父列表的项级 granular patch 合成一个投影；整列 replace 没有 listItemPatches，保持原状。 */
+export function mergeGranularListBlockPatchInputs(
+  inputs: readonly BlockPatchInput[],
+): BlockPatchInput[] {
+  const groups = new Map<string, BlockPatchInput[]>();
+  for (const input of inputs) {
+    if (
+      input.op !== "replace" ||
+      input.granular !== true ||
+      input.listItemPatches?.length !== 1 ||
+      !input.anchorBlockId
+    ) continue;
+    const key = granularListPatchGroupKey(input);
+    if (!key) continue;
+    const group = groups.get(key) ?? [];
+    group.push(input);
+    groups.set(key, group);
+  }
+  const consumed = new Set<BlockPatchInput>();
+  const out: BlockPatchInput[] = [];
+  for (const input of inputs) {
+    if (consumed.has(input)) continue;
+    if (!input.anchorBlockId || input.listItemPatches?.length !== 1) {
+      out.push(input);
+      continue;
+    }
+    const key = granularListPatchGroupKey(input);
+    if (!key) {
+      out.push(input);
+      continue;
+    }
+    const group = groups.get(key) ?? [input];
+    if (group.length < 2) {
+      out.push(input);
+      continue;
+    }
+    group.forEach((member) => consumed.add(member));
+    const merged = buildMergedGranularListPatch(
+      input,
+      group.flatMap((member) => member.listItemPatches ?? []),
+    );
+    out.push(merged ?? input, ...(merged ? [] : group.slice(1)));
+  }
+  return out;
+}
+
+/** 裁决动画期间按仍可见的成员重建聚合列表，避免拒绝一行后整份 widget 消失。 */
+export function projectGranularListBlockPatchInput(
+  input: BlockPatchInput,
+  includedPatchIds: ReadonlySet<string>,
+): BlockPatchInput | null {
+  if (!input.listItemPatches || input.listItemPatches.length < 2) return input;
+  const members = input.listItemPatches.filter((member) => includedPatchIds.has(member.patchId));
+  return buildMergedGranularListPatch(input, members);
+}
+
+export function blockPatchIds(input: BlockPatchInput): string[] {
+  return input.listItemPatches?.map((member) => member.patchId) ?? [input.patchId];
 }
 
 function buildTableCellReplace(
@@ -1900,7 +2123,21 @@ export interface BlockPatchInput {
   /** granular 内容标注之外还存在容器/单元格属性变化，局部正文无法完整表达。改由整块原文 hover
    *  统一接管并关闭块内局部 popup，让旧 tone、背景色、栏宽等外壳属性仍可审阅；常规 granular 不设置。 */
   granularBlockHover?: boolean;
+  /** 项级列表 hunk 的成员信息。长度 > 1 表示同一父列表已聚合成单一纸面投影；
+   * 每个成员仍保留独立 patchId / reviewBatchId，供逐行导航与裁决。 */
+  listItemPatches?: readonly GranularListItemPatch[];
 }
+
+export type GranularListItemPatch = {
+  patchId: string;
+  reviewBatchId: string;
+  groupMode: "atomic" | "independent";
+  order?: number;
+  op: "insert" | "delete" | "replace";
+  itemIndex: number;
+  beforeItem?: ListPmBlock["content"][number];
+  afterItem?: ListPmBlock["content"][number];
+};
 
 /** 行内文本通道能保真渲染的 PM 块类型(spans 模式);结构块都不在此列。 */
 const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "penNote"]);
@@ -2282,6 +2519,7 @@ export function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListR
       case "changed":
         return {
           status: "changed",
+          ...(row.patchId ? { patchId: row.patchId } : {}),
           spans: cloneSpans(row.spans),
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
@@ -2291,6 +2529,7 @@ export function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListR
       case "added":
         return {
           status: "added",
+          ...(row.patchId ? { patchId: row.patchId } : {}),
           spans: cloneSpans(row.spans),
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
           ...cloneChildLists(row),
@@ -2298,6 +2537,7 @@ export function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListR
       case "removed":
         return {
           status: "removed",
+          ...(row.patchId ? { patchId: row.patchId } : {}),
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
           ...cloneChildLists(row),
@@ -2408,7 +2648,7 @@ export function granularReviewTargetId(patchId: string, path: string): string {
   return `${patchId}::${path}`;
 }
 
-type ReviewTargetPath = { path: string; kind: ReviewTargetKind };
+type ReviewTargetPath = { path: string; kind: ReviewTargetKind; patchId?: string };
 
 function collectListReviewTargetPaths(
   rows: readonly ViewListRowDiff[],
@@ -2417,7 +2657,9 @@ function collectListReviewTargetPaths(
 ): void {
   rows.forEach((row, rowIndex) => {
     const rowPath = `${prefix}/row:${rowIndex}`;
-    if (row.status !== "same") out.push({ path: rowPath, kind: row.status });
+    if (row.status !== "same") {
+      out.push({ path: rowPath, kind: row.status, ...(row.patchId ? { patchId: row.patchId } : {}) });
+    }
     row.childLists?.forEach((nested, nestedIndex) => {
       collectListReviewTargetPaths(nested.rowDiff, `${rowPath}/nested:${nestedIndex}`, out);
     });
@@ -2494,16 +2736,17 @@ export function deriveReviewTargets(
   for (const patch of applied) {
     const paths: ReviewTargetPath[] = [];
     blockPatches.forEach((input, inputIndex) => {
-      if (input.patchId !== patch.id || input.op !== "replace" || input.granular !== true) return;
+      if (!blockPatchIds(input).includes(patch.id) || input.op !== "replace" || input.granular !== true) return;
       input.blocks.forEach((block, blockIndex) => {
         collectBlockReviewTargetPaths(block, `input:${inputIndex}/block:${blockIndex}`, paths);
       });
     });
-    if (paths.length === 0) {
+    const patchPaths = paths.filter((target) => (target.patchId ?? patch.id) === patch.id);
+    if (patchPaths.length === 0) {
       targets.push({ id: patch.id, patchId: patch.id, index: targets.length + 1, kind: "patch" });
       continue;
     }
-    for (const target of paths) {
+    for (const target of patchPaths) {
       targets.push({
         id: granularReviewTargetId(patch.id, target.path),
         patchId: patch.id,
@@ -2585,6 +2828,22 @@ export function derivePatchPresentation(
     AppliedCandidate & { hasDelete: boolean; hasInsert: boolean; hasReplace: boolean }
   >();
   blockPatches.forEach((input, fallbackOrder) => {
+    if (input.listItemPatches && input.listItemPatches.length > 1) {
+      input.listItemPatches.forEach((member) => {
+        if (!blockAppliedIds.has(member.patchId)) return;
+        appliedCandidates.push({
+          order: member.order ?? input.order ?? patches.length + fallbackOrder,
+          seq: seq++,
+          id: member.patchId,
+          reviewBatchId: member.reviewBatchId,
+          groupMode: member.groupMode,
+          before: listItemPlainText(member.beforeItem),
+          after: listItemPlainText(member.afterItem),
+          kind: member.op,
+        });
+      });
+      return;
+    }
     if (!blockAppliedIds.has(input.patchId)) return;
     const text = blocksPlainText(input.blocks);
     const replaceBeforeText = input.op === "replace" ? blocksPlainText(input.replaceBeforeBlocks ?? []) : "";
@@ -2798,16 +3057,16 @@ function collectBlockPatchOverlayReport(
   inputs.forEach((input) => {
     if (input.op !== "replace") return;
     if (input.blocks.length !== 1) {
-      droppedIds.push(input.patchId);
+      droppedIds.push(...blockPatchIds(input));
       return;
     }
     const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "replace");
     if (targetIndex === null || targetIndex >= sections.length) {
-      droppedIds.push(input.patchId);
+      droppedIds.push(...blockPatchIds(input));
       return;
     }
     sections[targetIndex] = cloneViewBlock(input.blocks[0]!);
-    appliedIds.add(input.patchId);
+    blockPatchIds(input).forEach((patchId) => appliedIds.add(patchId));
   });
 
   inputs.forEach((input) => {
@@ -2871,6 +3130,10 @@ function blockAppliedKind(hasDelete: boolean, hasInsert: boolean, hasReplace = f
 
 function blocksPlainText(blocks: readonly ViewBlock[]): string {
   return blocks.map(viewSectionText).filter(Boolean).join("\n");
+}
+
+function listItemPlainText(item: ListPmBlock["content"][number] | undefined): string {
+  return item ? item.content.map(pmBlockText).join("\n") : "";
 }
 
 function joinBlockPatchText(left: string, right: string): string {

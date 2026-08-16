@@ -5,6 +5,7 @@ import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/
 import {
   derivePatchPresentation,
   cloneListRowDiff,
+  mergeGranularListBlockPatchInputs,
   suggestionToBlockPatchInput,
   suggestionToBlockPatchInputs,
   pmDocToViewDocumentSnapshot,
@@ -1362,6 +1363,78 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied.map((patch) => patch.id)).toEqual([hunk.hunkId]);
     expect(result.reviewTargets).toHaveLength(1);
     assertInternallyConsistent(result);
+  });
+
+  it("同一列表两个 item hunk 聚合为单一副本，两行各自保留 patchId 与独立审阅目标", () => {
+    const stableList = (second: string, fourth: string): PmBlockNode => ({
+      type: "bulletList",
+      attrs: { blockId: "p28-merged-list" },
+      content: [
+        { type: "listItem", attrs: { blockId: "merge-a" }, content: [pmParagraph("merge-a-p", "保留甲")] },
+        { type: "listItem", attrs: { blockId: "merge-b" }, content: [pmParagraph("merge-b-p", second)] },
+        { type: "listItem", attrs: { blockId: "merge-c" }, content: [pmParagraph("merge-c-p", "保留丙")] },
+        { type: "listItem", attrs: { blockId: "merge-d" }, content: [pmParagraph("merge-d-p", fourth)] },
+      ],
+    } as PmBlockNode);
+    const base = pmDoc([stableList("旧乙", "旧丁")]);
+    const draft = pmDoc([stableList("新乙", "新丁")]);
+    const hunks = buildDraftDiff(base, draft);
+    expect(hunks).toHaveLength(2);
+    const individualInputs = hunks.flatMap((hunk, order) =>
+      suggestionToBlockPatchInputs(blockSuggestion(hunk.hunkId, hunk), order)
+    );
+
+    const inputs = mergeGranularListBlockPatchInputs(individualInputs);
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.listItemPatches?.map((member) => member.patchId)).toEqual(
+      hunks.map((hunk) => hunk.hunkId),
+    );
+    const projected = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(projected.items).toEqual(["保留甲", "新乙", "保留丙", "新丁"]);
+    expect(projected.rowDiff?.map((row) => row.status)).toEqual(["same", "changed", "same", "changed"]);
+    expect(projected.rowDiff?.filter((row) => row.status !== "same").map((row) => row.patchId)).toEqual(
+      hunks.map((hunk) => hunk.hunkId),
+    );
+
+    const presentation = derivePatchPresentation(pmDocToViewDocumentSnapshot(base, 1, "t"), [], inputs);
+    expect(presentation.applied.map((patch) => patch.id)).toEqual(hunks.map((hunk) => hunk.hunkId));
+    expect(presentation.reviewTargets.map((target) => target.patchId)).toEqual(hunks.map((hunk) => hunk.hunkId));
+    expect(applyDiffHunks(base, [hunks[0]!]).doc).not.toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+    assertInternallyConsistent(presentation);
+  });
+
+  it("同 gap 两个 insert 聚合后仍按 X、Y 排列，并分别保留行 patchId", () => {
+    const list = (items: Array<{ id: string; text: string }>): PmBlockNode => ({
+      type: "bulletList",
+      attrs: { blockId: "p28-merged-gap" },
+      content: items.map((item) => ({
+        type: "listItem",
+        attrs: { blockId: item.id },
+        content: [pmParagraph(`${item.id}-p`, item.text)],
+      })),
+    } as PmBlockNode);
+    const base = pmDoc([list([{ id: "gap-a", text: "A" }, { id: "gap-d", text: "D" }])]);
+    const draft = pmDoc([list([
+      { id: "gap-a", text: "A" },
+      { id: "gap-x", text: "X" },
+      { id: "gap-y", text: "Y" },
+      { id: "gap-d", text: "D" },
+    ])]);
+    const hunks = buildDraftDiff(base, draft);
+
+    const inputs = mergeGranularListBlockPatchInputs(hunks.flatMap((hunk, order) =>
+      suggestionToBlockPatchInputs(blockSuggestion(hunk.hunkId, hunk), order)
+    ));
+
+    expect(inputs).toHaveLength(1);
+    const projected = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(projected.items).toEqual(["A", "X", "Y", "D"]);
+    expect(projected.rowDiff?.map((row) => row.status)).toEqual(["same", "added", "added", "same"]);
+    expect(projected.rowDiff?.filter((row) => row.status === "added").map((row) => row.patchId)).toEqual(
+      hunks.map((hunk) => hunk.hunkId),
+    );
   });
 
   it("列表纯删与纯增保持孤立状态，不被误配成 replace", () => {

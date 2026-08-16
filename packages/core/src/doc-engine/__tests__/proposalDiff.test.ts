@@ -804,6 +804,34 @@ describe("P28 列表项级 hunk", () => {
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
+  it("首缝 delete+insert 部分采纳时 insert 回退父列表定位，不随待删锚点丢失", () => {
+    const base = doc([bulletList("list-leading-gap", [
+      { blockId: "item-a", text: "A" },
+      { blockId: "item-b", text: "B" },
+      { blockId: "item-c", text: "C" },
+      { blockId: "item-d", text: "D" },
+    ])]);
+    const draft = doc([bulletList("list-leading-gap", [
+      { blockId: "item-x", text: "X" },
+      { blockId: "item-c", text: "C" },
+      { blockId: "item-d", text: "D" },
+    ])]);
+    const hunks = buildDraftDiff(base, draft);
+    const deleteA = hunks.find((hunk) => hunk.op === "delete" && hunk.anchor.blockId === "item-a");
+    const insertX = hunks.find((hunk) => hunk.op === "insert");
+    if (!deleteA || !insertX) throw new Error("fixture missing leading-gap hunks");
+
+    expect(insertX.anchor).toMatchObject({ blockId: "list-leading-gap", gravity: "before" });
+    const applied = applyDiffHunks(base, [deleteA, insertX]);
+    expect(applied.skipped).toEqual([]);
+    expect(applied.doc).toEqual(doc([bulletList("list-leading-gap", [
+      { blockId: "item-x", text: "X" },
+      { blockId: "item-b", text: "B" },
+      { blockId: "item-c", text: "C" },
+      { blockId: "item-d", text: "D" },
+    ])]));
+  });
+
   it("删除一项产 delete hunk，并只 splice 该项", () => {
     const base = doc([bulletList("list-delete", [
       { blockId: "item-a", text: "甲" },
@@ -826,6 +854,28 @@ describe("P28 列表项级 hunk", () => {
       after: null,
     });
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("项级 delete 会删空当前列表时返回 patch conflict，而不是抛 Invalid PM doc", () => {
+    const base = doc([bulletList("list-empty-guard", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+    ])]);
+    const draft = doc([bulletList("list-empty-guard", [
+      { blockId: "item-a", text: "甲" },
+    ])]);
+    const [deleteB] = buildDraftDiff(base, draft);
+    const current = doc([bulletList("list-empty-guard", [
+      { blockId: "item-b", text: "乙" },
+    ])]);
+
+    expect(() => applyDiffHunks(current, [deleteB!])).not.toThrow();
+    const result = applyDiffHunks(current, [deleteB!]);
+    expect(result.doc).toEqual(current);
+    expect(result.applied).toEqual([]);
+    expect(result.skippedDetails).toEqual([
+      expect.objectContaining({ reason: "target list emptied" }),
+    ]);
   });
 
   it("换序检测到共享 blockId 逆序后回退整列 replace", () => {
@@ -923,6 +973,26 @@ describe("P28 列表项级 hunk", () => {
       blockPath: [0, 1],
       after: [{ type: "listItem" }],
     }]);
+  });
+
+  it("父列表仅 blockId 变化且 items 全同时仍回退整列 identity replace", () => {
+    const items = [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+    ];
+    const base = doc([bulletList("list-old", items)]);
+    const draft = doc([bulletList("list-new", items)]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toMatchObject([{
+      op: "replace",
+      blockPath: [0],
+      anchor: { blockId: "list-old" },
+      before: [{ type: "bulletList", attrs: { blockId: "list-old" } }],
+      after: [{ type: "bulletList", attrs: { blockId: "list-new" } }],
+    }]);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 });
 describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () => {

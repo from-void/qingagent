@@ -2,6 +2,24 @@ import { useSyncExternalStore } from "react";
 import type { ClientCapabilities } from "@qingagent/contract-ts";
 
 export async function fetchClientCapabilities(signal?: AbortSignal): Promise<ClientCapabilities> {
+  const backend = typeof window !== "undefined"
+    ? window.electron?.getBackendConnection?.()
+    : null;
+  if (backend?.mode === "attach") {
+    if (backend.status !== "attached") throw new Error("backend connection is not attached");
+    const effective = backend.effectiveCapabilities;
+    return {
+      folderSources: {
+        desktopLocal: { enabled: effective.folderSelection === true },
+        browserFsAccess: { enabled: false },
+      },
+      skills: { mutationEnabled: effective.skillMutation === true },
+      connectors: {
+        mutationEnabled: effective.connectors === true,
+        reasonCode: effective.connectors === true ? null : "CONNECTORS_DISABLED",
+      },
+    };
+  }
   const response = await fetch("/api/v1/capabilities", { signal });
   if (!response.ok) {
     throw new Error(`capabilities request failed: ${response.status}`);
@@ -95,11 +113,13 @@ function attachLifecycleListeners(): void {
   const onVisibilityChange = () => {
     if (document.visibilityState === "visible") retryImmediately();
   };
+  const detachBackend = window.electron?.onBackendConnectionChanged?.(() => retryImmediately());
   window.addEventListener("focus", onFocus);
   document.addEventListener("visibilitychange", onVisibilityChange);
   detachLifecycleListeners = () => {
     window.removeEventListener("focus", onFocus);
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    detachBackend?.();
     detachLifecycleListeners = null;
   };
 }

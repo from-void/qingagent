@@ -40,7 +40,7 @@ beforeEach(async () => {
   process.env.DATABASE_URL = `file:${path.join(dir, "documents.db")}`;
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
-  await startExternalInstance({ port: 52341, version: "test", filePath: path.join(dir, "instance.json") });
+  await startExternalInstance({ port: 52341, version: "test", libraryId: "00000000-0000-4000-8000-000000000001", filePath: path.join(dir, "instance.json") });
   token = getExternalToken() ?? "";
 });
 

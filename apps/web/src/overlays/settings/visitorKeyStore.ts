@@ -275,6 +275,9 @@ export function setSelectedModelTier(
  *  主模型(x-model-*)与图像识别副基模(x-vision-*,见
  *  visionProviderStore)各自独立,合并到同一出口随请求透传。 */
 export function visitorKeyHeaders(): Record<string, string> {
+  if (typeof window !== "undefined" && window.electron?.getBackendConnection?.()?.mode === "attach") {
+    return {};
+  }
   const storedProvider = getStoredModelProvider();
   const vision = visionKeyHeaders();
   if (!storedProvider) return vision;

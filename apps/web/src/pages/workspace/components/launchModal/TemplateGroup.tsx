@@ -23,6 +23,7 @@ export function TemplateGroup(props: {
   selectedId: string | null;
   variant?: "default" | "portrait";
   disabled?: boolean;
+  mutationDisabled?: boolean;
   onSelect: (id: string) => void;
   onEdit: (item: LaunchTemplateItem) => void;
   onCreate: () => void;
@@ -31,7 +32,13 @@ export function TemplateGroup(props: {
     <section className="ws-launch-template-group">
       <div className="ws-launch-template-group-head">
         <h3 className="ws-launch-template-group-title">{props.label}</h3>
-        <button type="button" className="ws-launch-template-new" disabled={props.disabled} onClick={props.onCreate}>＋ 新建</button>
+        <button
+          type="button"
+          className="ws-launch-template-new"
+          disabled={props.disabled || props.mutationDisabled}
+          title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : undefined}
+          onClick={props.onCreate}
+        >＋ 新建</button>
       </div>
       <div className={`ws-launch-template-grid${props.variant === "portrait" ? " is-portrait" : ""}`} role="radiogroup" aria-label={props.ariaLabel} aria-busy={props.disabled || undefined}>
         {props.items.map((item) => (
@@ -62,8 +69,8 @@ export function TemplateGroup(props: {
               type="button"
               className="ws-launch-template-edit"
               aria-label={`编辑${item.name}`}
-              title="编辑模板"
-              disabled={props.disabled}
+              disabled={props.disabled || props.mutationDisabled}
+              title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : "编辑模板"}
               onClick={() => props.onEdit(item)}
             >
               <svg viewBox="0 0 16 16" aria-hidden="true">

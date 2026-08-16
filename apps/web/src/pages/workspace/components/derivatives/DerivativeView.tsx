@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData } from "@qingagent/contract-ts";
 import { useConfirm } from "../../../../system";
+import { attachCapabilityEnabled } from "../../../../system/backendConnectionStore";
 import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
 import {
   retryDisposedServerStreamOnce,
@@ -78,6 +79,7 @@ export function DerivativeView(props: {
   onDismissStale?: (item: DerivativeItem) => void;
 }) {
   const confirm = useConfirm();
+  const derivativeMutationEnabled = attachCapabilityEnabled("derivativeMutation");
   const [selectedDocId, setSelectedDocId] = useState(props.item.docId);
   const effectiveDocId = props.activeDocId ?? selectedDocId;
   const item = props.items?.find((candidate) => candidate.docId === effectiveDocId) ?? props.item;
@@ -229,6 +231,7 @@ export function DerivativeView(props: {
   const pmDoc = parsedDocument.pmDoc;
   const title = articleTitle(pmDoc, descriptor.label);
   const beginGenerate = async (params: DerivativeGenerateParams) => {
+    if (!derivativeMutationEnabled) return;
     try {
       await props.stream.createDerivative(props.sessionId, descriptor.dtype, params.templateId, params.privatePrompt, params.writingStyleId, params.layoutStyleId, item.targetLang ?? undefined);
       await props.onRefresh();
@@ -245,6 +248,7 @@ export function DerivativeView(props: {
     props.onSendQuery(descriptor.queryText(item.docId, item.targetLang), { title: descriptor.cardTitle(before != null), lines, status: "done" });
   };
   const deleteDraft = async () => {
+    if (!derivativeMutationEnabled) return;
     setMoreOpen(false);
     if (!await confirm({ ...descriptor.deleteConfirm, confirmLabel: "删除", cancelLabel: "取消" })) return;
     try {
@@ -274,6 +278,7 @@ export function DerivativeView(props: {
     );
   };
   const changeCoverTemplate = (next: XhsCoverTemplate) => {
+    if (!derivativeMutationEnabled) return;
     const previous = coverTemplate;
     const requestGeneration = coverTemplateRequestGenerationRef.current + 1;
     coverTemplateRequestGenerationRef.current = requestGeneration;
@@ -287,32 +292,32 @@ export function DerivativeView(props: {
       props.onToast("封面选择保存失败，请重试");
     });
   };
-  const previewProps = { doc: pmDoc!, title, articleRef, coverTemplate, onCoverTemplateChange: changeCoverTemplate };
+  const previewProps = { doc: pmDoc!, title, articleRef, coverTemplate, onCoverTemplateChange: derivativeMutationEnabled ? changeCoverTemplate : undefined };
   const toolbar = <div className="ws-deriv-toolbar">
     <div className="ws-deriv-actions">
       {!generationUnconfirmed ? <div className="ws-deriv-regen-anchor">
         {item.stale && !props.isStaleDismissed?.(item) ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => props.onDismissStale?.(item)}>×</button></div> : null}
-        <button className="ws-docfn-btn" title="重新生成" aria-label="重新生成" onClick={() => setModalOpen(true)}><RegenIcon/></button>
+        <button className="ws-docfn-btn" title={derivativeMutationEnabled ? "重新生成" : "连接外部后台时暂不支持重新生成"} aria-label="重新生成" disabled={!derivativeMutationEnabled} onClick={() => setModalOpen(true)}><RegenIcon/></button>
       </div> : null}
       {pmDoc ? <div className="ws-export-anchor" ref={exportRef}><button className="ws-docfn-btn" title="导出" aria-label="导出" onClick={() => { setMoreOpen(false); setExportOpen((value) => !value); }}><ExportIcon/></button>
         {exportOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item" onClick={copyDraft}>复制文案</button>{descriptor.exportImageTarget ? <button className="ws-export-item" onClick={exportImage}>导出图片</button> : null}</div> : null}
       </div> : null}
       <div className="ws-export-anchor" ref={moreRef}><button className="ws-docfn-btn" title="更多操作" aria-label="更多操作" onClick={() => { setExportOpen(false); setMoreOpen((value) => !value); }}><MoreIcon/></button>
-        {moreOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item is-danger" onClick={() => void deleteDraft()}>删除稿件</button></div> : null}
+        {moreOpen ? <div className="ws-export-menu" role="menu"><button className="ws-export-item is-danger" disabled={!derivativeMutationEnabled} title={derivativeMutationEnabled ? undefined : "连接外部后台时暂不支持删除稿件"} onClick={() => void deleteDraft()}>删除稿件</button></div> : null}
       </div>
     </div>
   </div>;
   const modal = <DerivativeGenerateModal descriptor={descriptor} sessionId={props.sessionId} stream={props.stream} open={modalOpen} singleTargetLang={item.targetLang ?? undefined} initial={{ templateId: item.templateId, writingStyleId: item.writingStyleId, layoutStyleId: item.layoutStyleId, targetLanguages: item.targetLang ? [item.targetLang] : undefined, privatePrompt: item.privatePrompt }} onClose={() => setModalOpen(false)} onGenerate={beginGenerate}/>;
 
   if (generating) return <section className="ws-deriv-view is-generating" data-glow-surface="derivative-paper"><div className="ws-editor-glow" data-wf="DerivativeEditorGlow" aria-hidden="true"/><QingLoading reasoning /></section>;
-  if (!isTranslation && (generationUnconfirmed || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{generationUnconfirmed ? "暂未确认生成结果" : "尚未生成"}</strong>{generationUnconfirmed ? <span>请稍后刷新查看，确认结果后再决定是否重新生成</span> : null}<div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={generationUnconfirmed ? () => { void props.onRefresh(); } : () => setModalOpen(true)}>{generationUnconfirmed ? "刷新查看" : "重新生成"}</button></div></div>{modal}</section>;
+  if (!isTranslation && (generationUnconfirmed || (item.sourceVersion == null && !document?.meta.generatedAt))) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>{generationUnconfirmed ? "暂未确认生成结果" : "尚未生成"}</strong>{generationUnconfirmed ? <span>请稍后刷新查看，确认结果后再决定是否重新生成</span> : null}<div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" disabled={!generationUnconfirmed && !derivativeMutationEnabled} title={!generationUnconfirmed && !derivativeMutationEnabled ? "连接外部后台时暂不支持重新生成" : undefined} onClick={generationUnconfirmed ? () => { void props.onRefresh(); } : () => setModalOpen(true)}>{generationUnconfirmed ? "刷新查看" : "重新生成"}</button></div></div>{modal}</section>;
   if (parsedDocument.damaged) return <section className="ws-deriv-view">{toolbar}<div className="ws-deriv-empty"><strong>稿件数据损坏</strong><span>暂时无法显示这篇稿件</span></div>{modal}</section>;
   return <section ref={viewRef} className={`ws-deriv-view ws-deriv-${descriptor.dtype}${mode === "phone" ? " is-phone" : " is-desktop"}`}>
     {toolbar}
     {isTranslation && props.items?.length ? <div className="ws-deriv-mode ws-translate-segmented" aria-label="译文语言切换">{props.items.map((candidate) => {
       return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); props.onActiveDocIdChange?.(candidate.docId); setGenerating(false); setGenerationUnconfirmed(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span></button>;
     })}</div> : null}
-    {isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>{generationUnconfirmed ? "暂未确认翻译结果" : "该语言还没有译文"}</strong>{generationUnconfirmed ? <span>请稍后刷新查看，确认结果后再决定是否重新生成</span> : null}<div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={generationUnconfirmed ? () => { void props.onRefresh(); } : () => setModalOpen(true)}>{generationUnconfirmed ? "刷新查看" : "生成该语言"}</button></div></div>
+    {isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>{generationUnconfirmed ? "暂未确认翻译结果" : "该语言还没有译文"}</strong>{generationUnconfirmed ? <span>请稍后刷新查看，确认结果后再决定是否重新生成</span> : null}<div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" disabled={!generationUnconfirmed && !derivativeMutationEnabled} title={!generationUnconfirmed && !derivativeMutationEnabled ? "连接外部后台时暂不支持生成译文" : undefined} onClick={generationUnconfirmed ? () => { void props.onRefresh(); } : () => setModalOpen(true)}>{generationUnconfirmed ? "刷新查看" : "生成该语言"}</button></div></div>
           : pmDoc && PlainPreview ? <PlainPreview {...previewProps}/> : pmDoc && mode === "phone" && PhonePreview ? <><div className="ws-deriv-mode"><button className="is-active" onClick={() => setMode("phone")}>手机</button><button onClick={() => setMode("desktop")}>电脑</button></div><PhonePreview {...previewProps}/></> : pmDoc && DesktopPreview ? <><div className="ws-deriv-mode"><button onClick={() => setMode("phone")}>手机</button><button className="is-active" onClick={() => setMode("desktop")}>电脑</button></div><DesktopPreview {...previewProps}/></> : null}
     {modal}
   </section>;

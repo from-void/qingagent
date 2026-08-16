@@ -24,6 +24,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
@@ -35,18 +36,12 @@ import {
   resolveHardwareAccelerationMode,
 } from "./hardwareAcceleration.js";
 import {
-  createDesktopAppProxyHandler,
   DesktopAppDeepLinkDispatcher,
   DESKTOP_APP_ORIGIN,
   DESKTOP_APP_SCHEME,
   DESKTOP_APP_URL,
   resolveDesktopContentUrl,
 } from "./desktopAppProtocol.js";
-import { createNodeHttpProxyFetch } from "./desktopAppProxyFetch.js";
-import {
-  authorizeDesktopDevCommandRequest,
-  desktopDevCommandUrlPatterns,
-} from "./desktopCommandAuth.js";
 import {
   readPrivateStringMap,
   writePrivateStringMap,
@@ -115,6 +110,36 @@ import {
   type QingjianDeepLinkHandler,
 } from "./qingjianDeepLink.js";
 import { QINGJIAN_OPEN_SESSION_CHANNEL } from "../qingjianDeepLinkContract.js";
+import {
+  BACKEND_CONNECTION_CHANGED_CHANNEL,
+  BACKEND_CONNECTION_GET_CHANNEL,
+  BACKEND_CONNECTION_RETRY_CHANNEL,
+  BACKEND_STARTUP_ACTION_CHANNEL,
+  BACKEND_STARTUP_PROMPT_CHANNEL,
+  isBackendStartupAction,
+  type BackendStartupAction,
+  type BackendStartupPrompt,
+} from "../backendConnectionContract.js";
+import { discoverAttachInstances } from "./attachDiscovery.js";
+import { decideAttachMode, type AttachModeDecision } from "./attachModeDecision.js";
+import { resolveAttachHandshakeFailure } from "./attachStartupDecision.js";
+import type { DiscoveredInstance, DiscoveryReport } from "./attachDiscoveryTypes.js";
+import {
+  AttachConnectionError,
+  EmbeddedBackendConnection,
+  connectAttachBackend,
+  resolveQingjianDeepLink,
+  type BackendConnection,
+  type EmbeddedBackendInfo,
+} from "./backendConnection.js";
+import {
+  DESKTOP_DATA_ORIGIN,
+  DESKTOP_DATA_SCHEME,
+  createDesktopDataProtocolHandler,
+  createDesktopShellProtocolHandler,
+  createPackagedAssetManifest,
+} from "./desktopDataProtocol.js";
+import type { AttachCapability } from "@qingagent/contract-ts";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
@@ -231,27 +256,32 @@ for (const method of ["log", "info", "warn", "error", "debug"] as const) {
   };
 }
 
-// Crashpad 必须在创建任何 renderer 之前启动。转储只写 userData/Crashpad，明确不上传；
-// 这样下一轮真机既能从 main 日志看到 reason/exitCode，也能保留本地 minidump。
-const crashDumpsDir = path.join(userDataDir, "Crashpad");
-try {
-  mkdirSync(crashDumpsDir, { recursive: true });
-  app.setPath("crashDumps", crashDumpsDir);
-  crashReporter.start({
-    uploadToServer: false,
-    globalExtra: {
-      appMode: app.isPackaged ? "packaged" : "development",
-    },
-  });
-  console.info("[process-lifecycle] crash-reporter-started", {
-    crashDumpsDir,
-    uploadToServer: false,
-  });
-} catch (error) {
-  console.error("[process-lifecycle] crash-reporter-start-failed", {
-    crashDumpsDir,
-    error: error instanceof Error ? error.message : String(error),
-  });
+let embeddedCrashReporterStarted = false;
+
+/** Crashpad 可能捕获进程内存；attach 模式绝不启动它。 */
+function startEmbeddedCrashReporter(): void {
+  if (embeddedCrashReporterStarted) return;
+  embeddedCrashReporterStarted = true;
+  const crashDumpsDir = path.join(userDataDir, "Crashpad");
+  try {
+    mkdirSync(crashDumpsDir, { recursive: true });
+    app.setPath("crashDumps", crashDumpsDir);
+    crashReporter.start({
+      uploadToServer: false,
+      globalExtra: {
+        appMode: app.isPackaged ? "packaged" : "development",
+      },
+    });
+    console.info("[process-lifecycle] crash-reporter-started", {
+      crashDumpsDir,
+      uploadToServer: false,
+    });
+  } catch (error) {
+    console.error("[process-lifecycle] crash-reporter-start-failed", {
+      crashDumpsDir,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 app.on("child-process-gone", (_event, details) => {
@@ -308,12 +338,50 @@ protocol.registerSchemesAsPrivileged([
       codeCache: true,
     },
   },
+  {
+    scheme: DESKTOP_DATA_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
 ]);
 
+const { telemetry } = await import("./telemetry/index.js");
+const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js");
+
+interface EmbeddedRuntime {
+  startServer: typeof import("./server.js")["startServer"];
+  isReportedServerStartupError: typeof import("./server.js")["isReportedServerStartupError"];
+  installNetProbe: typeof import("@qingagent/core/llm/runtime")["installNetProbe"];
+  resolveBaseUrl: typeof import("@qingagent/core/llm/runtime")["resolveBaseUrl"];
+  warmUpModelEndpoint: typeof import("@qingagent/core/llm/runtime")["warmUpModelEndpoint"];
+}
+let embeddedRuntimeReady: Promise<EmbeddedRuntime> | null = null;
+
+function prepareEmbeddedStorageEnvironment(): void {
+  loadEnvFile({ path: path.join(userDataDir, ".env") });
+  if (!process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = pathToFileURL(path.join(userDataDir, "qingagent.db")).href;
+  }
+  if (!process.env.QINGAGENT_DATA_DIR) {
+    process.env.QINGAGENT_DATA_DIR = path.join(userDataDir, "data");
+  }
+}
+
+function initializeEmbeddedRuntime(): Promise<EmbeddedRuntime> {
+  return embeddedRuntimeReady ??= initializeEmbeddedRuntimeOnce();
+}
+
+/** attach 决策完成前绝不能调用；此函数包含全部 server/core/DB 与本机库副作用。 */
+async function initializeEmbeddedRuntimeOnce(): Promise<EmbeddedRuntime> {
+prepareEmbeddedStorageEnvironment();
 // 用户级配置:从 userData/.env 读密钥等(如 DEEPSEEK_API_KEY)。这样打包后的客户端
 // 无需重新构建即可配置(把 .env 放进 %APPDATA%/<app>/ 即可)。必须在 import server 之前
 // 加载——@qingagent/core 在模块求值期就读这些环境变量。
-loadEnvFile({ path: path.join(userDataDir, ".env") });
 process.env.QINGAGENT_LOG_DIR = desktopLogDir;
 
 // agent browser 的 storageState(JSON cookie/localStorage)与完整 profile 都是敏感凭据。
@@ -359,6 +427,16 @@ if (!process.env.QINGAGENT_UPLOADS_DIR) {
 
 // 桌面端能力必须在 import server/core 前设好:capabilities、技能导入 gate 都从服务端同进程读取。
 configureDesktopRuntimeEnv(process.env, { isPackaged: app.isPackaged });
+
+  cleanupClientConfigTempFiles();
+  const credentialKeyState = await configureDesktopCredentialKeyProvider({
+    safeStorage,
+    dataDir: process.env.QINGAGENT_DATA_DIR!,
+  });
+  if (credentialKeyState.reasonCode) {
+    console.warn("[credentials] key provider unavailable:", credentialKeyState.reasonCode);
+  }
+  desktopClientConfigReady = true;
 
 // 浏览器类能力(fetchArticle 内置渲染降级 / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
 // 系统已装浏览器(Edge → Chrome)的 Playwright channel,避免随包 ~170MB Chromium。Windows 预装
@@ -532,8 +610,6 @@ const { isReportedServerStartupError, startServer } = await import("./server.js"
 const { installLongKeepAliveDispatcher } = await import("@qingagent/server/httpDispatcher");
 installLongKeepAliveDispatcher();
 const { installNetProbe, resolveBaseUrl, warmUpModelEndpoint } = await import("@qingagent/core/llm/runtime");
-const { telemetry } = await import("./telemetry/index.js");
-const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js");
 
 // PDF 导出复用 Electron 自带 Chromium(printToPDF):打包后没有随包 Playwright Chromium,
 // 默认路径会硬失败到 500。注册自定义渲染器后,htmlToPdf 优先走 Electron,零增量体积。
@@ -541,6 +617,8 @@ const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js"
   const { setHtmlToPdfRenderer } = await import("@qingagent/doc-render/export");
   const { systemBrowserExecutablePath } = await import("@qingagent/doc-render/browser");
   const { renderPdfViaElectron } = await import("./pdfRenderer.js");
+  const { cleanupOrphanedPdfExportDirs } = await import("./pdfRenderer.js");
+  cleanupOrphanedPdfExportDirs();
   setHtmlToPdfRenderer(renderPdfViaElectron);
 
   // agent 浏览器(browser_*)桌面启用:探测到系统已装浏览器(Edge/Chrome)就默认开,并把
@@ -555,12 +633,30 @@ const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js"
     process.env.QINGAGENT_AGENT_BROWSER = "1";
   }
 }
+  return {
+    startServer,
+    isReportedServerStartupError,
+    installNetProbe,
+    resolveBaseUrl,
+    warmUpModelEndpoint,
+  };
+}
 
 let appOpenedCaptured = false;
 const appStartedAt = Date.now();
 let embeddedServerPort: number | null = null;
-let embeddedServerReady: ReturnType<typeof startServer> | null = null;
+let embeddedServerReady: Promise<EmbeddedBackendInfo> | null = null;
+let activeBackend: BackendConnection | null = null;
+let embeddedRediscoveryTimer: ReturnType<typeof setInterval> | null = null;
 let windowStartupInProgress = false;
+
+function backendCapability(name: AttachCapability): boolean {
+  return activeBackend?.snapshot().effectiveCapabilities[name] === true;
+}
+
+function isEmbeddedBackendActive(): boolean {
+  return activeBackend?.mode === "embedded";
+}
 
 // data: 启动壳不能依赖 Web CSS chunk；下列色值逐字镜像 UIKit tokens.css 的暖纸/金/墨，
 // 类名与 ConfirmProvider 的 ws-folder-modal-* 保持同族，不另造一套产品视觉语言。
@@ -601,6 +697,18 @@ const STARTUP_SHELL_HTML = `<!doctype html>
       </div>
     </section>
   </div>
+  <div class="ws-folder-modal-overlay" id="backend-startup" hidden>
+    <section class="ws-folder-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="backend-startup-title" aria-describedby="backend-startup-message">
+      <h3 id="backend-startup-title">正在连接文库</h3>
+      <p id="backend-startup-message"></p>
+      <div id="backend-startup-errors" role="status" aria-live="polite"></div>
+      <div id="backend-startup-candidates"></div>
+      <div class="ws-folder-confirm-actions" id="backend-startup-actions">
+        <button class="ws-folder-modal-affirm" id="backend-retry" type="button">重试</button>
+        <button class="ws-folder-modal-secondary" id="backend-unbind" type="button" hidden>解绑并重新选择</button>
+      </div>
+    </section>
+  </div>
   <script>
     (() => {
       const bridge = window.electron;
@@ -609,6 +717,13 @@ const STARTUP_SHELL_HTML = `<!doctype html>
       const recovery = document.getElementById("content-recovery");
       const retry = document.getElementById("content-retry");
       const exit = document.getElementById("content-exit");
+      const backendStartup = document.getElementById("backend-startup");
+      const backendTitle = document.getElementById("backend-startup-title");
+      const backendMessage = document.getElementById("backend-startup-message");
+      const backendErrors = document.getElementById("backend-startup-errors");
+      const backendCandidates = document.getElementById("backend-startup-candidates");
+      const backendRetry = document.getElementById("backend-retry");
+      const backendUnbind = document.getElementById("backend-unbind");
       const detach = bridge.onDesktopDialogRequest((request) => {
         if (request.kind !== "content-load-failed") return;
         loading.hidden = true;
@@ -625,32 +740,55 @@ const STARTUP_SHELL_HTML = `<!doctype html>
         retry.focus();
       });
       bridge.markDesktopDialogReady(["content-load-failed"]);
+      const detachBackend = bridge.onBackendStartupPrompt?.((prompt) => {
+        loading.hidden = true;
+        recovery.hidden = true;
+        backendStartup.hidden = false;
+        backendTitle.textContent = prompt.title;
+        backendMessage.textContent = prompt.message;
+        backendErrors.textContent = prompt.kind === "blocked" && prompt.errorCodes.length
+          ? "错误码：" + prompt.errorCodes.join("、")
+          : "";
+        backendCandidates.replaceChildren();
+        backendRetry.hidden = prompt.kind !== "blocked";
+        backendUnbind.hidden = prompt.kind !== "blocked" || !prompt.allowUnbind;
+        const respond = (action) => {
+          backendRetry.disabled = true;
+          backendUnbind.disabled = true;
+          void bridge.respondToBackendStartupPrompt({ promptId: prompt.id, ...action });
+        };
+        backendRetry.onclick = () => respond({ kind: "retry" });
+        backendUnbind.onclick = () => respond({ kind: "unbind" });
+        if (prompt.kind === "select") {
+          for (const candidate of prompt.candidates) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "ws-folder-modal-secondary";
+            button.style.display = "block";
+            button.style.width = "100%";
+            button.style.margin = "8px 0";
+            button.textContent = "端口 " + candidate.port + " · " + candidate.startedAt + " · " + candidate.version;
+            button.onclick = () => respond({ kind: "select", candidateId: candidate.id });
+            backendCandidates.append(button);
+          }
+          backendCandidates.querySelector("button")?.focus();
+        } else {
+          backendRetry.disabled = false;
+          backendUnbind.disabled = false;
+          backendRetry.focus();
+        }
+      });
       window.addEventListener("unload", detach, { once: true });
+      if (detachBackend) window.addEventListener("unload", detachBackend, { once: true });
     })();
   </script>
 </body>
 </html>`;
 const STARTUP_SHELL_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STARTUP_SHELL_HTML)}`;
 const CHROMIUM_ERR_ABORTED = -3;
-const CONTENT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
 
 function waitForContentLoadRetry(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-async function probeEmbeddedServerHealth(port: number): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CONTENT_HEALTH_PROBE_TIMEOUT_MS);
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/health`, {
-      signal: controller.signal,
-    });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function captureAppOpenedOnce() {
@@ -827,11 +965,13 @@ const confirmRememberGrantHandler = createConfirmRememberGrantHandler({
 });
 ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("confirmGrant")) return null;
   return confirmRememberGrantHandler(event, input);
 });
 
 ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("confirmGrant")) return null;
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const record = input as Record<string, unknown>;
   const kind = rememberGrantKind(record.kind);
@@ -860,6 +1000,7 @@ ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown
 
 ipcMain.handle("qingagent:select-folder-source", async (event) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("folderSelection")) return null;
   const startedAt = Date.now();
   let phase = "folderPicker.opened";
   const webContentsId = event.sender.id;
@@ -932,6 +1073,9 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
 
 ipcMain.handle(EXPORT_DOWNLOAD_SAVE_CHANNEL, (event, input: unknown) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("documentExport")) {
+    return { saved: false, filename: "qingagent-export", reason: "not-supported" };
+  }
   return mainExportDownloadCoordinator?.save(event.sender, input) ?? {
     saved: false,
     filename: "qingagent-export",
@@ -941,6 +1085,7 @@ ipcMain.handle(EXPORT_DOWNLOAD_SAVE_CHANNEL, (event, input: unknown) => {
 
 ipcMain.handle(EXPORT_DOWNLOAD_REVEAL_CHANNEL, (event, token: unknown) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("documentExport")) return false;
   const filePath = mainExportDownloadCoordinator?.resolveRevealPath(event.sender, token);
   if (!filePath) return false;
   shell.showItemInFolder(filePath);
@@ -949,16 +1094,19 @@ ipcMain.handle(EXPORT_DOWNLOAD_REVEAL_CHANNEL, (event, token: unknown) => {
 
 ipcMain.handle("qingagent:update-quit-install", async (event) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("updates")) return false;
   return quitAndInstallUpdate();
 });
 
 ipcMain.handle("qingagent:update-status-get", (event) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("updates")) return { kind: "none" as const };
   return getCurrentUpdateStatus();
 });
 
 ipcMain.handle("qingagent:update-open-download", async (event) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("updates")) return false;
   await shell.openExternal(RELEASES_URL);
   return true;
 });
@@ -972,6 +1120,7 @@ ipcMain.on("qingagent:app-version", (event) => {
 // 手动检查更新(关于页「检查更新」):请求-响应直接返回本次结果(含 error 态),不走推送假象。
 ipcMain.handle("qingagent:update-check", async (event) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("updates")) return { kind: "none" as const };
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner || !getLiveWebContents(owner)) return { kind: "none" as const };
   return manualCheckForUpdates({ window: owner });
@@ -1088,6 +1237,9 @@ type DesktopClientConfigReadResult =
 
 function readClientConfigValueForRenderer(key: unknown): DesktopClientConfigReadResult {
   if (!desktopClientConfigReady || !isDesktopClientConfigKey(key)) return { ok: false };
+  if (key !== HARDWARE_ACCELERATION_CONFIG_KEY && !backendCapability("modelKeys")) {
+    return { ok: false };
+  }
   if (!DESKTOP_MODEL_SECRET_KEYS.has(key)) {
     try {
       const value = readClientConfig()[key];
@@ -1113,6 +1265,7 @@ function readClientConfigValueForRenderer(key: unknown): DesktopClientConfigRead
 
 function writeClientConfigValue(key: unknown, value: unknown): boolean {
   if (!isDesktopClientConfigKey(key) || (value !== null && typeof value !== "string")) return false;
+  if (key !== HARDWARE_ACCELERATION_CONFIG_KEY && !backendCapability("modelKeys")) return false;
   const nextValue = typeof value === "string" && value.length > 0 ? value : null;
   try {
     const isSecret = DESKTOP_MODEL_SECRET_KEYS.has(key);
@@ -1148,6 +1301,9 @@ ipcMain.handle("qingagent:client-config-value-set", (event, key: unknown, value:
 
 ipcMain.handle(DIAGNOSTICS_EXPORT_CHANNEL, async (event, opts: unknown) => {
   assertTrustedRenderer(event);
+  if (!backendCapability("diagnosticsExport")) {
+    return { saved: false, reason: "not-supported" as const };
+  }
   const coordinator = mainExportDownloadCoordinator;
   if (!embeddedServerPort || !coordinator) {
     return { saved: false, reason: "not-started" as const };
@@ -1169,36 +1325,353 @@ function addAllowedOrigin(origins: Set<string>, url: string): void {
   }
 }
 
-function installPackagedRendererProtocol(port: number, commandAuthToken: string, externalAuthToken: string): void {
-  if (protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) return;
-  // 这一跳必须走 Node http 直连而非 net.fetch:后者取消不传播(SSE 连接永久泄漏)且受
-  // Chromium 单主机 6 连接上限约束,叠加后会让事件流和随后的所有 API 请求集体静默挂起。
-  // 详见 desktopAppProxyFetch.ts 头部注释。
-  protocol.handle(
-    DESKTOP_APP_SCHEME,
-    createDesktopAppProxyHandler(port, createNodeHttpProxyFetch(), commandAuthToken, externalAuthToken),
-  );
+async function installRendererProtocols(
+  contents: WebContents,
+  backend: BackendConnection,
+  isDev: boolean,
+  rendererOrigin: string,
+): Promise<void> {
+  const rendererSession = contents.session;
+  await rendererSession.clearCache();
+  if (!rendererSession.protocol.isProtocolHandled(DESKTOP_DATA_SCHEME)) {
+    rendererSession.protocol.handle(
+      DESKTOP_DATA_SCHEME,
+      createDesktopDataProtocolHandler(backend, rendererOrigin),
+    );
+  }
+  if (!isDev && !rendererSession.protocol.isProtocolHandled(DESKTOP_APP_SCHEME)) {
+    const manifest = await createPackagedAssetManifest(path.join(process.resourcesPath, "web"));
+    rendererSession.protocol.handle(
+      DESKTOP_APP_SCHEME,
+      createDesktopShellProtocolHandler(manifest),
+    );
+  }
+  const dataResourceFilter = { urls: [`${DESKTOP_DATA_ORIGIN}/*`] };
+  rendererSession.webRequest.onBeforeRequest(dataResourceFilter, (details, callback) => {
+    const executableTypes = new Set([
+      "mainFrame", "subFrame", "script", "stylesheet", "worker", "sharedWorker", "object", "media",
+    ]);
+    callback({ cancel: executableTypes.has(details.resourceType) });
+  });
 }
 
-function installDevRendererCommandAuth(
-  contents: WebContents,
-  devContentUrl: string,
-  commandAuthToken: string,
-): () => void {
-  const rendererOrigin = new URL(devContentUrl).origin;
-  const webRequest = contents.session.webRequest;
-  const filter = { urls: desktopDevCommandUrlPatterns(rendererOrigin) };
-  webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    callback({
-      requestHeaders: authorizeDesktopDevCommandRequest(details, {
-        rendererId: contents.id,
-        rendererOrigin,
-        token: commandAuthToken,
-      }),
-    });
-  });
-  return () => webRequest.onBeforeSendHeaders(filter, null);
+const BOUND_LIBRARY_CONFIG_KEY = "boundLibraryId";
+
+function attachBindingPath(): string {
+  return path.join(app.getPath("userData"), "attach-binding.json");
 }
+
+function readBoundLibraryId(): string | null {
+  try {
+    const value = readPrivateStringMap(attachBindingPath())[BOUND_LIBRARY_CONFIG_KEY];
+    return typeof value === "string"
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistBoundLibraryId(libraryId: string | null): void {
+  const current = readPrivateStringMap(attachBindingPath());
+  if (libraryId) current[BOUND_LIBRARY_CONFIG_KEY] = libraryId;
+  else delete current[BOUND_LIBRARY_CONFIG_KEY];
+  writePrivateStringMap(attachBindingPath(), current);
+}
+
+function discoveryWorkerPath(): { workerPath: string; developmentWorker: boolean } {
+  return app.isPackaged
+    ? { workerPath: path.join(__dirname, "attach-discovery-worker.js"), developmentWorker: false }
+    : { workerPath: path.join(__dirname, "attachDiscoveryWorker.ts"), developmentWorker: true };
+}
+
+function runAttachDiscovery(): Promise<DiscoveryReport> {
+  return discoverAttachInstances({
+    home: os.homedir(),
+    platform: process.platform,
+    execPath: process.execPath,
+    ...discoveryWorkerPath(),
+  });
+}
+
+function startEmbeddedRediscovery(backend: EmbeddedBackendConnection): void {
+  if (embeddedRediscoveryTimer) return;
+  const inspect = async (): Promise<void> => {
+    if (activeBackend !== backend) return;
+    const current = backend.snapshot();
+    const report = await runAttachDiscovery();
+    const conflicting = report.observations.some((observation) => (
+      observation.state === "valid"
+      && (
+        observation.instance.instanceId !== current.instanceId
+        || observation.instance.libraryId !== current.libraryId
+      )
+    ));
+    const pending = !conflicting && report.observations.some((observation) => (
+      observation.state === "indeterminate"
+      && observation.errorCode === "STARTING_LEASE"
+    ));
+    backend.reportForeignDiscovery({ pending, conflicting });
+  };
+  embeddedRediscoveryTimer = setInterval(() => void inspect(), 60_000);
+  embeddedRediscoveryTimer.unref?.();
+}
+
+let startupPromptSequence = 0;
+const pendingStartupPrompts = new Map<number, (action: BackendStartupAction) => void>();
+
+type BackendStartupPromptInput =
+  | Omit<Extract<BackendStartupPrompt, { kind: "blocked" }>, "id">
+  | Omit<Extract<BackendStartupPrompt, { kind: "select" }>, "id">;
+
+ipcMain.handle(BACKEND_STARTUP_ACTION_CHANNEL, (event, rawAction: unknown) => {
+  assertTrustedRenderer(event);
+  if (!isBackendStartupAction(rawAction)) return false;
+  const resolve = pendingStartupPrompts.get(rawAction.promptId);
+  if (!resolve) return false;
+  pendingStartupPrompts.delete(rawAction.promptId);
+  resolve(rawAction);
+  return true;
+});
+
+function requestBackendStartupAction(
+  contents: WebContents,
+  prompt: BackendStartupPromptInput,
+): Promise<BackendStartupAction> {
+  const id = ++startupPromptSequence;
+  return new Promise((resolve) => {
+    pendingStartupPrompts.set(id, resolve);
+    contents.send(BACKEND_STARTUP_PROMPT_CHANNEL, { ...prompt, id });
+  });
+}
+
+function blockedPrompt(
+  decision: Extract<AttachModeDecision, { kind: "blocked" }>,
+): Omit<Extract<BackendStartupPrompt, { kind: "blocked" }>, "id"> {
+  const copy = decision.reason === "bound-missing-other"
+    ? ["已绑定文库缺失", "发现了其他文库。为防止写入错误文库，请显式解绑后重新选择。"]
+    : decision.reason === "bound-missing"
+      ? ["找不到既有文库", "青简没有找到已绑定文库。请确认后台已启动后重试，或显式解绑。"]
+      : ["暂时无法确定文库", "实例发现未能安全完成。青简不会在状态不明时创建第二个文库。"];
+  return {
+    kind: "blocked",
+    title: copy[0]!,
+    message: copy[1]!,
+    errorCodes: decision.errorCodes,
+    allowUnbind: decision.allowUnbind,
+  };
+}
+
+async function selectStartupInstance(
+  contents: WebContents,
+  candidates: DiscoveredInstance[],
+): Promise<DiscoveredInstance> {
+  const choices = candidates.map((instance, index) => ({
+    id: `choice-${index + 1}`,
+    instance,
+  }));
+  while (true) {
+    const action = await requestBackendStartupAction(contents, {
+      kind: "select",
+      title: "选择要连接的文库",
+      message: "检测到多个可用后台。请选择本次要使用的实例；青简不会自动合并文库。",
+      candidates: choices.map(({ id, instance }) => ({
+        id,
+        port: instance.port,
+        startedAt: instance.startedAt,
+        version: instance.version,
+      })),
+    });
+    const selected = action.kind === "select"
+      ? choices.find((choice) => choice.id === action.candidateId)
+      : null;
+    if (selected) return selected.instance;
+  }
+}
+
+const STARTUP_AUTO_RETRY_DELAYS_MS = [100, 250, 500] as const;
+
+function startupFailureCode(prefix: string, error: unknown): string {
+  const detail = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  return detail && /^[A-Z0-9_]+$/.test(detail) ? `${prefix}_${detail}` : prefix;
+}
+
+async function handleAutomaticStartupFailure(
+  contents: WebContents,
+  previousFailures: number,
+  errorCode: string,
+  message: string,
+): Promise<number> {
+  const nextFailures = previousFailures + 1;
+  const delayMs = STARTUP_AUTO_RETRY_DELAYS_MS[nextFailures - 1];
+  if (delayMs !== undefined) {
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    return nextFailures;
+  }
+  await requestBackendStartupAction(contents, {
+    kind: "blocked",
+    title: "后台启动受阻",
+    message,
+    errorCodes: [errorCode],
+    allowUnbind: false,
+  });
+  return 0;
+}
+
+async function connectSelectedAttach(
+  instance: DiscoveredInstance,
+): Promise<BackendConnection> {
+  return connectAttachBackend(instance, {
+    rediscover: async (libraryId) => {
+      const report = await runAttachDiscovery();
+      const decision = decideAttachMode(report, libraryId);
+      return decision.kind === "attach" ? decision.instance : null;
+    },
+  });
+}
+
+async function resolveStartupBackend(contents: WebContents): Promise<BackendConnection> {
+  let boundLibraryId = readBoundLibraryId();
+  let automaticStartupFailures = 0;
+  while (true) {
+    const report = await runAttachDiscovery();
+    let decision = decideAttachMode(report, boundLibraryId);
+    if (decision.kind === "select") {
+      decision = { kind: "attach", instance: await selectStartupInstance(contents, decision.candidates) };
+    }
+    if (decision.kind === "blocked") {
+      automaticStartupFailures = 0;
+      const action = await requestBackendStartupAction(contents, blockedPrompt(decision));
+      if (action.kind === "unbind" && decision.allowUnbind) {
+        persistBoundLibraryId(null);
+        boundLibraryId = null;
+      }
+      continue;
+    }
+    if (decision.kind === "embedded") {
+      prepareEmbeddedStorageEnvironment();
+      const { acquireStartingLease, dataDirDigest } = await import(
+        "@qingagent/server/externalInstance"
+      );
+      let claim: Awaited<ReturnType<typeof acquireStartingLease>>;
+      try {
+        claim = await acquireStartingLease({
+          dataDirDigest: dataDirDigest(process.env.DATABASE_URL!),
+        });
+      } catch (error) {
+        automaticStartupFailures = await handleAutomaticStartupFailure(
+          contents,
+          automaticStartupFailures,
+          startupFailureCode("STARTING_LEASE_ACQUIRE_FAILED", error),
+          "青简无法取得本地文库启动租约。已停止自动重试，请检查数据目录权限或磁盘状态后重试。",
+        );
+        continue;
+      }
+      if (claim.kind === "existing") {
+        const racedInstance: DiscoveredInstance = {
+          ...claim.instance,
+          endpoint: `http://127.0.0.1:${claim.instance.port}`,
+          source: "local",
+        };
+        try {
+          const backend = await connectSelectedAttach(racedInstance);
+          persistBoundLibraryId(racedInstance.libraryId);
+          return backend;
+        } catch (error) {
+          automaticStartupFailures = await handleAutomaticStartupFailure(
+            contents,
+            automaticStartupFailures,
+            startupFailureCode("RACED_INSTANCE_HANDSHAKE_FAILED", error),
+            "新发现的后台未能完成认证。已停止自动重试，请确认后台状态后重试。",
+          );
+          continue;
+        }
+      }
+
+      startEmbeddedCrashReporter();
+      let runtime: EmbeddedRuntime;
+      try {
+        runtime = await initializeEmbeddedRuntime();
+      } catch (error) {
+        await claim.lease.release().catch(() => undefined);
+        throw error;
+      }
+      if (process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1") {
+        const { runSandboxRuntimeProbe } = await import("./sandboxRuntimeProbe.js");
+        const result = await runSandboxRuntimeProbe();
+        await claim.lease.release().catch(() => undefined);
+        app.exit(result.ok ? 0 : 1);
+        throw new Error("sandbox runtime probe completed");
+      }
+      const serverInfo = await (embeddedServerReady ??= runtime.startServer({
+        desktopLogDir,
+        shutdownRecoveryMarkerPath,
+        startingLease: claim.lease,
+      }));
+      embeddedServerPort = serverInfo.port;
+      return new EmbeddedBackendConnection(serverInfo);
+    }
+
+    try {
+      const backend = await connectSelectedAttach(decision.instance);
+      persistBoundLibraryId(decision.instance.libraryId);
+      return backend;
+    } catch (error) {
+      // health 与 handshake 之间实例若恰好退出，再发现为确定 absent 时才允许回到 embedded。
+      const retryReport = await runAttachDiscovery();
+      const fallback = resolveAttachHandshakeFailure(retryReport, boundLibraryId);
+      const code = error instanceof AttachConnectionError ? error.code : "UNREACHABLE";
+      if (fallback.kind === "embedded") {
+        automaticStartupFailures = await handleAutomaticStartupFailure(
+          contents,
+          automaticStartupFailures,
+          `ATTACH_DISAPPEARED_${code}`,
+          "发现到的后台在认证前退出。已停止自动重试，请确认后台状态后重试。",
+        );
+        continue;
+      }
+      automaticStartupFailures = 0;
+      const action = await requestBackendStartupAction(contents, {
+        kind: "blocked",
+        title: code === "INCOMPATIBLE" ? "后台版本不兼容" : "连接后台失败",
+        message: "青简未取得可用的 attach 会话，不会改为写入另一个文库。请检查后台后重试。",
+        errorCodes: [code],
+        allowUnbind: false,
+      });
+      if (action.kind === "retry") continue;
+    }
+  }
+}
+
+let detachBackendSnapshotListener: (() => void) | null = null;
+
+function installActiveBackend(backend: BackendConnection): void {
+  if (activeBackend === backend) return;
+  detachBackendSnapshotListener?.();
+  activeBackend?.dispose();
+  activeBackend = backend;
+  detachBackendSnapshotListener = backend.subscribe((snapshot) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      const contents = getLiveWebContents(window);
+      if (contents) contents.send(BACKEND_CONNECTION_CHANGED_CHANNEL, snapshot);
+    }
+  });
+}
+
+ipcMain.on(BACKEND_CONNECTION_GET_CHANNEL, (event) => {
+  assertTrustedRenderer(event);
+  event.returnValue = activeBackend?.snapshot() ?? null;
+});
+
+ipcMain.handle(BACKEND_CONNECTION_RETRY_CHANNEL, async (event) => {
+  assertTrustedRenderer(event);
+  if (!activeBackend) return false;
+  await activeBackend.retry();
+  return activeBackend.snapshot().status === "attached";
+});
 
 async function createWindow() {
   if (mainWindow && getLiveWebContents(mainWindow)) {
@@ -1260,6 +1733,8 @@ async function createWindowOnce() {
       // preload 以 CommonJS .cjs 产出(见 build.mjs);ESM 的 .js preload 在 Electron 里
       // 加载不了,会导致 window.electron 缺失、文件夹连接退化成浏览器 FS 路径。
       preload: path.join(__dirname, "../preload/index.cjs"),
+      // 壳与数据 origin 共用唯一专用、非持久 partition；不与其他窗口共享 cookie/cache。
+      partition: "qingagent-main-window",
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
@@ -1311,11 +1786,13 @@ async function createWindowOnce() {
     }
     trustedRememberUiGate.clear();
     nativeRememberGrantGate.cancel(rememberGeneration);
-    void import("@qingagent/server/confirmUiGrant")
-      .then(({ clearConfirmUiGrantsForScope }) => {
-        clearConfirmUiGrantsForScope(rememberScope);
-      })
-      .catch(() => undefined);
+    if (isEmbeddedBackendActive()) {
+      void import("@qingagent/server/confirmUiGrant")
+        .then(({ clearConfirmUiGrantsForScope }) => {
+          clearConfirmUiGrantsForScope(rememberScope);
+        })
+        .catch(() => undefined);
+    }
     if (mainWindow === contentWindow) {
       mainWindow = null;
       mainWindowRememberScope = null;
@@ -1400,55 +1877,52 @@ async function createWindowOnce() {
   });
   contentWebContents.on("will-redirect", guardMainFrameNavigation);
 
-  // 启动壳不依赖服务端和外部资源：先发起加载并立即显示暖纸窗口，再并行启动服务端。
+  // 启动壳不依赖服务端和外部资源；必须先完成发现与模式决策，
+  // 只有 embedded 结果才允许初始化 server/core/DB。
   const startupShellReady = contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
     console.warn("[startup] 启动壳加载失败:", error);
   });
   contentWindow.show();
-  const serverReady = embeddedServerReady ??= startServer({
-    desktopLogDir,
-    shutdownRecoveryMarkerPath,
-  });
+  await startupShellReady;
+  if (getLiveWebContents(contentWindow) !== contentWebContents) return;
 
-  // 迁移失败已由 startServer 报错；其余启动异常也必须明确告知并退出，不能永远停在启动壳。
-  let port: number;
-  let commandAuthToken: string;
-  let externalAuthToken: string;
+  let backend: BackendConnection;
   try {
-    ({ port, commandAuthToken, externalAuthToken } = await serverReady);
+    backend = activeBackend ?? await resolveStartupBackend(contentWebContents);
+    installActiveBackend(backend);
+    await installRendererProtocols(
+      contentWebContents,
+      backend,
+      isDev,
+      isDev ? new URL(devContentUrl).origin : DESKTOP_APP_ORIGIN,
+    );
+    if (!isDev) allowedAppOrigins.add(DESKTOP_APP_ORIGIN);
+    if (backend.mode === "embedded") {
+      const runtime = await initializeEmbeddedRuntime();
+      runtime.installNetProbe();
+      // 桌面端没有 env key，这里仅预热默认官方 endpoint。
+      runtime.warmUpModelEndpoint(runtime.resolveBaseUrl());
+      await maybeSeedInitialContent();
+      if (backend instanceof EmbeddedBackendConnection) startEmbeddedRediscovery(backend);
+    }
+    desktopClientConfigReady = true;
+    for (const window of BrowserWindow.getAllWindows()) {
+      const contents = getLiveWebContents(window);
+      if (contents) contents.send("qingagent:client-config-ready");
+    }
   } catch (error) {
-    if (!isReportedServerStartupError(error)) {
+    const runtime = embeddedRuntimeReady ? await embeddedRuntimeReady.catch(() => null) : null;
+    if (!runtime?.isReportedServerStartupError(error)) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-      console.error("[startup] 本地服务启动失败:", detail);
+      console.error("[startup] 后台连接初始化失败:", detail);
       dialog.showErrorBox(
-        "本地服务启动失败",
+        "后台连接失败",
         "青简暂时无法启动，应用将退出。请重新打开应用；若仍失败，请查看应用日志或联系支持。",
       );
     }
     app.exit(1);
     return;
   }
-  embeddedServerPort = port;
-  addAllowedOrigin(allowedAppOrigins, `http://localhost:${port}`);
-  addAllowedOrigin(allowedAppOrigins, `http://127.0.0.1:${port}`);
-  if (!isDev) {
-    installPackagedRendererProtocol(port, commandAuthToken, externalAuthToken);
-    allowedAppOrigins.add(DESKTOP_APP_ORIGIN);
-  } else {
-    const removeDevCommandAuth = installDevRendererCommandAuth(
-      contentWebContents,
-      devContentUrl,
-      commandAuthToken,
-    );
-    contentWindow.once("closed", removeDevCommandAuth);
-  }
-  installNetProbe();
-  // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
-  warmUpModelEndpoint(resolveBaseUrl());
-  await maybeSeedInitialContent();
-  await startupShellReady;
-  if (getLiveWebContents(contentWindow) !== contentWebContents) return;
-
   // 启动壳已完成，遥测从此处挂载，确保首个 did-finish-load 对应真正内容页。
   attachRendererTelemetry(contentWindow, telemetry.getRendererBootstrap());
 
@@ -1457,6 +1931,7 @@ async function createWindowOnce() {
     // 恢复过程会重新展示启动壳，不能让壳页的完成事件抢走 updater 的一次性启动机会。
     if (contentWebContents.getURL() === STARTUP_SHELL_URL) return;
     contentWebContents.off("did-finish-load", startUpdaterAfterContentLoad);
+    if (!backend.snapshot().effectiveCapabilities.updates) return;
     updaterStartTimer = setTimeout(() => {
       updaterStartTimer = null;
       if (getLiveWebContents(contentWindow) !== contentWebContents) return;
@@ -1500,7 +1975,7 @@ async function createWindowOnce() {
           if (getLiveWebContents(contentWindow) !== contentWebContents) return;
           completedRetries = step.attempt;
 
-          if (!(await probeEmbeddedServerHealth(port))) {
+          if (!(await backend.probe())) {
             console.warn(`[startup] 内容页第 ${step.attempt} 次恢复前健康探测失败`);
             continue;
           }
@@ -1577,7 +2052,13 @@ async function createWindowOnce() {
   const deliverQingjianDeepLink: QingjianDeepLinkHandler = (intent): void => {
     if (getLiveWebContents(contentWindow) !== contentWebContents) return;
     focusAndShowWindow(contentWindow);
-    contentWebContents.send(QINGJIAN_OPEN_SESSION_CHANNEL, intent);
+    void resolveQingjianDeepLink(backend, intent.engineSessionId).then((result) => {
+      if (getLiveWebContents(contentWindow) !== contentWebContents) return;
+      contentWebContents.send(QINGJIAN_OPEN_SESSION_CHANNEL, {
+        ...intent,
+        result: result.result,
+      });
+    });
   };
   const bindQingjianDeepLinkHandler = (): void => {
     if (
@@ -1592,8 +2073,8 @@ async function createWindowOnce() {
     }
   });
   contentWebContents.on("did-finish-load", bindQingjianDeepLinkHandler);
-  // 绑定点刻意晚于 await serverReady 与 installPackagedRendererProtocol：冷启动 URL、
-  // macOS open-url、second-instance 在此之前都只排队，不会撞进未就绪的自定义协议。
+  // 绑定点刻意晚于模式决策、attach 握手与双 origin 协议安装：
+  // 冷启动 URL、macOS open-url、second-instance 在此之前都只排队。
   const loadedQueuedDeepLink = desktopDeepLinks.setNavigator(navigateToDesktopDeepLink);
   contentWindow.once("closed", () => {
     desktopDeepLinks.clearNavigator(navigateToDesktopDeepLink);
@@ -1632,34 +2113,6 @@ if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
-  cleanupClientConfigTempFiles();
-  const { cleanupOrphanedPdfExportDirs } = await import("./pdfRenderer.js");
-  cleanupOrphanedPdfExportDirs();
-  // safeStorage 仅在 app ready 后可靠；同时必须早于 createWindow() 内 startServer()，保证
-  // server/core 业务模块首次读取凭据前 provider 已装配。Linux basic_text 不冒充 keychain。
-  const credentialKeyState = await configureDesktopCredentialKeyProvider({
-    safeStorage,
-    dataDir: process.env.QINGAGENT_DATA_DIR!,
-  });
-  if (credentialKeyState.reasonCode) {
-    console.warn("[credentials] key provider unavailable:", credentialKeyState.reasonCode);
-  }
-  desktopClientConfigReady = true;
-  for (const window of BrowserWindow.getAllWindows()) {
-    const contents = getLiveWebContents(window);
-    if (!contents) continue;
-    try {
-      contents.send("qingagent:client-config-ready");
-    } catch {
-      // ready 广播与窗口销毁竞争时跳过；renderer 重开后会通过同步 getter 读取真实状态。
-    }
-  }
-  if (process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1") {
-    const { runSandboxRuntimeProbe } = await import("./sandboxRuntimeProbe.js");
-    const result = await runSandboxRuntimeProbe();
-    app.exit(result.ok ? 0 : 1);
-    return;
-  }
   await telemetry.init();
   // 仅在埋点启用时才接管进程错误事件:禁用(无 key,默认态)时不改变 Node/Electron 的崩溃行为。
   if (telemetry.enabled) installTelemetryProcessErrorHandlers();
@@ -1668,6 +2121,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
 const quitCoordinator = createDesktopQuitCoordinator({
   hasActiveGeneration: async () => {
+    if (!isEmbeddedBackendActive()) return false;
     try {
       const { hasActiveDesktopGeneration } = await import(
         "@qingagent/server/desktopShutdown"
@@ -1703,6 +2157,7 @@ const quitCoordinator = createDesktopQuitCoordinator({
   captureAppClosed: () => telemetry.captureAppClosed(Date.now() - appStartedAt),
   shutdownTelemetry: () => telemetry.shutdown(2000),
   drainServer: async (deadlineAtMs) => {
+    if (!isEmbeddedBackendActive()) return;
     const { drainDesktopSessionsForShutdown } = await import(
       "@qingagent/server/desktopShutdown"
     );
@@ -1712,12 +2167,17 @@ const quitCoordinator = createDesktopQuitCoordinator({
     });
   },
   stopExternalInstance: async () => {
+    if (!isEmbeddedBackendActive()) return;
     const { stopExternalInstance } = await import(
       "@qingagent/server/externalInstance"
     );
     await stopExternalInstance();
   },
-  quit: () => app.quit(),
+  quit: () => {
+    if (embeddedRediscoveryTimer) clearInterval(embeddedRediscoveryTimer);
+    embeddedRediscoveryTimer = null;
+    app.quit();
+  },
 });
 
 app.on("before-quit", (event) => {

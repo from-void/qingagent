@@ -185,7 +185,7 @@ describe("crashGuard graceful shutdown", () => {
             "import { writeFileSync } from 'node:fs';",
             "import { startExternalInstance } from './src/lib/externalInstance.ts';",
             "__setSignalShutdownDepsForTest({ drainActiveTurns: () => new Promise((resolve) => setTimeout(() => { writeFileSync(process.env.ACTIVE_TURN_MARKER, 'drained'); resolve(); }, 100)), drainPersistence: async () => {}, cleanupBrowser: async () => {}, flushObservability: async () => {} });",
-            "await startExternalInstance({ port: 52341, version: 'test', filePath: process.env.INSTANCE_FILE });",
+            "await startExternalInstance({ port: 52341, version: 'test', libraryId: '00000000-0000-4000-8000-000000000001', filePath: process.env.INSTANCE_FILE });",
             "writeFileSync(process.env.READY_FILE, 'ready');",
             "setInterval(() => {}, 1000);",
           ].join(" "),

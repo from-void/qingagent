@@ -8,10 +8,12 @@ import {
   startExternalInstance,
   stopExternalInstance,
 } from "../lib/externalInstance";
+import { clearDesktopGlobalToken, issueDesktopGlobalToken } from "../lib/authCredentials";
 
 const TRUSTED_DESKTOP_ORIGIN = "http://127.0.0.1:5173";
 let instanceFile = "";
 let instanceToken = "";
+let desktopGlobalToken = "";
 let savedAuthToken: string | undefined;
 let savedRuntime: string | undefined;
 
@@ -25,12 +27,15 @@ beforeAll(async () => {
   instanceToken = (await startExternalInstance({
     port: 52341,
     version: "test",
+    libraryId: "00000000-0000-4000-8000-000000000001",
     filePath: instanceFile,
   })).token;
+  desktopGlobalToken = issueDesktopGlobalToken();
 });
 
 afterAll(async () => {
   await stopExternalInstance(instanceFile);
+  clearDesktopGlobalToken();
   await rm(path.dirname(instanceFile), { recursive: true, force: true });
   if (savedAuthToken === undefined) delete process.env.QINGAGENT_AUTH_TOKEN;
   else process.env.QINGAGENT_AUTH_TOKEN = savedAuthToken;
@@ -107,7 +112,18 @@ describe("commands mutation 确定性鉴权", () => {
     submit.mockRestore();
   });
 
-  it("正规桌面 instance token + 可信 Origin 仍可通过 commands", async () => {
+  it("instance token 严格限于 external/handshake，不能访问 commands", async () => {
+    const submit = vi.spyOn(sessionManager, "submitQueued");
+    const response = await postCommand(
+      { kind: "ignoreAnnotationGroups", data: { sessionId: "desktop-review", reason: "discard_all" } },
+      { Origin: TRUSTED_DESKTOP_ORIGIN, Authorization: `Bearer ${instanceToken}` },
+    );
+    expect(response.status).toBe(403);
+    expect(submit).not.toHaveBeenCalled();
+    submit.mockRestore();
+  });
+
+  it("desktop global principal + 可信 Origin 可通过 commands", async () => {
     const submit = vi.spyOn(sessionManager, "submitQueued").mockResolvedValue({
       completion: Promise.resolve([]),
     });
@@ -119,7 +135,7 @@ describe("commands mutation 确定性鉴权", () => {
       },
       {
         Origin: TRUSTED_DESKTOP_ORIGIN,
-        Authorization: `Bearer ${instanceToken}`,
+        Authorization: `Bearer ${desktopGlobalToken}`,
       },
     );
 
@@ -182,7 +198,7 @@ describe("commands mutation 确定性鉴权", () => {
         },
       );
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(403);
       expect(submit).not.toHaveBeenCalled();
     } finally {
       process.env.QINGAGENT_RUNTIME = "desktop";

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../system/ToastProvider";
 import { useDelayedVisible } from "../../system/useDelayedVisible";
+import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
 
 // 「提需求」跳转的反馈站(独立网页,后续单独承载);「报bug」排查不了时的联系邮箱。
 const FEEDBACK_URL = "https://qingagent.com/feedback";
@@ -18,6 +19,7 @@ interface SessionRow {
 }
 
 export function FeedbackPanel() {
+  const diagnosticsExportEnabled = attachCapabilityEnabled("diagnosticsExport");
   const [docs, setDocs] = useState<SessionRow[]>([]);
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [includeContent, setIncludeContent] = useState(false);
@@ -172,7 +174,8 @@ export function FeedbackPanel() {
             type="button"
             className="sm-btn primary"
             data-wf="FeedbackExportButton"
-            disabled={exporting || (!loadFailed && checked.size === 0)}
+            disabled={!diagnosticsExportEnabled || exporting || (!loadFailed && checked.size === 0)}
+            title={diagnosticsExportEnabled ? undefined : "连接外部后台时暂不支持导出诊断"}
             onClick={exportReport}
           >
             {exporting ? "导出中" : "导出报错记录"}

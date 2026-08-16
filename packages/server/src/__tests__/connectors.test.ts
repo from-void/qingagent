@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorInfoDto } from "@qingagent/core";
 import { authTokenMiddleware } from "../lib/authToken";
+import { principalMiddleware } from "../lib/principal";
 import { getConnectorRuntimeAccess } from "../lib/connectorRuntimeGate";
 import { csrfMutationGuard } from "../lib/trustedOrigin";
 import { createConnectorsRoutes } from "../routes/connectors";
@@ -49,6 +50,7 @@ function setup(input: { gateOn: boolean; publicDeployment: boolean; authOn: bool
   if (input.authOn) process.env.QINGAGENT_AUTH_TOKEN = "test-auth-token";
   else delete process.env.QINGAGENT_AUTH_TOKEN;
   const app = new Hono();
+  app.use("*", principalMiddleware);
   app.use("/api/*", csrfMutationGuard);
   app.use("/api/*", authTokenMiddleware);
   app.route("/api/v1", createConnectorsRoutes({

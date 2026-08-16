@@ -24,7 +24,7 @@ let token = "";
 beforeEach(async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "qa-propose-test-"));
   dirs.push(dir);
-  await startExternalInstance({ port: 52341, version: "test", filePath: path.join(dir, "instance.json") });
+  await startExternalInstance({ port: 52341, version: "test", libraryId: "00000000-0000-4000-8000-000000000001", filePath: path.join(dir, "instance.json") });
   token = getExternalToken() ?? "";
 });
 

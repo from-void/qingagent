@@ -143,12 +143,10 @@ externalRoutes.get("/health", (c) => {
   // 限流会把连续命令误判成 NO_INSTANCE。限流只留给 doc read(PRD 意图:防高频拉取失控循环)。
   const info = getExternalInstancePublicInfo();
   externalLog("health", { ms: elapsed(startedAt), result: "ok" });
-  return c.json({
-    ok: true,
-    version: info?.version ?? "0.0.0",
-    pid: info?.pid ?? process.pid,
-    startedAt: info?.startedAt ?? new Date().toISOString(),
-  });
+  if (!info) {
+    return externalError(c, 503, "AUTH_FAILED", "instance identity is not ready");
+  }
+  return c.json({ ok: true, ...info });
 });
 
 externalRoutes.get("/sessions", async (c) => {

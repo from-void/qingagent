@@ -398,6 +398,16 @@
 }
 
 /* —— 模型设置(F1):引导文案/输入框/用量表,同一套 qj 语言 —— */
+.settings-model {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-model:disabled {
+  opacity: 0.72;
+}
 .qj-sheet-body .sm-title{
   margin:0 0 8px;font-family:var(--font-zh-serif);
   font-size:13px;font-weight:700;letter-spacing:.1em;color:var(--qj-ink);

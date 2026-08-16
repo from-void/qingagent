@@ -18,6 +18,7 @@ import {
 } from "@qingagent/doc-render";
 import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
+import { attachOperationDenied, isAttachRequest } from "../lib/attachPolicy";
 
 type ExportFormat = "pdf" | "docx" | "txt" | "markdown" | "html";
 const warnedInvalidPublicOrigins = new Set<string>();
@@ -55,6 +56,9 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   if (!format) {
     return c.json({ error: "导出格式不支持，仅支持 pdf、docx、txt、markdown、html" }, 400);
   }
+  // 附录 B 之外的复用端点 discriminator：五种格式本期统一禁用，且必须早于
+  // 浏览器能力探测、会话加载和渲染等任何副作用。
+  if (isAttachRequest(c)) return attachOperationDenied(c);
   if (
     format === "pdf" &&
     !hasHtmlToPdfRenderer() &&

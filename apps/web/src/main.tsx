@@ -11,6 +11,7 @@ import {
   clearPreloadReloadMarker,
   createPreloadErrorHandler,
 } from "./system/preloadRecovery";
+import { installDesktopDataTransport } from "./system/desktopDataTransport";
 
 // 标题栏带上打包信息(桌面原生标题栏/浏览器标签都能看到),便于一眼确认这个包是什么时候打的。
 document.title = `青简 · ${__BUILD_INFO__}`;
@@ -20,6 +21,7 @@ document.title = `青简 · ${__BUILD_INFO__}`;
 // sessionStorage 或 URL 标志防 reload 死循环(已刷过一次仍失败→不再刷,交给 ErrorBoundary 兜底)。
 window.addEventListener("vite:preloadError", createPreloadErrorHandler(window));
 
+installDesktopDataTransport();
 installAuthFetchInterceptor();
 initPerfTier();
 initPerfMetrics();

@@ -59,6 +59,44 @@
   background: var(--bg-window);
 }
 
+.backend-connection-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 9px 13px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-2);
+  border-left: 2px solid var(--qj-cinnabar, #c8a96a);
+  border-radius: 0;
+  background: var(--bg-paper-deep);
+  color: var(--line-ink);
+  box-shadow: 0 8px 24px rgba(22, 17, 12, 0.18);
+  font-family: var(--font-zh-serif);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.backend-connection-banner button {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.backend-connection-banner button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
 /* 未配置 key 的发送按钮引导气泡 */
 .ws-input-tools.has-nokey-gate {
   /* UIKit/非工作区舞台的兜底；真实工作区在 workspace-ink-skin.css 显式钉住兄弟层级。 */

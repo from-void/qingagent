@@ -9,6 +9,7 @@ import { QingjianScroll } from "./components/QingjianScroll";
 import { useSessionStore } from "../../stores/sessionStore";
 import { FolderPromptDialog, type FolderPromptDialogControls } from "../../system/FolderSourceControl";
 import { useToast } from "../../system";
+import { useBackendConnection } from "../../system/backendConnectionStore";
 
 const BOOK_SOURCES = [
   {
@@ -71,6 +72,9 @@ function setDeleteConfirmSkipFor24h() {
 
 export function HomePage() {
   const toast = useToast();
+  const backendConnection = useBackendConnection();
+  const sessionDeletionEnabled = backendConnection?.mode !== "attach"
+    || backendConnection.effectiveCapabilities.sessionDeletion === true;
   const [articleMenu, setArticleMenu] = useState<ArticleContextMenu | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const [cleanMode, setCleanMode] = useState(false);
@@ -146,6 +150,7 @@ export function HomePage() {
     suppressFor24h: boolean,
     afterSuccess?: () => void,
   ) => {
+    if (!sessionDeletionEnabled) return;
     setDeleteConfirm((state) => (state ? { ...state, isDeleting: true } : state));
     setArticleMenu((menu) => (menu ? { ...menu, isDeleting: true } : menu));
     try {
@@ -166,7 +171,7 @@ export function HomePage() {
         dedupeKey: "home-delete-failed",
       });
     }
-  }, [removeSession, toast]);
+  }, [removeSession, sessionDeletionEnabled, toast]);
 
   const handleArticleContextMenu = useCallback((event: MouseEvent<HTMLElement>) => {
     const target = event.target instanceof Element ? event.target : null;
@@ -341,7 +346,8 @@ export function HomePage() {
             role="menuitem"
             className="home-card-menu-item is-danger"
             onClick={handleDeleteArticle}
-            disabled={articleMenu.isDeleting}
+            disabled={articleMenu.isDeleting || !sessionDeletionEnabled}
+            title={sessionDeletionEnabled ? undefined : "连接外部后台时暂不支持删除"}
           >
             {articleMenu.isDeleting ? "删除中..." : "删除"}
           </button>
@@ -383,7 +389,7 @@ export function HomePage() {
                     type="button"
                     className="ws-folder-modal-danger"
                     onClick={() => void handleConfirmDelete(close)}
-                    disabled={deleteConfirm.isDeleting}
+                    disabled={deleteConfirm.isDeleting || !sessionDeletionEnabled}
                   >
                     {deleteConfirm.isDeleting ? "删除中..." : "删除"}
                   </button>

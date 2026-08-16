@@ -1,6 +1,7 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
+import { attachCapabilityEnabled } from "../../../system/backendConnectionStore";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
 import { DocFindBar } from "./DocFindBar";
@@ -48,6 +49,7 @@ export function WorkspaceDocumentPane({
 }: {
   controller: WorkspacePageController;
 }) {
+  const derivativeMutationEnabled = attachCapabilityEnabled("derivativeMutation");
   const [dismissedStaleKeys, setDismissedStaleKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -386,10 +388,13 @@ export function WorkspaceDocumentPane({
               activeTab={activeTab}
               onActivate={activateDocumentTab}
               onCreate={(dtype) => {
+                if (!derivativeMutationEnabled) return;
                 setDerivativeCreateDtype(dtype);
                 setDerivativeCreateOpen(true);
               }}
-              createDisabledReason={derivativeCreateDisabledReason}
+              createDisabledReason={derivativeMutationEnabled
+                ? derivativeCreateDisabledReason
+                : "连接外部后台时暂不支持生成衍生稿"}
               isStaleDismissed={isStaleDismissed}
               onRename={async (nextTitle) => {
                 const requestSessionId = state.sessionId;

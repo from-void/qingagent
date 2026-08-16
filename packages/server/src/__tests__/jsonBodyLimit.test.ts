@@ -10,17 +10,22 @@ import { authenticatedCommandRequest } from "./commandTestRequest";
 
 describe("API JSON 请求体上限", () => {
   it("超大 commands JSON 返回 413，且服务进程仍可继续响应", async () => {
+    const body = JSON.stringify({
+      kind: "sendMessage",
+      data: { text: "x".repeat(DEFAULT_JSON_BODY_LIMIT_BYTES + 1) },
+    });
     const request = new Request("http://localhost/api/v1/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: "sendMessage",
-        data: { text: "x".repeat(DEFAULT_JSON_BODY_LIMIT_BYTES + 1) },
-      }),
+      body,
     });
     expect(request.headers.get("content-length")).toBeNull();
 
-    const oversized = await app.request(request);
+    const oversized = await authenticatedCommandRequest("/api/v1/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
 
     expect(oversized.status).toBe(413);
     await expect(oversized.json()).resolves.toEqual({ error: "请求体过大" });

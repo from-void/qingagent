@@ -5,6 +5,7 @@ import {
   subscribeDesktopUpdate,
   type DesktopUpdateStatus,
 } from "../../system/desktopUpdateStore";
+import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
 
 // 关于页:主区居中(产品标识 + 唯一「检查更新」按钮),辅助信息弱化在底部(链接 / 许可 / 内核)。
 // 更新走「请求-响应」手动检查 + 共享 store 的被动推送(下载就绪 / 强更),不各自挂 IPC 监听。
@@ -58,6 +59,7 @@ export function AboutPanel() {
   const isDesktop = Boolean(electron?.isDesktop);
   const platform = electron?.platform ?? "web";
   const versions = electron?.versions;
+  const updatesEnabled = attachCapabilityEnabled("updates");
 
   // 版本号:桌面优先 preload 注入,取不到再退回构建期 web 版本。
   const appVersion = (isDesktop ? electron?.appVersion : "") || webVersion();
@@ -163,6 +165,7 @@ export function AboutPanel() {
             status={status}
             checking={checking}
             isDevBuild={isDevBuild}
+            updatesEnabled={updatesEnabled}
             onCheck={runCheck}
           />
         ) : null}
@@ -238,13 +241,27 @@ function AboutUpdateArea({
   status,
   checking,
   isDevBuild,
+  updatesEnabled,
   onCheck,
 }: {
   status: DesktopUpdateStatus | null;
   checking: boolean;
   isDevBuild: boolean;
+  updatesEnabled: boolean;
   onCheck: () => void;
 }) {
+  if (!updatesEnabled) {
+    return (
+      <div className="ab-update">
+        <button type="button" className="ab-check-btn" data-wf="AboutUpdateButton" disabled>
+          检查更新
+        </button>
+        <div className="ab-update-status" data-wf="AboutUpdateStatus">
+          连接外部后台时由后台所在环境管理更新
+        </div>
+      </div>
+    );
+  }
   if (isDevBuild) {
     return (
       <div className="ab-update">

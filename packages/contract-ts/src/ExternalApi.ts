@@ -9,6 +9,7 @@
 import type { BridgeFrame } from "./BridgeFrame";
 import type { DocDiffReady } from "./DocDiffReady";
 import type { PmDoc } from "./PmDoc";
+import type { AttachIdentity } from "./Attach";
 
 export type ExternalClient = "claudecode" | "codex" | "agent";
 
@@ -30,11 +31,8 @@ export interface ExternalErrorResponse {
   nextStep: string;
 }
 
-export interface ExternalHealthResponse {
+export interface ExternalHealthResponse extends AttachIdentity {
   ok: true;
-  version: string;
-  pid: number;
-  startedAt: string;
 }
 
 export type ExternalDocumentState = "empty" | "editing" | "pendingReview";

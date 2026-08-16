@@ -13,6 +13,15 @@ if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
 import { claimShutdownSignalOwnership } from "./crashGuard.js"; // Install crash/signal handlers + in-process durable log FIRST
 import { serve } from "@hono/node-server";
 import { assessBindSafety, logStartupSecurityWarnings, normalizeHost } from "./lib/debugGate";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  acquireStartingLease,
+  dataDirDigest,
+  externalInstancePath,
+  type StartingLease,
+} from "./lib/externalInstance.js";
 // ⚠️ runMigrations 从深路径导入,刻意避开 @qingagent/core barrel:barrel 求值会连带 eval
 // core/mastra.ts 的 `new Mastra`(eager-init LibSQLStore、对同一 qingagent.db 建 mastra_* 表),
 // 与迁移的 BEGIN IMMEDIATE 并发争同库写锁 → SQLITE_BUSY + mastra 背景 init 崩(unhandledRejection)。
@@ -31,6 +40,25 @@ if (!bindSafety.allowed) {
 if (bindSafety.auditWarning) console.warn(bindSafety.auditWarning);
 logStartupSecurityWarnings({ suppressUnauthenticatedWarning: Boolean(bindSafety.auditWarning) });
 
+const externalInstanceFile = process.env.QINGAGENT_INSTANCE_FILE ?? externalInstancePath();
+const databaseIdentityUrl = process.env.DATABASE_URL
+  ?? pathToFileURL(path.join(os.homedir(), ".qingagent", "qingagent.db")).href;
+let startingLease: StartingLease;
+try {
+  const ownership = await acquireStartingLease({
+    instanceFilePath: externalInstanceFile,
+    dataDirDigest: dataDirDigest(databaseIdentityUrl),
+  });
+  if (ownership.kind === "existing") {
+    console.info(`[startup] 已有青简后台在端口 ${ownership.instance.port} 运行，本进程停止启动。`);
+    process.exit(0);
+  }
+  startingLease = ownership.lease;
+} catch (error) {
+  console.error("[startup] 无法取得启动租约，已停止启动。", error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
 try {
   const result = await runMigrations();
   if (result.appliedIds.length > 0) {
@@ -43,6 +71,7 @@ try {
   console.error("[migrations] 数据库迁移失败,进程退出以避免带病启动。");
   console.error(err instanceof Error ? err.stack ?? err.message : String(err));
   console.error("修复指引:还原最近的 qingagent.db.bak-pre-v* 备份文件后回退代码版本,或排查上面的迁移错误。");
+  await startingLease.release().catch(() => undefined);
   process.exit(1);
 }
 
@@ -52,6 +81,7 @@ await import("./observability.js");
 const { app } = await import("./app");
 const { sessionManager } = await import("./gateway/bridgeHandler");
 const { startExternalInstance, stopExternalInstance } = await import("./lib/externalInstance.js");
+const { getOrCreateLibraryId } = await import("./lib/libraryIdentity.js");
 const { startProviderBalanceSnapshotScheduler } = await import("./providerBalanceProbe.js");
 const {
   installNetProbe,
@@ -77,8 +107,6 @@ await browserCapabilityProbe;
 // 先恢复并续跑持久化删除墓碑，再启动任何可能写 documents 的后台任务。
 await sessionManager.resumePendingDeletions();
 
-const externalInstanceFile = process.env.QINGAGENT_INSTANCE_FILE;
-
 // 随包命令行工具的预置授权:老用户升级后不该被一张新确认卡拦住。
 // 只对"已启用技能确实声明了"的路径生效,失败不阻断启动。
 void (async () => {
@@ -103,17 +131,40 @@ void (async () => {
 
 const stopProviderBalanceSnapshots = startProviderBalanceSnapshotScheduler();
 
-serve({ fetch: app.fetch, port, hostname }, (info) => {
-  console.log(`Qingagent server listening on http://${hostname}:${info.port}`);
-  void startExternalInstance({
-    port: info.port,
-    ...(externalInstanceFile ? { filePath: externalInstanceFile } : {}),
-  }).catch((error) => {
-    console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
+let listening: { server: ReturnType<typeof serve>; port: number };
+try {
+  listening = await new Promise<{ server: ReturnType<typeof serve>; port: number }>((resolve, reject) => {
+    const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
+      server.off("error", reject);
+      resolve({ server, port: info.port });
+    });
+    server.once("error", reject);
   });
-  installNetProbe();
-  warmUpModelEndpoint(resolveBaseUrl());
-});
+} catch (error) {
+  stopProviderBalanceSnapshots();
+  await startingLease.release().catch(() => undefined);
+  console.error("[startup] 监听端口失败，已释放启动租约。", error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+try {
+  const libraryId = await getOrCreateLibraryId();
+  await startExternalInstance({
+    port: listening.port,
+    filePath: externalInstanceFile,
+    libraryId,
+    lease: startingLease,
+  });
+} catch (error) {
+  await new Promise<void>((resolve) => listening.server.close(() => resolve()));
+  await startingLease.release().catch(() => undefined);
+  console.error("[external] 发布 instance.json 失败，后台已停止。", error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+console.log(`Qingagent server listening on http://${hostname}:${listening.port}`);
+installNetProbe();
+warmUpModelEndpoint(resolveBaseUrl());
 
 process.once("beforeExit", () => {
   stopProviderBalanceSnapshots();

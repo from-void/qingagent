@@ -9,6 +9,7 @@ import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
+import { readCommandsModelOverrideHeaders } from "../lib/commandRequestHeaders";
 
 export const askMoreRoutes = new Hono();
 export { appendAskMoreQuestions } from "../gateway/askMoreCommands";
@@ -149,18 +150,19 @@ askMoreRoutes.post("/ask-more", async (c) => {
     return c.json({ error: "当前问卷不支持追加问题" }, 409);
   }
   const targetToolCallId = toolCallId;
+  const headers = readCommandsModelOverrideHeaders(c);
   const modelOverrides = await resolveRequestModelOverrides({
-    provider: c.req.header("x-model-provider"),
-    visitorKey: c.req.header("x-model-key"),
-    baseUrl: c.req.header("x-model-base-url"),
-    modelFlash: c.req.header("x-model-flash"),
-    modelPro: c.req.header("x-model-pro"),
-    modelTier: c.req.header("x-model-tier"),
-    protocol: c.req.header("x-model-protocol"),
-    visionKey: c.req.header("x-vision-key"),
-    visionBaseUrl: c.req.header("x-vision-base-url"),
-    visionModel: c.req.header("x-vision-model"),
-    visionProtocol: c.req.header("x-vision-protocol"),
+    provider: headers["x-model-provider"],
+    visitorKey: headers["x-model-key"],
+    baseUrl: headers["x-model-base-url"],
+    modelFlash: headers["x-model-flash"],
+    modelPro: headers["x-model-pro"],
+    modelTier: headers["x-model-tier"],
+    protocol: headers["x-model-protocol"],
+    visionKey: headers["x-vision-key"],
+    visionBaseUrl: headers["x-vision-base-url"],
+    visionModel: headers["x-vision-model"],
+    visionProtocol: headers["x-vision-protocol"],
   });
   const requestContext = new RequestContext([
     ["sessionId", session.sessionId],

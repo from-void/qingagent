@@ -26,7 +26,7 @@ describe("external instance + auth", () => {
     };
     const filePath = await tempInstancePath();
 
-    await startExternalInstance({ port: 52341, version: "test", filePath });
+    await startExternalInstance({ port: 52341, version: "test", libraryId: "00000000-0000-4000-8000-000000000001", filePath });
 
     expect(process.listenerCount("SIGINT")).toBe(before.SIGINT);
     expect(process.listenerCount("SIGTERM")).toBe(before.SIGTERM);
@@ -34,10 +34,18 @@ describe("external instance + auth", () => {
 
   it("写出 0600 instance.json,可读回,stop 后删除", async () => {
     const filePath = await tempInstancePath();
-    const info = await startExternalInstance({ port: 52341, version: "test", filePath });
-    expect(info.token).toHaveLength(64);
+    const info = await startExternalInstance({ port: 52341, version: "test", libraryId: "00000000-0000-4000-8000-000000000001", filePath });
+    expect(info.token).toMatch(/^qa_instance_[0-9a-f]{64}$/);
     expect(getExternalToken()).toBe(info.token);
-    expect(await readExternalInstanceFile(filePath)).toMatchObject({ port: 52341, pid: process.pid, version: "test" });
+    expect(await readExternalInstanceFile(filePath)).toMatchObject({
+      schemaVersion: 2,
+      port: 52341,
+      pid: process.pid,
+      version: "test",
+      attachProtocolVersion: 1,
+      libraryId: "00000000-0000-4000-8000-000000000001",
+      instanceId: expect.any(String),
+    });
     expect((await stat(filePath)).mode & 0o777).toBe(0o600);
     await stopExternalInstance(filePath);
     await expect(stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -45,18 +53,34 @@ describe("external instance + auth", () => {
 
   it("external 子树强制 Bearer token", async () => {
     const filePath = await tempInstancePath();
-    await startExternalInstance({ port: 52341, version: "test", filePath });
+    await startExternalInstance({ port: 52341, version: "test", libraryId: "00000000-0000-4000-8000-000000000001", filePath });
     const token = getExternalToken();
     expect((await app.request("/api/v1/external/health")).status).toBe(401);
     expect((await app.request("/api/v1/external/health", { headers: { Authorization: "Bearer wrong" } })).status).toBe(401);
+    const stalePrefixed = await app.request("/api/v1/external/health", {
+      headers: { Authorization: `Bearer qa_instance_${"0".repeat(64)}` },
+    });
+    expect(stalePrefixed.status).toBe(401);
+    expect(await stalePrefixed.json()).toEqual({
+      error: "unauthorized",
+      code: "AUTH_FAILED",
+      nextStep: expect.any(String),
+    });
     const ok = await app.request("/api/v1/external/health", { headers: { Authorization: `Bearer ${token}` } });
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toMatchObject({ ok: true, version: "test", pid: process.pid });
+    expect(await ok.json()).toMatchObject({
+      schemaVersion: 2,
+      version: "test",
+      pid: process.pid,
+      attachProtocolVersion: 1,
+      libraryId: "00000000-0000-4000-8000-000000000001",
+      instanceId: expect.any(String),
+    });
   });
 
   it("全局鉴权开启时 external 使用独立 Bearer，非 external 仍受全局鉴权保护", async () => {
     const filePath = await tempInstancePath();
-    await startExternalInstance({ port: 52341, version: "test", filePath });
+    await startExternalInstance({ port: 52341, version: "test", libraryId: "00000000-0000-4000-8000-000000000001", filePath });
     const externalToken = getExternalToken();
     process.env.QINGAGENT_AUTH_TOKEN = "global-auth-token";
 
@@ -68,8 +92,8 @@ describe("external instance + auth", () => {
     const nonExternal = await app.request("/api/v1/home", {
       headers: { Authorization: `Bearer ${externalToken}` },
     });
-    expect(nonExternal.status).toBe(401);
-    expect(await nonExternal.json()).toEqual({ error: "unauthorized" });
+    expect(nonExternal.status).toBe(403);
+    expect(await nonExternal.json()).toEqual({ error: "forbidden" });
 
     const externalMissingBearer = await app.request("/api/v1/external/health");
     expect(externalMissingBearer.status).toBe(401);

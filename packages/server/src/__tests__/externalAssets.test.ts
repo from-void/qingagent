@@ -28,16 +28,18 @@ beforeEach(async () => {
   process.env.QINGAGENT_UPLOAD_MAX_BYTES = "8";
   vi.resetModules();
 
-  const [externalModule, uploadModule, authModule, instanceModule, bridgeModule] = await Promise.all([
+  const [externalModule, uploadModule, authModule, principalModule, instanceModule, bridgeModule] = await Promise.all([
     import("../routes/external"),
     import("../routes/upload"),
     import("../lib/externalAuth"),
+    import("../lib/principal"),
     import("../lib/externalInstance"),
     import("../gateway/bridgeHandler"),
   ]);
   await instanceModule.startExternalInstance({
     port: 52341,
     version: "test",
+    libraryId: "00000000-0000-4000-8000-000000000001",
     filePath: path.join(tempDir, "instance.json"),
   });
   token = instanceModule.getExternalToken() ?? "";
@@ -45,6 +47,7 @@ beforeEach(async () => {
   sessionManager = bridgeModule.sessionManager;
 
   app = new Hono();
+  app.use("*", principalModule.principalMiddleware);
   app.use("/api/v1/external/*", authModule.externalTokenMiddleware);
   app.route("/api/v1", uploadModule.uploadRoutes);
   app.route("/api/v1/external", externalModule.externalRoutes);

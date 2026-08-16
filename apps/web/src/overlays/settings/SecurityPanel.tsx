@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDelayedVisible } from "../../system/useDelayedVisible";
+import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
 import type {
   SecurityBypassState,
   SecurityGrantCategory,
@@ -195,6 +196,8 @@ function mergeSettings(
 
 export function SecurityPanel() {
   const toast = useToast();
+  const confirmGrantEnabled = attachCapabilityEnabled("confirmGrant");
+  const credentialProviderEnabled = attachCapabilityEnabled("credentialProvider");
   const [settings, setSettings] = useState<SecuritySettingsResponse | null>(null);
   // 加载占位延迟 250ms 才显形,快请求不闪
   const showLoading = useDelayedVisible(settings === null);
@@ -418,7 +421,9 @@ export function SecurityPanel() {
     <div className="security-panel" data-wf="SecurityPanel">
       <header className="security-head">
         <h2>操作确认</h2>
-        <p>按操作类别选择确认方式。授权会立即生效，也可以随时改回。</p>
+        <p>{confirmGrantEnabled
+          ? "按操作类别选择确认方式。授权会立即生效，也可以随时改回。"
+          : "当前连接外部后台，确认授权设置仅供查看。"}</p>
       </header>
       {settings && (
         <div className="security-list">
@@ -447,7 +452,7 @@ export function SecurityPanel() {
               ].filter(Boolean).join(" ")}
               ariaBusy={bypassBusy}
               value={bypassEnabled ? BYPASS_NEVER : BYPASS_ASK}
-              disabled={bypassBusy}
+              disabled={!confirmGrantEnabled || bypassBusy}
               onChange={(value) => void updateBypass(value === BYPASS_NEVER)}
               skin="ink"
               options={[
@@ -502,7 +507,7 @@ export function SecurityPanel() {
                 ariaBusy={phase === "updating" || phase === "uncertain"}
                 value={category.grantMode}
                 disabled={
-                  !mutable || bypassEnabled ||
+                  !confirmGrantEnabled || !mutable || bypassEnabled ||
                   phase === "updating" || phase === "uncertain"
                 }
                 onChange={(value) => void updateGrantMode(category, value as SecurityGrantMode)}
@@ -518,6 +523,7 @@ export function SecurityPanel() {
       </div>
       <CredentialSharePanel
         items={settings?.credentialShare ?? []}
+        enabled={credentialProviderEnabled}
         onChanged={() => void readSettings().catch(() => undefined)}
       />
     </div>
@@ -527,9 +533,11 @@ export function SecurityPanel() {
 /** 已允许与命令行工具共享的登录信息:逐条可收回。没有任何条目时整段不显示。 */
 function CredentialSharePanel({
   items,
+  enabled,
   onChanged,
 }: {
   items: CredentialShareItem[];
+  enabled: boolean;
   onChanged: () => void;
 }) {
   const toast = useToast();
@@ -574,7 +582,8 @@ function CredentialSharePanel({
             <button
               type="button"
               className="security-revoke"
-              disabled={busy === item.declared}
+              disabled={!enabled || busy === item.declared}
+              title={enabled ? undefined : "连接外部后台时不使用本机凭据共享"}
               onClick={() => void revoke(item)}
             >
               收回

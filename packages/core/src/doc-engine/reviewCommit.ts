@@ -534,6 +534,18 @@ async function rebuildPendingReviewAfterRebase(input: {
     hunk.beforeText ?? "",
     hunk.afterText ?? "",
   ]);
+  const hunkBlockIdentity = (hunk: DiffHunk, fallback = ""): string => {
+    if (hunk.blockPath.length > 1) {
+      const item = hunk.before?.[0] ?? hunk.after?.[0];
+      const attrs = item && "attrs" in item
+        ? item.attrs as { blockId?: unknown }
+        : undefined;
+      if (typeof attrs?.blockId === "string" && attrs.blockId.length > 0) {
+        return attrs.blockId;
+      }
+    }
+    return hunk.anchor.blockId ?? fallback;
+  };
   for (const record of input.previousRemainingRecords) {
     const hunk = record.diffHunk;
     if (!hunk) continue;
@@ -541,10 +553,13 @@ async function rebuildPendingReviewAfterRebase(input: {
     const textKey = hunkTextKey(hunk);
     appendPrevious(previousByText, textKey, record);
     appendPrevious(previousByBlockAndText, JSON.stringify([
-      hunk.anchor.blockId ?? record.suggestion.anchor.blockId,
+      hunkBlockIdentity(hunk, record.suggestion.anchor.blockId),
       textKey,
     ]), record);
-    appendPrevious(previousByPathAndText, JSON.stringify([hunk.blockPath, textKey]), record);
+    appendPrevious(previousByPathAndText, JSON.stringify([
+      record.blockPath ?? hunk.blockPath,
+      textKey,
+    ]), record);
   }
   const claimedPreviousIds = new Set<string>();
   const previousByNewHunkId = new Map<string, SuggestionRecord>();
@@ -560,7 +575,7 @@ async function rebuildPendingReviewAfterRebase(input: {
     const previous = exact && !claimedPreviousIds.has(exact.suggestion.id)
       ? exact
       : claimUnique(previousByBlockAndText.get(JSON.stringify([
-          hunk.anchor.blockId ?? "",
+          hunkBlockIdentity(hunk),
           textKey,
         ])))
         ?? claimUnique(previousByPathAndText.get(JSON.stringify([hunk.blockPath, textKey])))
@@ -642,6 +657,7 @@ async function rebuildPendingReviewAfterRebase(input: {
       toolCallId: suggestion.id,
       before: hunk.beforeText ?? "",
       after: hunk.afterText ?? "",
+      blockPath: [...hunk.blockPath],
       blockIndex: hunk.blockPath[0] ?? 0,
       suggestion,
       diffHunk: hunk,

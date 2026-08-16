@@ -9,8 +9,10 @@ import {
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
+  type PmListItemNode,
   type PmMark,
   type PmNode,
+  type PmTaskItemNode,
 } from "@qingagent/pm-schema";
 
 type BlockPair = {
@@ -43,6 +45,13 @@ type MarkGroup = {
 };
 
 type InlineTextBlock = PmBlockNode & { content?: PmInlineNode[] };
+type ListBlock = Extract<PmBlockNode, { type: "bulletList" | "orderedList" | "taskList" }>;
+type ListItemNode = PmListItemNode | PmTaskItemNode;
+
+type ApplyBlockTarget = {
+  blockIndex: number;
+  itemIndex?: number;
+};
 
 // ── 锚点清理门槛(core 唯一来源,web 一律不得再调)──────────────────────
 // 连续公共段(dmp EQUAL)满足「grapheme 数 ≥ ANCHOR_MIN_GRAPHEMES 且不全是标点/空白」
@@ -299,10 +308,17 @@ export function applyDiffHunkToDoc(
 ): ApplyDiffHunkToDocResult {
   const doc = cloneValue(normalizePmDoc(baseDoc));
   const content = doc.content;
-  const index = resolveApplyBlockIndex(doc, hunk);
-  if (index === null || index < 0) {
+  const target = resolveApplyBlockIndex(doc, hunk);
+  if (target === null || target.blockIndex < 0) {
     return { ok: false, reason: `missing target block for ${hunk.hunkId}` };
   }
+  if (target.itemIndex !== undefined) {
+    return applyListItemHunkToDoc(doc, hunk, {
+      blockIndex: target.blockIndex,
+      itemIndex: target.itemIndex,
+    });
+  }
+  const index = target.blockIndex;
 
   if (hunk.op === "insert") {
     const blocks = nodesToBlocks(hunk.after);
@@ -408,6 +424,77 @@ export function applyDiffHunkToDoc(
   return { ok: true, doc: normalizePmDoc(doc) };
 }
 
+function applyListItemHunkToDoc(
+  doc: PmDoc,
+  hunk: DiffHunk,
+  target: { blockIndex: number; itemIndex: number },
+): ApplyDiffHunkToDocResult {
+  const list = doc.content[target.blockIndex];
+  if (!isListBlock(list)) {
+    return { ok: false, reason: `missing target list for ${hunk.hunkId}` };
+  }
+  const items = list.content as ListItemNode[];
+
+  if (hunk.op === "insert") {
+    const inserted = singleListItemNode(hunk.after);
+    if (!inserted || !listAcceptsItem(list, inserted)) {
+      return { ok: false, reason: `missing inserted list item for ${hunk.hunkId}` };
+    }
+    const insertedId = inserted.attrs.blockId;
+    const existingIndex = insertedId
+      ? items.findIndex((item) => item.attrs.blockId === insertedId)
+      : -1;
+    if (existingIndex >= 0) {
+      return getStablePmJson(items[existingIndex]) === getStablePmJson(inserted)
+        ? { ok: true, doc: normalizePmDoc(doc) }
+        : { ok: false, reason: `target list item changed for ${hunk.hunkId}` };
+    }
+    if (target.itemIndex < 0 || target.itemIndex > items.length) {
+      return { ok: false, reason: `missing list insertion point for ${hunk.hunkId}` };
+    }
+    items.splice(target.itemIndex, 0, cloneValue(inserted));
+    return { ok: true, doc: normalizePmDoc(doc) };
+  }
+
+  const currentItem = items[target.itemIndex];
+  const expected = singleListItemNode(hunk.before);
+  if (!currentItem || !expected) {
+    return { ok: false, reason: `missing expected list item for ${hunk.hunkId}` };
+  }
+  if (getStablePmJson(currentItem) !== getStablePmJson(expected)) {
+    const replacement = singleListItemNode(hunk.after);
+    if (
+      hunk.op === "replace" &&
+      replacement &&
+      getStablePmJson(currentItem) === getStablePmJson(replacement)
+    ) {
+      return { ok: true, doc: normalizePmDoc(doc) };
+    }
+    return { ok: false, reason: `target list item changed for ${hunk.hunkId}` };
+  }
+
+  if (hunk.op === "delete") {
+    if (items.length === 1) {
+      return { ok: false, reason: "target list emptied" };
+    }
+    items.splice(target.itemIndex, 1);
+    return { ok: true, doc: normalizePmDoc(doc) };
+  }
+  if (hunk.op !== "replace") {
+    return { ok: false, reason: `unsupported list item op for ${hunk.hunkId}` };
+  }
+  const replacement = singleListItemNode(hunk.after);
+  if (!replacement || !listAcceptsItem(list, replacement)) {
+    return { ok: false, reason: `missing replacement list item for ${hunk.hunkId}` };
+  }
+  const replacedItems = [...items];
+  replacedItems[target.itemIndex] = cloneValue(replacement);
+  const projected = withListItems(list, replacedItems);
+  const carried = carryOverDiagramUserAttrs(list, projected);
+  doc.content[target.blockIndex] = carried as ListBlock;
+  return { ok: true, doc: normalizePmDoc(doc) };
+}
+
 function appendGapHunks(input: {
   baseDoc: PmDoc;
   draftDoc: PmDoc;
@@ -475,6 +562,162 @@ function stripDiagramSvgForCompare(block: PmBlockNode): PmBlockNode {
   return { ...block, attrs } as PmBlockNode;
 }
 
+function isListBlock(node: PmBlockNode | undefined): node is ListBlock {
+  return node?.type === "bulletList" || node?.type === "orderedList" || node?.type === "taskList";
+}
+
+function isListItemNode(node: PmNode | undefined): node is ListItemNode {
+  return node?.type === "listItem" || node?.type === "taskItem";
+}
+
+function singleListItemNode(nodes: DiffHunk["before"] | DiffHunk["after"]): ListItemNode | undefined {
+  if (!Array.isArray(nodes) || nodes.length !== 1) return undefined;
+  const node = nodes[0] as PmNode | undefined;
+  return isListItemNode(node) ? node : undefined;
+}
+
+function listAcceptsItem(list: ListBlock, item: ListItemNode): boolean {
+  return list.type === "taskList" ? item.type === "taskItem" : item.type === "listItem";
+}
+
+function withListItems(list: ListBlock, items: readonly ListItemNode[]): ListBlock {
+  return {
+    ...cloneValue(list),
+    content: cloneValue(items),
+  } as ListBlock;
+}
+
+function listItemAlignmentKey(item: ListItemNode): string {
+  // pm-schema validators 保证 listItem/taskItem 的 blockId 非空；不再保留不可达的
+  // 文本 fingerprint 兜底，避免无身份项在同缝插入时引入另一套有序性语义。
+  return `id:${item.attrs.blockId}`;
+}
+
+function listItemAlignmentKeys(items: readonly ListItemNode[]): string[] {
+  const occurrences = new Map<string, number>();
+  return items.map((item) => {
+    const key = listItemAlignmentKey(item);
+    const occurrence = (occurrences.get(key) ?? 0) + 1;
+    occurrences.set(key, occurrence);
+    return `${key}\u0000occurrence:${occurrence}`;
+  });
+}
+
+function hasListItemReorder(baseItems: readonly ListItemNode[], draftItems: readonly ListItemNode[]): boolean {
+  const draftIndexById = new Map<string, number>();
+  draftItems.forEach((item, index) => {
+    const blockId = item.attrs.blockId;
+    if (blockId) draftIndexById.set(blockId, index);
+  });
+  let previousDraftIndex = -1;
+  for (const item of baseItems) {
+    const blockId = item.attrs.blockId;
+    if (!blockId) continue;
+    const draftIndex = draftIndexById.get(blockId);
+    if (draftIndex === undefined) continue;
+    if (draftIndex < previousDraftIndex) return true;
+    previousDraftIndex = draftIndex;
+  }
+  return false;
+}
+
+function listItemPmStart(list: ListBlock, itemIndex: number, listContentStart: number): number {
+  return list.content
+    .slice(0, itemIndex)
+    .reduce<number>((sum, item) => sum + nodeSize(item), listContentStart);
+}
+
+function appendMatchedListHunks(input: {
+  baseBlock: ListBlock;
+  draftBlock: ListBlock;
+  baseIndex: number;
+  draftIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  hunks: DiffHunk[];
+}): boolean {
+  const baseItems = input.baseBlock.content as ListItemNode[];
+  const draftItems = input.draftBlock.content as ListItemNode[];
+  if (hasListItemReorder(baseItems, draftItems)) return false;
+
+  const pairs = lcsPairs(
+    listItemAlignmentKeys(baseItems),
+    listItemAlignmentKeys(draftItems),
+  );
+  const maxItemCount = Math.max(baseItems.length, draftItems.length);
+  const pairingFailureRate = maxItemCount === 0 ? 0 : 1 - pairs.length / maxItemCount;
+  if (pairingFailureRate > 0.5) return false;
+
+  let baseCursor = 0;
+  let draftCursor = 0;
+  for (const pair of pairs) {
+    appendListItemGapHunks({
+      ...input,
+      baseItems,
+      draftItems,
+      baseStart: baseCursor,
+      baseEnd: pair.baseIndex,
+      draftStart: draftCursor,
+      draftEnd: pair.draftIndex,
+    });
+    const baseItem = baseItems[pair.baseIndex]!;
+    const draftItem = draftItems[pair.draftIndex]!;
+    if (getStablePmJson(baseItem) !== getStablePmJson(draftItem)) {
+      input.hunks.push(createListItemReplaceHunk({
+        ...input,
+        baseItem,
+        draftItem,
+        baseItemIndex: pair.baseIndex,
+        draftItemIndex: pair.draftIndex,
+      }));
+    }
+    baseCursor = pair.baseIndex + 1;
+    draftCursor = pair.draftIndex + 1;
+  }
+  appendListItemGapHunks({
+    ...input,
+    baseItems,
+    draftItems,
+    baseStart: baseCursor,
+    baseEnd: baseItems.length,
+    draftStart: draftCursor,
+    draftEnd: draftItems.length,
+  });
+  return true;
+}
+
+function appendListItemGapHunks(input: {
+  baseBlock: ListBlock;
+  draftBlock: ListBlock;
+  baseIndex: number;
+  draftIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  hunks: DiffHunk[];
+  baseItems: readonly ListItemNode[];
+  draftItems: readonly ListItemNode[];
+  baseStart: number;
+  baseEnd: number;
+  draftStart: number;
+  draftEnd: number;
+}): void {
+  for (let index = input.baseStart; index < input.baseEnd; index += 1) {
+    input.hunks.push(createListItemDeleteHunk({
+      ...input,
+      baseItem: input.baseItems[index]!,
+      baseItemIndex: index,
+    }));
+  }
+  for (let index = input.draftStart; index < input.draftEnd; index += 1) {
+    input.hunks.push(createListItemInsertHunk({
+      ...input,
+      draftItem: input.draftItems[index]!,
+      baseInsertIndex: input.baseStart,
+      draftItemIndex: index,
+    }));
+  }
+}
+
 function appendMatchedBlockHunks(input: {
   baseBlock: PmBlockNode;
   draftBlock: PmBlockNode;
@@ -489,6 +732,25 @@ function appendMatchedBlockHunks(input: {
     getStablePmJson(stripDiagramSvgForCompare(input.draftBlock))
   )
     return;
+
+  const hunksBeforeListDiff = input.hunks.length;
+  if (
+    isListBlock(input.baseBlock) &&
+    isListBlock(input.draftBlock) &&
+    input.baseBlock.type === input.draftBlock.type &&
+    blockAttrsEqualIgnoringId(input.baseBlock, input.draftBlock) &&
+    appendMatchedListHunks(input as Parameters<typeof appendMatchedListHunks>[0])
+  ) {
+    // 父列表只换 blockId、全部 item 同时，项级 diff 不会产生 hunk；必须恢复整列
+    // identity-only replace，供 annotation step map 与 pending draft 冷恢复迁移身份。
+    if (
+      input.hunks.length === hunksBeforeListDiff &&
+      input.baseBlock.attrs.blockId !== input.draftBlock.attrs.blockId
+    ) {
+      input.hunks.push(createBlockReplaceHunk(input));
+    }
+    return;
+  }
 
   if (!isInlineTextBlock(input.baseBlock) || !isInlineTextBlock(input.draftBlock) || input.baseBlock.type !== input.draftBlock.type) {
     input.hunks.push(createBlockReplaceHunk(input));
@@ -963,6 +1225,149 @@ function createMarkHunk(
   });
 }
 
+function createListItemReplaceHunk(input: {
+  baseBlock: ListBlock;
+  draftBlock: ListBlock;
+  baseIndex: number;
+  draftIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  baseItem: ListItemNode;
+  draftItem: ListItemNode;
+  baseItemIndex: number;
+  draftItemIndex: number;
+}): DiffHunk {
+  const beforeText = blockPlainText(input.baseItem);
+  const afterText = blockPlainText(input.draftItem);
+  const itemStart = listItemPmStart(input.baseBlock, input.baseItemIndex, input.textStart);
+  const afterItems = [...input.baseBlock.content] as ListItemNode[];
+  afterItems[input.baseItemIndex] = input.draftItem;
+  const beforeList = withListItems(input.baseBlock, input.baseBlock.content);
+  const afterList = withListItems(input.baseBlock, afterItems);
+  const hunkId = createHunkId(
+    "replace-list-item",
+    input.baseIndex,
+    input.baseItemIndex,
+    input.draftItemIndex,
+    input.baseItem.attrs.blockId,
+    beforeText,
+    afterText,
+  );
+  return createUngroupedHunk({
+    hunkId,
+    op: "replace",
+    blockPath: [input.baseIndex, input.baseItemIndex],
+    anchor: {
+      blockId: input.baseItem.attrs.blockId,
+      quoteBefore: beforeText,
+      quoteAfter: afterText,
+      pmFrom: itemStart,
+      pmTo: itemStart + nodeSize(input.baseItem),
+      anchorKind: "range",
+    },
+    before: [cloneValue(input.baseItem) as unknown as ContractPmNode],
+    after: [cloneValue(input.draftItem) as unknown as ContractPmNode],
+    beforeText,
+    afterText,
+    // 父列表投影只包含当前 item 的变化，供前端把该 hunk 映射成单行 rowDiff；
+    // 真正提交仍严格使用 before/after 的单个 item 节点。
+    beforeBlock: cloneValue(beforeList) as DiffHunk["beforeBlock"],
+    afterBlock: cloneValue(afterList) as DiffHunk["afterBlock"],
+    summary: "替换列表项",
+    overlapRatio: input.overlapRatio,
+  });
+}
+
+function createListItemDeleteHunk(input: {
+  baseBlock: ListBlock;
+  baseIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  baseItem: ListItemNode;
+  baseItemIndex: number;
+}): DiffHunk {
+  const beforeText = blockPlainText(input.baseItem);
+  const itemStart = listItemPmStart(input.baseBlock, input.baseItemIndex, input.textStart);
+  const afterItems = (input.baseBlock.content as ListItemNode[])
+    .filter((_, index) => index !== input.baseItemIndex);
+  const beforeList = withListItems(input.baseBlock, input.baseBlock.content);
+  const afterList = withListItems(input.baseBlock, afterItems);
+  const hunkId = createHunkId(
+    "delete-list-item",
+    input.baseIndex,
+    input.baseItemIndex,
+    input.baseItem.attrs.blockId,
+    beforeText,
+  );
+  return createUngroupedHunk({
+    hunkId,
+    op: "delete",
+    blockPath: [input.baseIndex, input.baseItemIndex],
+    anchor: {
+      blockId: input.baseItem.attrs.blockId,
+      quoteBefore: beforeText,
+      pmFrom: itemStart,
+      pmTo: itemStart + nodeSize(input.baseItem),
+      anchorKind: "range",
+    },
+    before: [cloneValue(input.baseItem) as unknown as ContractPmNode],
+    after: null,
+    beforeText,
+    beforeBlock: cloneValue(beforeList) as DiffHunk["beforeBlock"],
+    afterBlock: cloneValue(afterList) as DiffHunk["afterBlock"],
+    summary: "删除列表项",
+    overlapRatio: input.overlapRatio,
+  });
+}
+
+function createListItemInsertHunk(input: {
+  baseBlock: ListBlock;
+  baseIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  draftItem: ListItemNode;
+  baseInsertIndex: number;
+  draftItemIndex: number;
+}): DiffHunk {
+  const baseItems = input.baseBlock.content as ListItemNode[];
+  const previous = baseItems[input.baseInsertIndex - 1];
+  const afterText = blockPlainText(input.draftItem);
+  const itemStart = listItemPmStart(input.baseBlock, input.baseInsertIndex, input.textStart);
+  const afterItems = [...baseItems];
+  afterItems.splice(input.baseInsertIndex, 0, input.draftItem);
+  const beforeList = withListItems(input.baseBlock, baseItems);
+  const afterList = withListItems(input.baseBlock, afterItems);
+  const hunkId = createHunkId(
+    "insert-list-item",
+    input.baseIndex,
+    input.draftItemIndex,
+    input.draftItem.attrs.blockId,
+    afterText,
+  );
+  return createUngroupedHunk({
+    hunkId,
+    op: "insert",
+    blockPath: [input.baseIndex, input.draftItemIndex],
+    anchor: {
+      // 只锚 gap 前最近的存活配对项；首缝没有前项时直接锚父列表。不能锚本缝
+      // 待删首项，否则 delete 先落后 insert 会因锚点消失而整条丢失。
+      blockId: previous?.attrs.blockId ?? input.baseBlock.attrs.blockId,
+      quoteAfter: afterText,
+      pmFrom: itemStart,
+      pmTo: itemStart,
+      anchorKind: "position",
+      gravity: previous ? "after" : "before",
+    },
+    before: null,
+    after: [cloneValue(input.draftItem) as unknown as ContractPmNode],
+    afterText,
+    beforeBlock: cloneValue(beforeList) as DiffHunk["beforeBlock"],
+    afterBlock: cloneValue(afterList) as DiffHunk["afterBlock"],
+    summary: "插入列表项",
+    overlapRatio: input.overlapRatio,
+  });
+}
+
 function createBlockInsertHunk(baseDoc: PmDoc, draftBlocks: readonly PmBlockNode[], insertIndex: number, overlapRatio: number): DiffHunk {
   const previous = baseDoc.content[insertIndex - 1];
   const next = baseDoc.content[insertIndex];
@@ -1303,9 +1708,30 @@ function calculateOverlapRatio(baseText: string, draftText: string): number {
 }
 
 function compareHunksForApply(left: DiffHunk, right: DiffHunk): number {
-  const leftIndex = left.blockPath[0] ?? 0;
-  const rightIndex = right.blockPath[0] ?? 0;
-  if (leftIndex !== rightIndex) return rightIndex - leftIndex;
+  const leftTopIndex = left.blockPath[0] ?? 0;
+  const rightTopIndex = right.blockPath[0] ?? 0;
+  if (leftTopIndex !== rightTopIndex) return rightTopIndex - leftTopIndex;
+  // 同一 gap 的多项插入共用相邻 item 锚点。after 锚要让后项先落，before 锚要让
+  // 前项先落，才能在逐项 splice 后仍保持 draft 顺序。
+  if (
+    left.op === "insert" &&
+    right.op === "insert" &&
+    left.blockPath.length > 1 &&
+    right.blockPath.length > 1 &&
+    left.anchor.blockId === right.anchor.blockId &&
+    left.anchor.gravity === "before" &&
+    right.anchor.gravity === "before"
+  ) {
+    const leftItemIndex = left.blockPath[1] ?? 0;
+    const rightItemIndex = right.blockPath[1] ?? 0;
+    if (leftItemIndex !== rightItemIndex) return leftItemIndex - rightItemIndex;
+  }
+  const pathLength = Math.max(left.blockPath.length, right.blockPath.length);
+  for (let depth = 1; depth < pathLength; depth += 1) {
+    const leftIndex = left.blockPath[depth] ?? -1;
+    const rightIndex = right.blockPath[depth] ?? -1;
+    if (leftIndex !== rightIndex) return rightIndex - leftIndex;
+  }
   const leftFrom = left.anchor.pmFrom ?? 0;
   const rightFrom = right.anchor.pmFrom ?? 0;
   if (leftFrom !== rightFrom) return rightFrom - leftFrom;
@@ -1321,15 +1747,61 @@ function applyOpRank(op: DiffHunk["op"]): number {
 function resolveApplyBlockIndex(
   doc: PmDoc,
   hunk: DiffHunk,
-): number | null {
+): ApplyBlockTarget | null {
+  if (hunk.blockPath.length > 1) {
+    const anchorBlockId = hunk.anchor.blockId;
+    if (anchorBlockId) {
+      for (let blockIndex = 0; blockIndex < doc.content.length; blockIndex += 1) {
+        const block = doc.content[blockIndex];
+        if (!isListBlock(block)) continue;
+        const itemIndex = (block.content as ListItemNode[])
+          .findIndex((item) => item.attrs.blockId === anchorBlockId);
+        if (itemIndex >= 0) {
+          return {
+            blockIndex,
+            itemIndex: hunk.op === "insert"
+              ? hunk.anchor.gravity === "before" ? itemIndex : itemIndex + 1
+              : itemIndex,
+          };
+        }
+      }
+      const projectedParent = nodeToBlock(hunk.beforeBlock) ?? nodeToBlock(hunk.afterBlock);
+      // 首缝 insert 直接锚父列表，此时才用 blockPath[1] 定位。普通 item 锚
+      // 缺失必须失效，不能按旧序号猜位误插到同位置 sibling。
+      if (
+        hunk.op === "insert" &&
+        isListBlock(projectedParent) &&
+        anchorBlockId === projectedParent.attrs.blockId
+      ) {
+        const itemIndex = hunk.blockPath[1];
+        const blockIndex = doc.content.findIndex((block) => block.attrs.blockId === projectedParent.attrs.blockId);
+        return itemIndex === undefined || blockIndex < 0 ? null : { blockIndex, itemIndex };
+      }
+      return null;
+    }
+    const blockIndex = hunk.blockPath[0];
+    const itemIndex = hunk.blockPath[1];
+    if (
+      blockIndex === undefined ||
+      itemIndex === undefined ||
+      blockIndex < 0 ||
+      blockIndex >= doc.content.length ||
+      !isListBlock(doc.content[blockIndex])
+    ) {
+      return null;
+    }
+    return { blockIndex, itemIndex };
+  }
   const blockId = hunk.anchor.blockId;
   if (blockId) {
     const anchored = doc.content.findIndex((block) => block.attrs.blockId === blockId);
-    if (anchored >= 0) return anchored;
+    if (anchored >= 0) return { blockIndex: anchored };
     return null;
   }
   const index = hunk.blockPath[0];
-  return index === undefined || index < 0 || index > doc.content.length ? null : index;
+  return index === undefined || index < 0 || index > doc.content.length
+    ? null
+    : { blockIndex: index };
 }
 
 function isInlineNode(node: PmNode): node is PmInlineNode {
@@ -1641,25 +2113,37 @@ function findClosestTextMatch(text: string, quote: string, hint: number): number
   return best;
 }
 
-function inlineTextStartForDoc(doc: PmDoc, blockIndex: number): number | null {
-  return collectTopLevelTextStarts(doc)[blockIndex] ?? null;
+function inlineTextTargetForDoc(
+  doc: PmDoc,
+  blockPath: readonly number[],
+): { block: InlineTextBlock; textStart: number } | null {
+  // 深路径属于列表项级 hunk，早已在 applyListItemHunkToDoc 分流；行内 range
+  // 解析只服务顶层文本块，避免保留一条实际不可达且坐标语义不同的分支。
+  if (blockPath.length !== 1) return null;
+  const blockIndex = blockPath[0];
+  if (blockIndex === undefined) return null;
+  const block = doc.content[blockIndex];
+  const blockStart = doc.content
+    .slice(0, blockIndex)
+    .reduce<number>((sum, node) => sum + nodeSize(node), 0);
+  return block && isInlineTextBlock(block)
+    ? { block, textStart: blockStart + 1 }
+    : null;
 }
 
 function relativeRangeFromHunk(
   hunk: DiffHunk,
   oldBaseDoc: PmDoc | undefined,
   currentDoc: PmDoc,
-  currentIndex: number,
+  currentPath: readonly number[],
 ): { from: number; to: number; oldText: string } | null {
-  const oldIndex = hunk.blockPath[0] ?? currentIndex;
   const rangeDoc = oldBaseDoc ?? currentDoc;
-  const rangeIndex = oldBaseDoc ? oldIndex : currentIndex;
-  const textStart = inlineTextStartForDoc(rangeDoc, rangeIndex);
-  if (textStart === null || hunk.anchor.pmFrom === undefined) return null;
-  const oldBlock = rangeDoc.content[rangeIndex];
-  const oldText = oldBlock && isInlineTextBlock(oldBlock) ? inlineText(oldBlock.content) : "";
-  const from = Math.max(0, hunk.anchor.pmFrom - textStart);
-  const to = Math.max(from, (hunk.anchor.pmTo ?? hunk.anchor.pmFrom) - textStart);
+  const rangePath = oldBaseDoc ? hunk.blockPath : currentPath;
+  const target = inlineTextTargetForDoc(rangeDoc, rangePath);
+  if (!target || hunk.anchor.pmFrom === undefined) return null;
+  const oldText = inlineText(target.block.content);
+  const from = Math.max(0, hunk.anchor.pmFrom - target.textStart);
+  const to = Math.max(from, (hunk.anchor.pmTo ?? hunk.anchor.pmFrom) - target.textStart);
   return { from, to, oldText };
 }
 
@@ -1692,7 +2176,7 @@ function hasPureInlineInsertEffect(input: {
     input.hunk,
     input.oldBaseDoc,
     input.currentDoc,
-    input.currentIndex,
+    [input.currentIndex],
   );
   if (!relative) return false;
   const currentText = inlineText(input.currentBlock.content);
@@ -1946,7 +2430,7 @@ function resolveInlineApplyRange(input: {
     input.hunk,
     input.oldBaseDoc,
     input.currentDoc,
-    input.currentIndex,
+    [input.currentIndex],
   );
   if (!relative) return null;
   const currentText = inlineText(input.currentBlock.content);

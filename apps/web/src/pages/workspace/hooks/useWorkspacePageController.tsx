@@ -130,6 +130,7 @@ import type {
 } from "../data/protocol";
 import {
   derivePatchPresentation,
+  mergeGranularListBlockPatchInputs,
   pmDocToViewDocumentSnapshot,
   suggestionToBlockPatchInputs,
   suggestionToPatchOverlay,
@@ -1149,7 +1150,7 @@ export function useWorkspacePageController() {
     [overlayInputs],
   );
   const blockPatchInputs = useMemo<BlockPatchInput[]>(() => {
-    return allReviewPatches.flatMap((tc, order) => {
+    const inputs = allReviewPatches.flatMap((tc, order) => {
       if (tc.body.kind !== "docSuggestion") return [];
       const s = tc.status.kind;
       if (s !== "reviewing" && s !== "accepted" && s !== "rejected") return [];
@@ -1157,6 +1158,7 @@ export function useWorkspacePageController() {
       if (overlayCoveredIds.has(tc.body.data.data.id)) return [];
       return suggestionToBlockPatchInputs(tc.body.data.data, order);
     });
+    return mergeGranularListBlockPatchInputs(inputs);
   }, [allReviewPatches, overlayCoveredIds]);
   // 数数单一真相源:计数 / 序号 / 正文标记 / 打字调度都从这里派生,天然一致。
   const patchPresentation = useMemo(

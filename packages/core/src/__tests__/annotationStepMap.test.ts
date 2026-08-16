@@ -25,6 +25,16 @@ const codeBlock = (blockId: string, value: string): PmBlockNode => ({
   content: [{ type: "text", text: value }],
 } as PmBlockNode);
 
+const bulletList = (blockId: string, items: Array<{ blockId: string; text: string }>): PmBlockNode => ({
+  type: "bulletList",
+  attrs: { blockId },
+  content: items.map((item) => ({
+    type: "listItem",
+    attrs: { blockId: item.blockId },
+    content: [paragraph(`${item.blockId}-p`, item.text) as Extract<PmBlockNode, { type: "paragraph" }>],
+  })),
+});
+
 const doc = (content: PmBlockNode[]): PmDoc => ({
   type: "doc",
   attrs: { schemaVersion: 1 },
@@ -267,6 +277,27 @@ describe("annotation StepMap", () => {
     expect(mapAnnotationGroupsThroughSteps(groups, steps, finalDoc).groups).toEqual(groups);
   });
 
+  it("列表项 hunk 使用深路径对应的 item PM 边界，不把整列当替换范围", () => {
+    const baseDoc = doc([bulletList("list-map", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "旧" },
+    ])]);
+    const finalDoc = doc([bulletList("list-map", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "新" },
+    ])]);
+
+    const steps = buildAnnotationMappingSteps(baseDoc, finalDoc);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      stepType: "replace",
+      from: 6,
+      to: 11,
+      slice: { content: [{ type: "listItem", attrs: { blockId: "item-b" } }] },
+    });
+  });
+
   it("仅 blockId 变化仍生成迁移 step，并把批注锚点迁到新块身份", () => {
     const baseDoc = doc([{
       type: "callout",
@@ -294,6 +325,26 @@ describe("annotation StepMap", () => {
     expect(mapped.groups[0]?.anchors[0]).toMatchObject({
       blockId: "block-new-p",
       quote: "唯一批注原句",
+    });
+  });
+
+  it("列表父 blockId 变化而 items 全同时仍生成整列迁移 step", () => {
+    const items = [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+    ];
+    const baseDoc = doc([bulletList("list-old", items)]);
+    const finalDoc = doc([bulletList("list-new", items)]);
+
+    const steps = buildAnnotationMappingSteps(baseDoc, finalDoc);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      stepType: "replace",
+      from: 0,
+      slice: {
+        content: [{ type: "bulletList", attrs: { blockId: "list-new" } }],
+      },
     });
   });
 

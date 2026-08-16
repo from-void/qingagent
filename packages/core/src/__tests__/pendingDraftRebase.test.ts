@@ -32,6 +32,18 @@ function paragraph(blockId: string, value: string | PmInlineNode[]): PmBlockNode
   };
 }
 
+function bulletList(blockId: string, items: Array<{ blockId: string; text: string }>): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [paragraph(`${item.blockId}-p`, item.text) as Extract<PmBlockNode, { type: "paragraph" }>],
+    })),
+  };
+}
+
 function doc(blocks: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content: blocks };
 }
@@ -52,6 +64,7 @@ function recordsFromDiff(base: PmDoc, draft: PmDoc, baseVersion = 1): Suggestion
     toolCallId: hunk.hunkId,
     before: hunk.beforeText ?? "",
     after: hunk.afterText ?? "",
+    blockPath: [...hunk.blockPath],
     blockIndex: hunk.blockPath[0] ?? 0,
     suggestion: {
       id: hunk.hunkId,
@@ -177,6 +190,84 @@ describe("rebaseRemainingPendingDraft", () => {
     if (result.status !== "pending") return;
     const nextHunks = buildDraftDiff(committed, result.nextDraftDoc, { baseVersion: 2 });
     expect(nextHunks.map((hunk) => hunk.anchor.blockId).sort()).toEqual(["block-b", "block-c"]);
+  });
+
+  it("列表项部分采纳后按深 blockPath rebase 剩余 sibling，不落到父列表层", async () => {
+    const base = doc([bulletList("list-rebase", [
+      { blockId: "item-a", text: "A 旧" },
+      { blockId: "item-b", text: "B 旧" },
+    ])]);
+    const draft = doc([bulletList("list-rebase", [
+      { blockId: "item-a", text: "A 新" },
+      { blockId: "item-b", text: "B 新" },
+    ])]);
+    const records = recordsFromDiff(base, draft, 1);
+    expect(records.map((record) => record.blockPath)).toEqual([[0, 0], [0, 1]]);
+    const committed = applyDiffHunks(base, [records[0]!.diffHunk!]).doc;
+
+    const result = await rebaseRemainingPendingDraft({
+      docId: "doc-list-item-rebase",
+      threadId: "thread-list-item-rebase",
+      oldBaseDoc: base,
+      oldDraftDoc: draft,
+      committedDoc: committed,
+      committedVersion: 2,
+      remainingRecords: records.slice(1),
+      persist: false,
+    });
+
+    expect(result.status).toBe("pending");
+    if (result.status !== "pending") return;
+    expect(result.hunks).toHaveLength(1);
+    expect(result.hunks[0]).toMatchObject({
+      op: "replace",
+      blockPath: [0, 1],
+      anchor: { blockId: "item-b" },
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    });
+    expect(applyDiffHunks(committed, result.hunks).doc).toEqual(draft);
+  });
+
+  it("同 gap 多项插入在接受别处裁决后按 apply 顺序 rebase，并以正确顺序持久化", async () => {
+    const base = doc([
+      bulletList("list-same-gap", [
+        { blockId: "item-a", text: "A" },
+        { blockId: "item-d", text: "D" },
+      ]),
+      paragraph("block-tail", "旧尾段"),
+    ]);
+    const draft = doc([
+      bulletList("list-same-gap", [
+        { blockId: "item-a", text: "A" },
+        { blockId: "item-x", text: "X" },
+        { blockId: "item-y", text: "Y" },
+        { blockId: "item-d", text: "D" },
+      ]),
+      paragraph("block-tail", "新尾段"),
+    ]);
+    const records = recordsFromDiff(base, draft, 1);
+    const tail = records.find((record) => record.diffHunk?.anchor.blockId === "block-tail");
+    const inserts = records.filter((record) => record.diffHunk?.op === "insert");
+    if (!tail || inserts.length !== 2) throw new Error("fixture missing same-gap hunks");
+    const committed = applyDiffHunks(base, [tail.diffHunk!]).doc;
+
+    const result = await rebaseRemainingPendingDraft({
+      docId: "doc-same-gap-order",
+      threadId: "thread-same-gap-order",
+      oldBaseDoc: base,
+      oldDraftDoc: draft,
+      committedDoc: committed,
+      committedVersion: 2,
+      remainingRecords: inserts,
+    });
+
+    expect(result.status).toBe("pending");
+    if (result.status !== "pending") return;
+    expect(result.nextDraftDoc).toEqual(draft);
+    expect(result.dropped).toEqual([]);
+    const persisted = await documentDraftRepo.load("doc-same-gap-order");
+    expect(persisted?.draftPmDoc).toEqual(draft);
   });
 
   it("同段部分采纳后 rebase 剩余 hunk 不因重复文本误定位", async () => {

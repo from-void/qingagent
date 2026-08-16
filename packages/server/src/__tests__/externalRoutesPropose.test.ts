@@ -793,7 +793,7 @@ describe("external proposals", () => {
     expect(settled!.docDraftCandidateDoc).toBeNull();
   });
 
-  it("w1 固化：单批删二加一后候选与结算均为唯一 7 项非空 taskList", async () => {
+  it("w1 固化：单批删二加一拆成 3 个项级 hunk，结算后仍为唯一 7 项非空 taskList", async () => {
     const sessionId = await createSession();
     const initialMarkdown = insertAfterBlockW1.initialItems
       .map((item) => `- [ ] ${item}`)
@@ -822,8 +822,13 @@ describe("external proposals", () => {
       ],
     });
     expect(proposed.status).toBe(200);
-    expect(await proposed.json()).toMatchObject({ status: "review", count: 1 });
+    expect(await proposed.json()).toMatchObject({ status: "review", count: 3 });
     const pending = await getOrRestoreSession(sessionId);
+    expect([...pending!.suggestions.values()].map((record) => record.diffHunk)).toEqual([
+      expect.objectContaining({ op: "delete", blockPath: [0, 2] }),
+      expect.objectContaining({ op: "insert", blockPath: [0, 3] }),
+      expect.objectContaining({ op: "delete", blockPath: [0, 5] }),
+    ]);
     const candidate = pending!.docDraftCandidateDoc!;
     const candidateSnapshot = taskListSnapshot(candidate);
     expect(candidateSnapshot).toEqual({
@@ -844,7 +849,7 @@ describe("external proposals", () => {
     expect(await accepted.json()).toMatchObject({
       status: "reviewed",
       docVersion: 2,
-      acceptedCount: 1,
+      acceptedCount: 3,
       rejectedCount: 0,
       remainingCount: 0,
     });

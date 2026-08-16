@@ -871,7 +871,7 @@ describe("QingML draft tools", () => {
     expect(state.docDraftCandidateDoc?.content.map(inlineText)).toEqual(["章", "小标题", "正文"]);
   });
 
-  it("editDraft 行级 replaceListItem 保留 item ref,并继续产出父 list replace hunk", async () => {
+  it("editDraft 行级 replaceListItem 保留 item ref,并产出该 item 的深路径 hunk", async () => {
     const state = createSession("s-edit-list-item-structure");
     const base = doc([
       bulletList("list-a", [
@@ -903,8 +903,10 @@ describe("QingML draft tools", () => {
     expect(hunks).toHaveLength(1);
     expect(hunks[0]).toMatchObject({
       op: "replace",
-      blockPath: [0],
-      anchor: { blockId: "list-a" },
+      blockPath: [0, 1],
+      anchor: { blockId: "item-b" },
+      before: [{ type: "listItem", attrs: { blockId: "item-b" } }],
+      after: [{ type: "listItem", attrs: { blockId: "item-b" } }],
       beforeBlock: { type: "bulletList" },
       afterBlock: { type: "bulletList" },
     });

@@ -8,6 +8,7 @@ import { createNativeCursorWidget } from "./nativePresentationPm";
 import { splitGraphemes } from "./presentationSpans";
 import type { DocSuggestion } from "./protocol";
 import type { AppliedPatch, BlockPatchInput, PatchOverlayInput, ReviewTarget, ViewBlock } from "./protocol";
+import { blockPatchIds, projectGranularListBlockPatchInput } from "./protocol";
 import {
   isAllowedLinkHref,
   type PmBlockNode,
@@ -304,21 +305,30 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
   const patchIdsWithInsert = new Set(
     (args.blockPatches ?? [])
       .filter((p) => p.op === "insert" || p.op === "replace")
-      .map((p) => p.patchId),
+      .flatMap(blockPatchIds),
   );
 
-  for (const [inputIndex, input] of (args.blockPatches ?? []).entries()) {
-    if (rejectedIds.has(input.patchId)) continue;
-    if (!isPatchRevealed(input.patchId, args.revealedPatchIds)) continue;
-    const applied = appliedById.get(input.patchId);
-    const index = applied?.index ?? input.order ?? 0;
-    const status = acceptedIds.has(input.patchId) ? "accepted" : "reviewing";
-    const currentClass = (args.activeReviewTargetId ?? args.activePatchId) === input.patchId ? " is-current" : "";
+  for (const [inputIndex, originalInput] of (args.blockPatches ?? []).entries()) {
+    const visiblePatchIds = blockPatchIds(originalInput).filter((patchId) =>
+      !rejectedIds.has(patchId) && isPatchRevealed(patchId, args.revealedPatchIds)
+    );
+    if (visiblePatchIds.length === 0) continue;
+    const input = projectGranularListBlockPatchInput(originalInput, new Set(visiblePatchIds));
+    if (!input) continue;
+    const inputPatchIds = blockPatchIds(input);
+    const appliedMembers = inputPatchIds
+      .map((patchId) => appliedById.get(patchId))
+      .filter((patch): patch is AppliedPatch => Boolean(patch));
+    const index = appliedMembers.length > 0
+      ? Math.min(...appliedMembers.map((patch) => patch.index))
+      : input.order ?? 0;
+    const status = inputPatchIds.every((patchId) => acceptedIds.has(patchId)) ? "accepted" : "reviewing";
+    const currentClass = inputPatchIds.includes(args.activePatchId ?? "") ? " is-current" : "";
     const statusClass = status === "accepted" ? " is-accepted" : "";
     const spec = patchSpec(input.patchId, index, status, input.op);
     const range = resolveBlockPatchRange(input, blockRanges);
     if (!range) {
-      dropped.push(input.patchId);
+      dropped.push(...inputPatchIds);
       continue;
     }
 
@@ -330,7 +340,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       const count = Math.max(1, input.blockCount ?? input.replaceBeforeBlocks?.length ?? input.blocks.length);
       const hiddenRanges = blockRanges.slice(range.index, range.index + count);
       if (hiddenRanges.length !== count) {
-        dropped.push(input.patchId);
+        dropped.push(...inputPatchIds);
         continue;
       }
       // 隐藏被替换/删除的旧块(delete/replace 都隐藏原位;replace 的原文经 hover 卡看)。
@@ -370,7 +380,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
 
     if (input.op === "insert" || input.op === "replace") {
       if (input.blocks.length === 0) {
-        dropped.push(input.patchId);
+        dropped.push(...inputPatchIds);
         continue;
       }
       const granularClass = granular
@@ -387,7 +397,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             currentClass + granularClass,
             statusClass,
             args.mountBlockView,
-            args.reviewTargets?.filter((target) => target.patchId === input.patchId),
+            args.reviewTargets?.filter((target) => inputPatchIds.includes(target.patchId)),
             args.activeReviewTargetId,
             inputIndex,
             args.tableTypedByPatch?.get(input.patchId),

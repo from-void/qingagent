@@ -107,6 +107,18 @@ function callout(blockId: string, content: string): PmBlockNode {
   };
 }
 
+function bulletList(blockId: string, items: Array<{ blockId: string; text: string }>): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [paragraph(`${item.blockId}-p`, item.text) as Extract<PmBlockNode, { type: "paragraph" }>],
+    })),
+  };
+}
+
 function doc(blocks: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content: blocks };
 }
@@ -385,6 +397,43 @@ describe("pending draft rehydrate", () => {
     expect(result.kind === "restored" ? result.frames.some((frame) => frame.kind === "docDiffReady") : false).toBe(true);
     expect(docText(state.doc)).toBe("旧正文");
     expect(state.docState).toEqual({ kind: "pendingReview" });
+  });
+
+  it("列表项级 hunk 冷恢复后保留完整 blockPath，父列表与 item 层不混淆", async () => {
+    const state = createSession("rehy-list-item-path");
+    const base = doc([bulletList("list-rehydrate", [
+      { blockId: "item-a", text: "A 旧" },
+      { blockId: "item-b", text: "B 保留" },
+    ])]);
+    const draft = doc([bulletList("list-rehydrate", [
+      { blockId: "item-a", text: "A 新" },
+      { blockId: "item-b", text: "B 保留" },
+    ])]);
+    state.doc = base;
+    state.docVersion = 1;
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+
+    const result = await rehydratePendingDraft(state);
+
+    expect(result.kind).toBe("restored");
+    expect(result.kind === "restored" ? result.hunks : []).toMatchObject([{
+      op: "replace",
+      blockPath: [0, 0],
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    }]);
+    const [record] = [...state.suggestions.values()];
+    expect(record?.blockIndex).toBe(0);
+    expect(record?.blockPath).toEqual([0, 0]);
+    expect(record?.diffHunk?.blockPath).toEqual([0, 0]);
+    expect(state.doc).toEqual(base);
+    expect(state.docDraftCandidateDoc).toEqual(draft);
   });
 
   it("整稿待审批次冷恢复后仍按完整新旧版本审阅", async () => {

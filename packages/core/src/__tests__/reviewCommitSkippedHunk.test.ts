@@ -41,6 +41,29 @@ function paragraph(blockId: string, value: string): PmBlockNode {
   return { type: "paragraph", attrs: { blockId }, content: [text(value)] };
 }
 
+function bulletList(blockId: string, items: Array<{ blockId: string; text: string }>): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [paragraph(`${item.blockId}-p`, item.text) as Extract<PmBlockNode, { type: "paragraph" }>],
+    })),
+  };
+}
+
+function firstListTexts(pmDoc: PmDoc | undefined): string[] {
+  const list = pmDoc?.content[0];
+  if (list?.type !== "bulletList") return [];
+  return list.content.map((item) => {
+    const block = item.content[0];
+    return block?.type === "paragraph"
+      ? (block.content ?? []).map((node) => node.type === "text" ? node.text : "").join("")
+      : "";
+  });
+}
+
 function table(blockId: string, left: string, right: string): PmBlockNode {
   return {
     type: "table",
@@ -258,6 +281,72 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
     expect([...restarted.suggestions.values()][0]?.diffHunk?.anchor.blockId).toBe("blk-b");
     expect(restarted.docDraftCandidateDoc?.content.map(blockText)).toEqual(["甲新文", "乙新文"]);
     expect((await documentDraftRepo.load(sessionId))?.baseVersion).toBe(2);
+  });
+
+  it("RF3 冷恢复重放同 gap 多项插入时保持 X、Y 原序", async () => {
+    const sessionId = "commit-rebase-same-gap-order";
+    const state = createSession(sessionId);
+    const base = doc([
+      bulletList("list-rf3-gap", [
+        { blockId: "item-a", text: "A" },
+        { blockId: "item-d", text: "D" },
+      ]),
+      paragraph("tail-rf3-gap", "旧尾段"),
+    ]);
+    const draft = doc([
+      bulletList("list-rf3-gap", [
+        { blockId: "item-a", text: "A" },
+        { blockId: "item-x", text: "X" },
+        { blockId: "item-y", text: "Y" },
+        { blockId: "item-d", text: "D" },
+      ]),
+      paragraph("tail-rf3-gap", "新尾段"),
+    ]);
+    const hunks = await seedReviewState(state, base, draft);
+    const tail = hunks.find((hunk) => hunk.anchor.blockId === "tail-rf3-gap");
+    if (!tail || hunks.filter((hunk) => hunk.op === "insert").length !== 2) {
+      throw new Error("fixture missing same-gap hunks");
+    }
+    await seedCanonical(state, base);
+    await insertVersion({
+      versionId: `${sessionId}:v1`,
+      docId: sessionId,
+      docVersion: 1,
+      contentHash: getPmContentHash(base),
+      schemaVersion: 1,
+      actorType: "agent",
+      summary: "测试基线",
+      snapshotPm: base,
+      parentVersion: 0,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    });
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+    await getDocumentsClient().execute(`CREATE TRIGGER fail_rf3_same_gap_rebase
+      BEFORE INSERT ON document_suggestions
+      WHEN NEW.doc_id = '${sessionId}' AND NEW.base_version = 2
+      BEGIN
+        SELECT RAISE(ABORT, 'injected same-gap rebase persistence failure');
+      END`);
+
+    await expect(collectFrames(commitPatches(state, [tail.hunkId])))
+      .rejects.toThrow("injected same-gap rebase persistence failure");
+    await getDocumentsClient().execute("DROP TRIGGER fail_rf3_same_gap_rebase");
+    const canonical = await documentRepo.load(sessionId);
+    const restarted = createSession(sessionId);
+    restarted.doc = canonical!.pmDoc!;
+    restarted.docVersion = canonical!.docVersion;
+
+    const restored = await rehydratePendingDraft(restarted);
+
+    expect(restored.kind).toBe("restored");
+    expect(firstListTexts(restarted.docDraftCandidateDoc ?? undefined)).toEqual(["A", "X", "Y", "D"]);
+    expect(firstListTexts((await documentDraftRepo.load(sessionId))?.draftPmDoc)).toEqual(["A", "X", "Y", "D"]);
   });
 
   it("rebase 失锚的剩余 suggestion 落 conflict 并发 failed 终态帧", async () => {

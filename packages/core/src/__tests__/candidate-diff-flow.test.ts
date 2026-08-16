@@ -149,6 +149,18 @@ function paragraph(blockId: string, content: string | PmInlineNode[]): PmBlockNo
   };
 }
 
+function bulletList(blockId: string, items: Array<{ blockId: string; text: string }>): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [paragraph(`${item.blockId}-p`, item.text) as Extract<PmBlockNode, { type: "paragraph" }>],
+    })),
+  };
+}
+
 function pmDoc(content: PmBlockNode[]): PmDoc {
   return {
     type: "doc",
@@ -916,6 +928,47 @@ describe("candidate-diff backend flow", () => {
     expect(state.lastContentEditedAt)
       .toBe((await findOpByDocumentVersion(state.docId, state.docVersion))?.createdAt);
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+  });
+
+  it("settleDraftCandidate 把列表项级 hunk 的完整 blockPath 写入 SuggestionRecord", async () => {
+    const { createSession, settleDraftCandidate } = await import("../bridge/index.js");
+    const state = createSession("candidate-list-item-path");
+    const baseDoc = pmDoc([bulletList("list-settle", [
+      { blockId: "item-a", text: "A 旧" },
+      { blockId: "item-b", text: "B 保留" },
+    ])]);
+    const draftDoc = pmDoc([bulletList("list-settle", [
+      { blockId: "item-a", text: "A 新" },
+      { blockId: "item-b", text: "B 保留" },
+    ])]);
+    state.doc = baseDoc;
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftCandidateDoc = draftDoc;
+    await seedDocument({
+      docId: state.docId,
+      sessionId: state.sessionId,
+      docVersion: 1,
+      doc: baseDoc,
+    });
+
+    const settled = await collectFramesAndReturn(settleDraftCandidate({
+      state,
+      agentMessageId: "agent-list-item-path",
+      streamId: "stream-list-item-path",
+      runId: "run-list-item-path",
+      wholeDocument: false,
+    }));
+
+    expect(settled.result).toEqual({ hunkCount: 1, docWritten: false });
+    const [record] = [...state.suggestions.values()];
+    expect(record?.blockIndex).toBe(0);
+    expect(record?.blockPath).toEqual([0, 0]);
+    expect(record?.diffHunk?.blockPath).toEqual([0, 0]);
+    expect(record?.diffHunk).toMatchObject({
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    });
   });
 
   it("结构化旧稿整体替换后，待审新版与最终 doc_pm 都不保留旧标题、清单或表格", async () => {

@@ -287,7 +287,7 @@ describe("draft rich formats AI 草稿工具链路", () => {
     });
   });
 
-  it("buildDraftDiff:taskList checked 翻转是单块 replace,插入 blockMath 是 insert,含 U+FFFC 投影不崩", () => {
+  it("buildDraftDiff:taskList checked 翻转是项级 replace,插入 blockMath 是 insert,含 U+FFFC 投影不崩", () => {
     const baseTask = doc([
       taskList("block-tasks", [
         { checked: false, text: "写摘要" },
@@ -311,10 +311,12 @@ describe("draft rich formats AI 草稿工具链路", () => {
     expect(taskHunks).toHaveLength(1);
     expect(taskHunks[0]).toMatchObject({
       op: "replace",
-      blockPath: [0],
-      anchor: { blockId: "block-tasks" },
-      beforeText: "[ ] 写摘要\n[x] 审校",
-      afterText: "[x] 写摘要\n[x] 审校",
+      blockPath: [0, 0],
+      anchor: { blockId: "block-tasks-item-1" },
+      beforeText: "[ ] 写摘要",
+      afterText: "[x] 写摘要",
+      before: [{ type: "taskItem", attrs: { blockId: "block-tasks-item-1", checked: false } }],
+      after: [{ type: "taskItem", attrs: { blockId: "block-tasks-item-1", checked: true } }],
     });
     expect(taskHunks.map((hunk) => hunk.op)).not.toEqual(expect.arrayContaining(["insert", "delete"]));
 

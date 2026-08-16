@@ -326,7 +326,7 @@ describe("draft rich formats session-scoped tools", () => {
       }),
       expect.objectContaining({
         kind: "replace",
-        ref: "block-tasks",
+        ref: "block-tasks-item-1",
         before: expect.stringContaining("阶段B: 待校验"),
         after: expect.stringContaining("阶段B: 已完成校验"),
       }),
@@ -531,7 +531,11 @@ describe("draft rich formats session-scoped tools", () => {
     expect(diff2.stats.totalWords).toBe(countDocVisibleChars(state.docDraftCandidateDoc!));
     expect(pmToPlainText(state.docDraftCandidateDoc!)).toContain("核心指标 F=ma 已经复核");
     expect(diff2.changes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ref: taskRef, after: expect.stringContaining("发布结论") }),
+      expect.objectContaining({
+        kind: "insert",
+        ref: `${taskRef}-item-2`,
+        after: expect.stringContaining("发布结论"),
+      }),
       expect.objectContaining({ before: "需要", after: "已经" }),
     ]));
 

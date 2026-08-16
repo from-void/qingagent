@@ -246,15 +246,17 @@ describe("AttachRoutePolicy 防漂移契约", () => {
           `${principalName} ${method} ${template}`).toBe(expected[principalName as keyof typeof expected]);
       }
       for (const candidateMethod of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+        // HTTP 语义:门禁把 HEAD 视同 GET(深链 HEAD 探测实证),预期表按 GET 行取值。
+        const lookupMethod = candidateMethod === "HEAD" ? "GET" : candidateMethod;
         const candidateClass = EXPECTED_ROUTE_CLASSES.find(([, expectedMethod, expectedTemplate]) =>
-          expectedMethod === candidateMethod && matchesExpectedTemplate(pathname, expectedTemplate))?.[0];
+          expectedMethod === lookupMethod && matchesExpectedTemplate(pathname, expectedTemplate))?.[0];
         const expectedByPrincipal = {
           anonymous: candidateClass === "legacy" ? "legacy" : "deny",
           global: candidateClass === "legacy" ? "legacy" : "deny",
           externalInstance: candidateClass === "handshake" || candidateClass === "external"
             ? "allow"
             : "deny",
-          attachSession: expectedAttachAllows(candidateMethod, pathname)
+          attachSession: expectedAttachAllows(lookupMethod, pathname)
             ? "allow"
             : "deny",
         } as const;
@@ -287,3 +289,17 @@ describe("AttachOperationPolicy 防漂移契约", () => {
     expect(byKind.get("externalPropose")).toMatchObject({ allowInAttach: false, requiredCapability: null });
   });
 });
+
+describe("HEAD 视同 GET(深链探测)", () => {
+  it("external doc 路由的 HEAD 判定与 GET 一致", () => {
+    const path = "/api/v1/external/sessions/abc/doc";
+    const principal = { kind: "externalInstance" } as never;
+    expect(routeAuthorizationDecision(principal, "HEAD", path))
+      .toBe(routeAuthorizationDecision(principal, "GET", path));
+    expect(routeAuthorizationDecision(principal, "HEAD", path)).toBe("allow");
+  });
+  it("目录外路径的 HEAD 仍拒绝", () => {
+    const principal = { kind: "externalInstance" } as never;
+    expect(routeAuthorizationDecision(principal, "HEAD", "/api/v1/commands")).toBe("deny");
+  });
+})

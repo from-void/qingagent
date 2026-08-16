@@ -305,9 +305,12 @@ export type RouteAuthorizationDecision = "allow" | "legacy" | "deny";
 
 export function routeAuthorizationDecision(
   principal: RequestPrincipal,
-  method: string,
+  rawMethod: string,
   pathname: string,
 ): RouteAuthorizationDecision {
+  // HTTP 语义:HEAD 等价 GET(Hono 为 GET 路由自动应答 HEAD);统一在入口归一,
+  // 使 attach 策略表与路由目录两条查找路径口径一致(深链 HEAD 探测 403 实证)。
+  const method = rawMethod.toUpperCase() === "HEAD" ? "GET" : rawMethod;
   if (pathname === "/api/v1/attach/handshake") {
     return principal.kind === "externalInstance" && method.toUpperCase() === "POST"
       ? "allow"

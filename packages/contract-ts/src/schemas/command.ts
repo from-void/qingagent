@@ -38,6 +38,7 @@ import {
   skillRefSchema,
   uploadIdSchema,
 } from "./common";
+import { draftTextMarkSchema } from "./draftMutation";
 import type { Equal, Expect } from "./typeAssert";
 
 // 与旧手写校验对齐的长度上限(stream.ts MAX_FOLDER_COMMAND_*_LENGTH)。
@@ -375,6 +376,15 @@ const externalProposeOpSchema = z.discriminatedUnion("kind", [
     old: z.string().min(1),
     new: z.string(),
     nth: z.number().int().positive().optional(),
+  }),
+  z.object({
+    kind: z.literal("markText"),
+    find: z.string().min(1),
+    mark: draftTextMarkSchema,
+    op: z.enum(["add", "remove"]),
+    all: z.boolean().optional(),
+    isRegex: z.boolean().optional(),
+    withinRef: boundedNonEmptyString(MAX_ID_LENGTH).optional(),
   }),
   z.object({
     kind: z.literal("insertAfterLine"),

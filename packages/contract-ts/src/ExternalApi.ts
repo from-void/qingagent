@@ -10,6 +10,7 @@ import type { BridgeFrame } from "./BridgeFrame";
 import type { DocDiffReady } from "./DocDiffReady";
 import type { PmDoc } from "./PmDoc";
 import type { AttachIdentity } from "./Attach";
+import type { DraftTextMark } from "./DraftMutation";
 
 export type ExternalClient = "claudecode" | "codex" | "agent";
 
@@ -186,6 +187,15 @@ export type ExternalProposeOp =
   | { kind: "qingmlDraft"; qingml: string }
   | { kind: "setTitle"; title: string }
   | { kind: "strReplace"; old: string; new: string; nth?: number }
+  | {
+      kind: "markText";
+      find: string;
+      mark: DraftTextMark;
+      op: "add" | "remove";
+      all?: boolean;
+      isRegex?: boolean;
+      withinRef?: string;
+    }
   /**
    * `line` 在该 op 执行时按整篇 Markdown 解释；同批较早操作可能令原行号失效。
    * 目标落在表格等多行块内部时会拒绝，调用方应拆批或改用 insertAfterBlock。

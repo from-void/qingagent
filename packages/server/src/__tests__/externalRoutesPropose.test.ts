@@ -248,6 +248,53 @@ describe("external proposals", () => {
     expect(session?.chatHistory.filter((message) => message.role.kind === "agent" && message.parts.length === 0)).toHaveLength(0);
   });
 
+  it("markText 走完整 proposal→审阅流并产出 markAdd/markRemove hunk", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "新增标记，**移除标记**。" }],
+    });
+
+    const arbitraryColor = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{
+        kind: "markText",
+        find: "新增标记",
+        mark: { type: "highlight", color: "#ff0" },
+        op: "add",
+      }],
+    });
+    expect(arbitraryColor.status).toBe(400);
+    expect(await arbitraryColor.json()).toMatchObject({ code: "VALIDATION" });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [
+        {
+          kind: "markText",
+          find: "新增标记",
+          mark: { type: "highlight", color: "yellow" },
+          op: "add",
+        },
+        {
+          kind: "markText",
+          find: "移除标记",
+          mark: { type: "bold" },
+          op: "remove",
+        },
+      ],
+    });
+
+    expect(proposed.status).toBe(200);
+    expect(await proposed.json()).toMatchObject({ status: "review", count: 2 });
+    const session = await getOrRestoreSession(sessionId);
+    expect([...session!.suggestions.values()].map((record) => record.diffHunk?.op))
+      .toEqual(expect.arrayContaining(["markAdd", "markRemove"]));
+    expect(JSON.stringify(session!.docDraftCandidateDoc)).toContain(
+      '\"type\":\"highlight\",\"attrs\":{\"color\":\"yellow\"}',
+    );
+  });
+
   it("丢弃仅由块身份重建产生的逐字节相同 hunk，并按空提案拒绝", async () => {
     const sessionId = await createSession();
     const qingml = [

@@ -9,7 +9,7 @@ export type {
   EditDraftInput,
 } from "../DraftMutation";
 
-const draftTextMarkSchema: z.ZodType<DraftTextMark> = z.discriminatedUnion("type", [
+export const draftTextMarkSchema: z.ZodType<DraftTextMark> = z.discriminatedUnion("type", [
   z.object({ type: z.literal("bold") }).strict(),
   z.object({ type: z.literal("italic") }).strict(),
   z.object({ type: z.literal("underline") }).strict(),

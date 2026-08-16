@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import type { PmDoc as ContractPmDoc, PmFileAttachment as ContractPmFileAttachment } from "@qingagent/contract-ts";
+import {
+  DRAFT_MARK_COLORS,
+  type PmDoc as ContractPmDoc,
+  type PmFileAttachment as ContractPmFileAttachment,
+} from "@qingagent/contract-ts";
 import { pmToClipboardHtml } from "../clipboard/pmToClipboardHtml";
 import { getQingagentTiptapNodeNames } from "../tiptap/createQingagentExtensions";
 import {
   PM_SCHEMA_MARK_NAMES,
   PM_SCHEMA_NODE_NAMES,
+  PM_THEME_COLORS,
   pmSchemaSpec,
 } from "../spec";
 import {
@@ -25,6 +30,10 @@ describe("schemaSync", () => {
   it("keeps spec and validator mark names aligned", () => {
     expect(PM_VALIDATOR_MARK_NAMES).toEqual(PM_SCHEMA_MARK_NAMES);
     expect(Object.keys(pmSchemaSpec.marks)).toEqual([...PM_SCHEMA_MARK_NAMES]);
+  });
+
+  it("contract-ts 与 pm-schema 的 mark 色板同值", () => {
+    expect(DRAFT_MARK_COLORS).toEqual(PM_THEME_COLORS);
   });
 
   it("uses fileAttachment for PM attachments and leaves contract ResourceRef terminology alone", () => {

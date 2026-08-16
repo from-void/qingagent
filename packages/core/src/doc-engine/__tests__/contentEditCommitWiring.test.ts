@@ -80,6 +80,53 @@ function doc(...content: PmDoc["content"]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
 }
 
+function compactOrderedListDoc(text: string): PmDoc {
+  return normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "orderedList",
+      attrs: { blockId: "version-inflation-list", start: 1 },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "version-inflation-item" },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "version-inflation-paragraph" },
+          content: [{ type: "text", text }],
+        }],
+      }],
+    }],
+  });
+}
+
+function editorMaterializedOrderedListDoc(text: string): PmDoc {
+  return normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "orderedList",
+      attrs: {
+        blockId: "version-inflation-list",
+        start: 1,
+        listStyle: "decimal",
+      },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "version-inflation-item" },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "version-inflation-paragraph" },
+          content: [{ type: "text", text }],
+        }],
+      }],
+    }, {
+      type: "paragraph",
+      attrs: { blockId: `version-inflation-trailing-${text}` },
+    }],
+  });
+}
+
 function reviewCommitOpId(
   state: ReturnType<typeof createSession>,
   ids: readonly string[],
@@ -154,6 +201,94 @@ describe("content-edit commit wiring", () => {
       [...registeredCommitSites.entries()].sort(),
     );
     expect(unwired).toEqual([]);
+  });
+});
+
+describe("审阅结算后的等价后台保存", () => {
+  it("多轮编辑结算后只保留初始版本和每轮真实修改", async () => {
+    const state = createSession("review-settlement-version-inflation");
+    const initial = await commitDocumentOp({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      resourceId: state.resourceId,
+      expectedDocumentSnapshot: 0,
+      opId: "seed-review-settlement-version-inflation",
+      opKind: "replace_doc",
+      actorType: "agent",
+      createIfMissing: {
+        title: state.title,
+        docState: "editing",
+        lastSyncedVersion: 0,
+      },
+      apply: () => ({ nextDoc: compactOrderedListDoc("初稿") }),
+    });
+    expect(initial.status).toBe("committed");
+    if (initial.status !== "committed") throw new Error(initial.status);
+    state.doc = initial.doc;
+    state.docVersion = initial.docVersion;
+    state.docState = { kind: "editing" };
+    let previousSubmittedPmDoc: PmDoc | null = null;
+
+    for (const [index, text] of ["第一轮修改", "第二轮修改"].entries()) {
+      state.docDraftBaseDoc = state.doc;
+      state.docDraftBaseVersion = state.docVersion;
+      state.docDraftCandidateDoc = compactOrderedListDoc(text);
+      await collectFrames(settleDraftCandidate({
+        state,
+        agentMessageId: `agent-message-version-inflation-${index}`,
+        streamId: `agent-stream-version-inflation-${index}`,
+        runId: `agent-run-version-inflation-${index}`,
+        wholeDocument: true,
+      }));
+      const suggestionIds = [...state.suggestions.keys()];
+      expect(suggestionIds.length).toBeGreaterThan(0);
+      const reviewFrames = await collectFrames(commitPatches(state, suggestionIds));
+      const committedSnapshot = reviewFrames.find(
+        (frame) => frame.kind === "documentSnapshotWritten",
+      );
+      if (committedSnapshot?.kind !== "documentSnapshotWritten" || !committedSnapshot.data.doc.doc) {
+        throw new Error("missing committed canonical snapshot");
+      }
+
+      const submittedPmDoc = editorMaterializedOrderedListDoc(text);
+      const backgroundSave = await commitDocumentOp({
+        docId: state.docId,
+        threadId: state.threadId ?? state.sessionId,
+        resourceId: state.resourceId,
+        expectedDocumentSnapshot: state.docVersion,
+        // F1 前客户端成功回执没有 canonical hash；下一笔真实会沿用上一笔实际提交过的
+        // 物化文档指纹，不能从服务端测试 state.doc 反推一个客户端从未拿到的 canonical 值。
+        baseContentHash: previousSubmittedPmDoc
+          ? getPmContentHash(previousSubmittedPmDoc)
+          : getPmContentHash(committedSnapshot.data.doc.doc as PmDoc),
+        clientMutationId: `background-equivalent-save-${index}`,
+        opKind: "replace_doc",
+        actorType: "user",
+        summary: "编辑器自动保存",
+        apply: () => ({ nextDoc: submittedPmDoc }),
+      });
+      previousSubmittedPmDoc = submittedPmDoc;
+      if (index === 0) {
+        expect(backgroundSave.status).toBe("committed");
+        if (backgroundSave.status !== "committed") {
+          throw new Error(backgroundSave.status);
+        }
+        expect(backgroundSave.createdNewVersion).toBe(false);
+        expect(backgroundSave.docVersion).toBe(2);
+        state.doc = backgroundSave.doc;
+        state.docVersion = backgroundSave.docVersion;
+      } else {
+        expect(backgroundSave).toEqual({
+          status: "conflict",
+          currentVersion: 3,
+          currentHash: getPmContentHash(state.doc),
+        });
+      }
+    }
+
+    const versions = await listVersions(state.docId);
+    expect(state.docVersion).toBe(3);
+    expect(versions).toHaveLength(3);
   });
 });
 

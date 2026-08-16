@@ -11,6 +11,7 @@ import {
   applyBlockEdits,
   assertUniquePmBlockIds,
   blockToAi,
+  getPmContentHash,
   markdownToPm,
   normalizePmDoc,
   pmToPlainText,
@@ -615,6 +616,9 @@ export async function* handleDocWriteCommand(
           // 单调:stale 幂等回放(result.docVersion < 内存版本)时不向客户端确认低版本,
           // 否则客户端会把本地 snapshot 退回、下一次编辑继续冲突。
           docVersion: Math.max(result.docVersion, session.docVersion),
+          // 必须从单调块执行后的 session canonical 取值；stale 回放的 result 属于旧版本。
+          contentHash: getPmContentHash(currentPmDoc(session)),
+          createdNewVersion: result.createdNewVersion,
         },
       };
       return;
@@ -767,7 +771,13 @@ export async function* handleDocWriteCommand(
         // 同标题重放也按幂等成功返回；标题不进入正文审阅，也不推进 docVersion。
         yield {
           kind: "docWriteResult",
-          data: { ok: true, clientMutationId, docVersion: session.docVersion },
+          data: {
+            ok: true,
+            clientMutationId,
+            docVersion: session.docVersion,
+            contentHash: getPmContentHash(currentPmDoc(session)),
+            createdNewVersion: false,
+          },
         };
         return;
       }
@@ -838,7 +848,16 @@ export async function* handleDocWriteCommand(
         }
         await persistSessionMetadata(session);
         yield* emitProjectedDocState(session, qingmlDraft ? "external_qingml_draft" : "external_full_draft");
-        yield { kind: "docWriteResult", data: { ok: true, clientMutationId, docVersion: session.docVersion } };
+        yield {
+          kind: "docWriteResult",
+          data: {
+            ok: true,
+            clientMutationId,
+            docVersion: session.docVersion,
+            contentHash: getPmContentHash(currentPmDoc(session)),
+            createdNewVersion: result.createdNewVersion,
+          },
+        };
         return;
       }
 

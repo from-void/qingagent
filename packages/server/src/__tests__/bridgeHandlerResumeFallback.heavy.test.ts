@@ -487,6 +487,8 @@ describe("handleResume askUser fresh-turn fallback", () => {
         ok: true,
         clientMutationId: "mutation-after-stale-stream",
         docVersion: 2,
+        contentHash: getPmContentHash(nextDoc),
+        createdNewVersion: true,
       },
     });
   });

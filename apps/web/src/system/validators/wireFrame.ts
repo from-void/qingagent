@@ -597,6 +597,18 @@ function checkDocWriteResult(frame: Extract<BridgeFrame, { kind: "docWriteResult
     if (!Number.isInteger(data.docVersion)) {
       fail(`DocWriteResult.docVersion must be an integer`);
     }
+    if (
+      data.contentHash !== undefined &&
+      (typeof data.contentHash !== "string" || data.contentHash.length === 0)
+    ) {
+      fail(`DocWriteResult.contentHash must be a non-empty string when present`);
+    }
+    if (
+      data.createdNewVersion !== undefined &&
+      typeof data.createdNewVersion !== "boolean"
+    ) {
+      fail(`DocWriteResult.createdNewVersion must be a boolean when present`);
+    }
     return;
   }
   if ("conflict" in data) {

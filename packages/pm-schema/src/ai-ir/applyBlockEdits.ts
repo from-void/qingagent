@@ -1,5 +1,4 @@
 import { safeParsePmDoc } from "../validators";
-import { getSchema } from "@tiptap/core";
 import { EditorState } from "@tiptap/pm/state";
 import {
   CellSelection,
@@ -11,7 +10,7 @@ import {
   deleteColumn,
   deleteRow,
 } from "@tiptap/pm/tables";
-import { createQingagentExtensions } from "../tiptap/createQingagentExtensions";
+import { qingagentSchema } from "../tiptap/qingagentSchema";
 import { getDeterministicId, getPmContentHash, getStablePmJson } from "../hash";
 import type {
   PmBlockNode,
@@ -1014,8 +1013,6 @@ type NativeTableEdit = {
   index: number;
 };
 
-const tableEditSchema = getSchema(createQingagentExtensions());
-
 /** 结构变换完全委托 prosemirror-tables；这里只负责选中逻辑坐标和回填新 cell 内容。 */
 function applyNativeTableEdit(
   doc: PmDoc,
@@ -1024,7 +1021,7 @@ function applyNativeTableEdit(
   cells: readonly (TableCellDraft | unknown)[] | undefined,
   opIndex: number,
 ): PmDoc {
-  const pmDoc = tableEditSchema.nodeFromJSON(doc);
+  const pmDoc = qingagentSchema.nodeFromJSON(doc);
   let table: Parameters<typeof TableMap.get>[0] | null = null;
   let tablePos = -1;
   pmDoc.descendants((node, pos) => {

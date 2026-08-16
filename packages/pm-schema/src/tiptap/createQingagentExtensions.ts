@@ -20,6 +20,8 @@ export { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction } from "./dedupeB
 
 const DEFAULT_HIGHLIGHT_COLOR = "yellow";
 
+export const TRAILING_NODE_NOT_AFTER = ["heading", "columnList"] as const;
+
 export function getQingagentTiptapNodeNames(): readonly string[] {
   return PM_SCHEMA_NODE_NAMES;
 }
@@ -57,7 +59,7 @@ export function createQingagentExtensions(options: {
     // 标题可作为文档末尾;列表仍保留默认尾段,否则会破坏 Enter/Backspace 退出列表的既有行为。
     // columnList 内部可继续编辑,不需要 trailingNode 另补空段;否则分栏 DnD 的单事务 undo
     // 会被 trailingNode 追加事务污染。
-    trailingNode: { notAfter: ["heading", "columnList"] },
+    trailingNode: { notAfter: [...TRAILING_NODE_NOT_AFTER] },
     // 拖拽排序时的落点指示线:金色加粗,暗色皮肤下可见(StarterKit 自带 dropcursor)。
     // 配 class 以便列表/分栏自绘落点线时压制它(否则原生 dropcursor 默认无 class、压制选择器
     // 匹配不到,会在嵌套 gap 里和自绘线同时出现两根线)。变细到 1.5px 与自绘线观感一致。

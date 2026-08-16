@@ -70,7 +70,15 @@ export type BridgeFrame =
     }
   | { kind: "annotationPreviewCleared"; data: Record<string, never> }
   | { kind: "docWriteResult"; data:
-      | { ok: true; clientMutationId: string; docVersion: number }
+      | {
+          ok: true;
+          clientMutationId: string;
+          docVersion: number;
+          /** 服务端当前 canonical PM 正文的权威哈希。 */
+          contentHash?: string;
+          /** 本次写入是否真实创建了新文档版本。 */
+          createdNewVersion?: boolean;
+        }
       | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error"; diagnostic?: WriteDraftFailureDiagnostic; validationMessage?: string }
       | { ok: false; clientMutationId: string; conflict: { expectedDocumentSnapshot: number; actualDocumentSnapshot: number } } }
   | {

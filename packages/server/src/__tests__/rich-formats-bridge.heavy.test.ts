@@ -76,6 +76,8 @@ describe("rich formats HTTP bridge E2E", () => {
       ok: true,
       clientMutationId: mutationId,
       docVersion: 2,
+      contentHash: getPmContentHash(richPmDoc("legal")),
+      createdNewVersion: true,
     });
   });
 
@@ -167,6 +169,8 @@ describe("rich formats HTTP bridge E2E", () => {
       ok: true,
       clientMutationId: firstMutationId,
       docVersion: 2,
+      contentHash: getPmContentHash(firstDoc),
+      createdNewVersion: true,
     });
 
     const staleMutationId = `mutation-${randomUUID()}`;
@@ -226,6 +230,8 @@ describe("rich formats HTTP bridge E2E", () => {
       ok: true,
       clientMutationId: agentMutationId,
       docVersion: 1,
+      contentHash: expect.any(String),
+      createdNewVersion: true,
     });
     const agentPersisted = await core.documentRepo.load(sessionId);
     expect(agentPersisted?.docVersion).toBe(1);
@@ -272,6 +278,8 @@ describe("rich formats HTTP bridge E2E", () => {
       ok: true,
       clientMutationId: firstMutationId,
       docVersion: 2,
+      contentHash: getPmContentHash(firstDoc),
+      createdNewVersion: true,
     });
 
     const staleMutationId = `mutation-${randomUUID()}`;
@@ -332,6 +340,8 @@ describe("rich formats HTTP bridge E2E", () => {
         ok: true,
         clientMutationId: write.clientMutationId,
         docVersion: index + 2,
+        contentHash: getPmContentHash(write.doc),
+        createdNewVersion: true,
       });
     }
 

@@ -903,7 +903,13 @@ describe("validateBridgeFrame", () => {
   it("accepts docWriteResult ok and conflict frames", () => {
     const okFrame: BridgeFrame = {
       kind: "docWriteResult",
-      data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
+      data: {
+        ok: true,
+        clientMutationId: "mutation-1",
+        docVersion: 2,
+        contentHash: "pmv1-canonical",
+        createdNewVersion: false,
+      },
     };
     const conflictFrame: BridgeFrame = {
       kind: "docWriteResult",
@@ -915,6 +921,27 @@ describe("validateBridgeFrame", () => {
     };
     expect(() => validateBridgeFrame(okFrame)).not.toThrow();
     expect(() => validateBridgeFrame(conflictFrame)).not.toThrow();
+  });
+
+  it("rejects invalid optional docWriteResult success fields", () => {
+    expect(() => validateBridgeFrame({
+      kind: "docWriteResult",
+      data: {
+        ok: true,
+        clientMutationId: "mutation-empty-hash",
+        docVersion: 2,
+        contentHash: "",
+      },
+    } as BridgeFrame)).toThrow(BridgeFrameValidationError);
+    expect(() => validateBridgeFrame({
+      kind: "docWriteResult",
+      data: {
+        ok: true,
+        clientMutationId: "mutation-bad-created",
+        docVersion: 2,
+        createdNewVersion: "false",
+      },
+    } as unknown as BridgeFrame)).toThrow(BridgeFrameValidationError);
   });
 
   it("accepts valid docDiffReady frames and rejects invalid suggestions", () => {

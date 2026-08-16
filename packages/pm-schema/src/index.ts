@@ -3,6 +3,7 @@ export * from "./types";
 export * from "./spec";
 export * from "./validators";
 export * from "./hash";
+export * from "./persistenceEquivalence";
 export * from "./pmToPlainText";
 export * from "./tableSelection";
 export * from "./charCount";

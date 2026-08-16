@@ -107,6 +107,7 @@ import {
   type PendingDocSaveWaiter,
 } from "../data/pendingDocSave";
 import {
+  acknowledgedDocWriteContentHash,
   appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
   decideBroadcastDocumentFrame,
@@ -643,7 +644,11 @@ export function useWorkspacePageController() {
     state.doc?.pmDoc &&
     state.doc.version === state.version
   ) {
-    baseContentHashRef.current = getPmContentHash(state.doc.pmDoc);
+    // manualDocSaved 保留编辑器物化表示；同版本若已有服务端/私有 ack 登记的 canonical
+    // 基线，不能在下一次 render 又用物化 state.doc 哈希把它覆盖回去。
+    baseContentHashRef.current =
+      knownDocVersionsRef.current.get(state.version)?.baseline.baseContentHash ??
+      getPmContentHash(state.doc.pmDoc);
   }
   presentationRunRef.current = presentationRun;
   const [tiptapEditor, setTiptapEditor] = useState<Editor | null>(null);
@@ -2281,12 +2286,15 @@ export function useWorkspacePageController() {
             // 落库成功即结算重放链
             silentConflictReplayDepthRef.current = 0;
             if (savedPmDoc) {
-              const selfHash = getPmContentHash(savedPmDoc);
-              baseContentHashRef.current = selfHash;
+              const canonicalHash = acknowledgedDocWriteContentHash(
+                frame.data,
+                savedPmDoc,
+              );
+              baseContentHashRef.current = canonicalHash;
               knownDocVersionsRef.current.remember(
                 {
                   expectedDocumentSnapshot: frame.data.docVersion,
-                  baseContentHash: selfHash,
+                  baseContentHash: canonicalHash,
                   baseHasSubstantiveContent:
                     pmDocHasSubstantiveContent(savedPmDoc),
                 },
@@ -2407,9 +2415,7 @@ export function useWorkspacePageController() {
             ...queued,
             baseline: {
               expectedDocumentSnapshot: frame.data.docVersion,
-              baseContentHash: savedPmDoc
-                ? getPmContentHash(savedPmDoc)
-                : baseContentHashRef.current,
+              baseContentHash: baseContentHashRef.current,
               baseHasSubstantiveContent: Boolean(
                 savedPmDoc && pmDocHasSubstantiveContent(savedPmDoc),
               ),

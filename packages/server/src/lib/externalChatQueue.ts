@@ -77,8 +77,10 @@ export async function queueExternalChat(
 
 function parseExternalClient(
   value: string | undefined,
-): "claudecode" | "codex" | "agent" {
-  return value === "claudecode" || value === "codex" ? value : "agent";
+): "claudecode" | "codex" | "deepseek" | "agent" {
+  if (value === "claudecode" || value === "codex" || value === "deepseek") return value;
+  if (value === "chatgpt") return "codex"; // Codex 并入 ChatGPT 后的新客户端名
+  return "agent";
 }
 
 function log(

@@ -331,7 +331,7 @@ function logTemplateRequest(
   result: string,
 ): void {
   const rawClient = c.req.header("x-qa-client");
-  const client = rawClient === "claudecode" || rawClient === "codex" ? rawClient : "agent";
+  const client = rawClient === "claudecode" || rawClient === "codex" || rawClient === "deepseek" ? rawClient : rawClient === "chatgpt" ? "codex" : "agent";
   console.log(
     `[external] evt=${evt} client=${client} session=${c.req.param("id") || "-"} ms=${Date.now() - startedAt} result=${result}`,
   );

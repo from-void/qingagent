@@ -91,7 +91,7 @@ import {
 
 export const externalRoutes = new Hono();
 
-type ExternalClient = "claudecode" | "codex" | "agent";
+type ExternalClient = "claudecode" | "codex" | "deepseek" | "agent";
 
 const DEFAULT_MATERIAL_TEXT_MAX_BYTES = 200_000;
 const DEFAULT_SESSIONS_LIMIT = 100;
@@ -1307,7 +1307,10 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
 });
 
 function parseExternalClient(value: string | undefined): ExternalClient {
-  return value === "claudecode" || value === "codex" ? value : "agent";
+  if (value === "claudecode" || value === "codex" || value === "deepseek") return value;
+  // Codex 已并入统一 ChatGPT:新客户端报 chatgpt,wire 归一到既有 codex 词元。
+  if (value === "chatgpt") return "codex";
+  return "agent";
 }
 
 externalRoutes.post("/sessions/:id/chat", async (c) => {

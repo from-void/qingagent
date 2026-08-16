@@ -174,7 +174,7 @@ function logSkillRequest(
   startedAt: number,
   result: string,
 ): void {
-  const safeClient = client === "claudecode" || client === "codex" ? client : "agent";
+  const safeClient = client === "claudecode" || client === "codex" || client === "deepseek" ? client : client === "chatgpt" ? "codex" : "agent";
   console.log(
     `[external] evt=${evt} client=${safeClient} ms=${Date.now() - startedAt} result=${result}`,
   );

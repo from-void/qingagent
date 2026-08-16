@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { UsageSummaryResponse } from "@qingagent/contract-ts";
 import { readUsageMode, type UsageMode, type UsageRow, type UsageView } from "./modelUsage";
 import { type BalanceState, type ServerModelSettings } from "./modelSettingsTypes";
 import {
@@ -99,7 +98,6 @@ export function useModelUsageState() {
   const [dayUsage, setDayUsage] = useState<UsageRow[] | null>(null);
   const [totalUsage, setTotalUsage] = useState<UsageRow[] | null>(null);
   const [docStats, setDocStats] = useState<{ docs: number; words: number } | null>(null);
-  const [providerBalance, setProviderBalance] = useState<UsageSummaryResponse["providerBalance"]>(undefined);
   const [scheduleRevision, setScheduleRevision] = useState("");
   const [dashboardSettled, setDashboardSettled] = useState({
     day: false,
@@ -113,7 +111,6 @@ export function useModelUsageState() {
     usageSettled, setUsageSettled, usageStatus, setUsageStatus,
     usageDate, setUsageDate, excludedModels, setExcludedModels,
     dayUsage, setDayUsage, totalUsage, setTotalUsage, docStats, setDocStats,
-    providerBalance, setProviderBalance,
     scheduleRevision, setScheduleRevision,
     dashboardSettled, setDashboardSettled,
   };

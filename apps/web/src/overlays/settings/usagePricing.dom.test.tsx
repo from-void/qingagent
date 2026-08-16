@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 describe("计价覆盖 UI", () => {
-  it("零价已计价仍显示，卡片/饼图/趋势/明细四处保留部分计价文案", () => {
+  it("零价已计价仍显示，花费卡移除覆盖文案且分布/趋势/明细继续显示", () => {
     act(() => root.render(<>
       <ModelUsageDashboard
         recent={{
@@ -65,8 +65,6 @@ describe("计价覆盖 UI", () => {
           estimatedUnpricedCalls: 2,
           coverageRate: 0.5,
         }}
-        providerBalance={undefined}
-        usageTimeZone="UTC"
         docStats={{ docs: 1, words: 100 }}
         docs7={1}
         words7={100}
@@ -104,8 +102,7 @@ describe("计价覆盖 UI", () => {
       </tbody></table>
     </>));
 
-    expect(host.querySelector('[data-wf="UsagePricingCoverageRecent"]')?.textContent)
-      .toContain("部分计价");
+    expect(host.querySelector('[data-wf="UsagePricingCoverageRecent"]')).toBeNull();
     expect(host.querySelector('[data-wf="UsagePricingCoverageDistribution"]')?.textContent)
       .toContain("部分计价");
     expect(host.querySelector('[data-wf="UsagePricingCoverageTrend"]')?.getAttribute("aria-label"))

@@ -38,6 +38,8 @@ export interface SuggestionRecord {
   toolCallId: string;
   before: string;
   after: string;
+  /** 完整 PM 落点；blockIndex 仅保留顶层兼容语义。 */
+  blockPath?: number[];
   blockIndex: number;
   suggestion: DocSuggestion;
   /** Candidate-diff hunk backing this suggestion. */

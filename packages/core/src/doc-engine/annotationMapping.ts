@@ -88,21 +88,78 @@ function topLevelBlockStart(doc: PmDoc, index: number): number {
     .reduce<number>((sum, block) => sum + nodeSize(block), 0);
 }
 
-function resolveBlockIndex(doc: PmDoc, hunk: DiffHunk): number | null {
+type BlockPathTarget = { blockIndex: number; itemIndex?: number };
+
+function isListBlockNode(node: unknown): node is { attrs: { blockId?: string }; content: unknown[] } {
+  if (!node || typeof node !== "object") return false;
+  const type = (node as { type?: unknown }).type;
+  return type === "bulletList" || type === "orderedList" || type === "taskList";
+}
+
+function resolveBlockIndex(doc: PmDoc, hunk: DiffHunk): BlockPathTarget | null {
+  if (hunk.blockPath.length > 1) {
+    const blockId = hunk.anchor.blockId;
+    if (blockId) {
+      for (let blockIndex = 0; blockIndex < doc.content.length; blockIndex += 1) {
+        const list = doc.content[blockIndex];
+        if (!isListBlockNode(list)) continue;
+        const itemIndex = list.content.findIndex((item) => {
+          if (!item || typeof item !== "object") return false;
+          const attrs = (item as { attrs?: { blockId?: unknown } }).attrs;
+          return attrs?.blockId === blockId;
+        });
+        if (itemIndex >= 0) {
+          return {
+            blockIndex,
+            itemIndex: hunk.op === "insert"
+              ? hunk.anchor.gravity === "before" ? itemIndex : itemIndex + 1
+              : itemIndex,
+          };
+        }
+      }
+      const parentIndex = doc.content.findIndex((block) => block.attrs.blockId === blockId);
+      const itemIndex = hunk.blockPath[1];
+      if (parentIndex >= 0 && itemIndex !== undefined && isListBlockNode(doc.content[parentIndex])) {
+        return { blockIndex: parentIndex, itemIndex };
+      }
+      return null;
+    }
+    const blockIndex = hunk.blockPath[0];
+    const itemIndex = hunk.blockPath[1];
+    return blockIndex !== undefined && itemIndex !== undefined &&
+        blockIndex >= 0 && blockIndex < doc.content.length && isListBlockNode(doc.content[blockIndex])
+      ? { blockIndex, itemIndex }
+      : null;
+  }
   const blockId = hunk.anchor.blockId;
   if (blockId) {
     const anchored = doc.content.findIndex((block) => block.attrs.blockId === blockId);
-    if (anchored >= 0) return anchored;
+    if (anchored >= 0) return { blockIndex: anchored };
   }
   const pathIndex = hunk.blockPath[0];
   return pathIndex !== undefined && pathIndex >= 0 && pathIndex <= doc.content.length
-    ? pathIndex
+    ? { blockIndex: pathIndex }
     : null;
 }
 
 function blockHunkRange(doc: PmDoc, hunk: DiffHunk): { from: number; to: number } | null {
-  const index = resolveBlockIndex(doc, hunk);
-  if (index === null) return null;
+  const target = resolveBlockIndex(doc, hunk);
+  if (target === null) return null;
+  const index = target.blockIndex;
+
+  if (target.itemIndex !== undefined) {
+    const list = doc.content[index];
+    if (!isListBlockNode(list)) return null;
+    const itemIndex = target.itemIndex;
+    if (itemIndex < 0 || itemIndex > list.content.length) return null;
+    const listStart = topLevelBlockStart(doc, index);
+    const from = list.content
+      .slice(0, itemIndex)
+      .reduce<number>((sum, item) => sum + nodeSize(item), listStart + 1);
+    if (hunk.op === "insert") return { from, to: from };
+    const item = list.content[itemIndex];
+    return item ? { from, to: from + nodeSize(item) } : null;
+  }
 
   if (hunk.op === "insert") {
     const anchoredBlock = doc.content[index];

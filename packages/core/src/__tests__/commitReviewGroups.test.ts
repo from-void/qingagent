@@ -59,6 +59,29 @@ function heading(blockId: string, value: string): PmBlockNode {
   };
 }
 
+function bulletList(blockId: string, items: Array<{ blockId: string; text: string }>): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [paragraph(`${item.blockId}-p`, item.text) as Extract<PmBlockNode, { type: "paragraph" }>],
+    })),
+  };
+}
+
+function firstListTexts(pmDoc: PmDoc | undefined): string[] {
+  const list = pmDoc?.content[0];
+  if (list?.type !== "bulletList") return [];
+  return list.content.map((item) => {
+    const paragraphNode = item.content[0];
+    return paragraphNode?.type === "paragraph"
+      ? (paragraphNode.content ?? []).map((node) => node.type === "text" ? node.text : "").join("")
+      : "";
+  });
+}
+
 function diagram(
   blockId: string,
   source: string,
@@ -178,6 +201,7 @@ async function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): Pr
       toolCallId: suggestion.id,
       before: hunk.beforeText ?? "",
       after: hunk.afterText ?? "",
+      blockPath: [...hunk.blockPath],
       blockIndex: hunk.blockPath[0] ?? 0,
       suggestion,
       diffHunk: hunk,
@@ -208,6 +232,7 @@ async function seedReviewRound(
       toolCallId: suggestion.id,
       before: hunk.beforeText ?? "",
       after: hunk.afterText ?? "",
+      blockPath: [...hunk.blockPath],
       blockIndex: hunk.blockPath[0] ?? 0,
       suggestion,
       diffHunk: hunk,
@@ -238,6 +263,7 @@ async function seedHunksState(
       toolCallId: suggestion.id,
       before: hunk.beforeText ?? "",
       after: hunk.afterText ?? "",
+      blockPath: [...hunk.blockPath],
       blockIndex: hunk.blockPath[0] ?? 0,
       suggestion,
       diffHunk: hunk,
@@ -1419,6 +1445,45 @@ describe("commitReviewGroups", () => {
       "reviewing",
     ]);
     expect(new Set(hunkBRows.rows.map((row) => String(row.batch_id))).size).toBe(2);
+  });
+
+  it("列表项部分采纳后以 item blockId + 深路径重配对剩余 hunk", async () => {
+    const state = createSession("partial-list-item-rebase");
+    const base = doc([bulletList("list-commit", [
+      { blockId: "item-a", text: "A 旧" },
+      { blockId: "item-b", text: "B 旧" },
+    ])]);
+    const draft = doc([bulletList("list-commit", [
+      { blockId: "item-a", text: "A 新" },
+      { blockId: "item-b", text: "B 新" },
+    ])]);
+    const hunks = await seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    expect(hunks.map((hunk) => hunk.blockPath)).toEqual([[0, 0], [0, 1]]);
+    const hunkA = hunks.find((hunk) => hunk.anchor.blockId === "item-a");
+    const hunkB = hunks.find((hunk) => hunk.anchor.blockId === "item-b");
+    if (!hunkA || !hunkB) throw new Error("fixture missing list item hunks");
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunkA.reviewBatchId],
+      keepPendingReviewBatchIds: [hunkB.reviewBatchId],
+    }));
+
+    expect(firstListTexts(state.doc)).toEqual(["A 新", "B 旧"]);
+    const [remaining] = [...state.suggestions.values()];
+    expect(remaining?.blockPath).toEqual([0, 1]);
+    expect(remaining?.diffHunk).toMatchObject({
+      blockPath: [0, 1],
+      anchor: { blockId: "item-b" },
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    });
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [remaining!.diffHunk!.reviewBatchId],
+    }));
+    expect(firstListTexts(state.doc)).toEqual(["A 新", "B 新"]);
+    expect(state.suggestions.size).toBe(0);
   });
 
   it("先接受一处再撤销全部时会把已接受 batch 也拒绝并回到旧文档", async () => {

@@ -721,6 +721,16 @@ function singleListPmBlock(nodes: DiffHunk["before"] | DiffHunk["after"]): ListP
   return isListPmBlock(node) ? node : null;
 }
 
+function listPmBlockFromDiffNode(node: DiffHunk["beforeBlock"] | DiffHunk["afterBlock"]): ListPmBlock | null {
+  return isListPmBlock(node) ? node : null;
+}
+
+function isSingleListItemNode(nodes: DiffHunk["before"] | DiffHunk["after"]): boolean {
+  if (!Array.isArray(nodes) || nodes.length !== 1) return false;
+  const type = nodes[0]?.type;
+  return type === "listItem" || type === "taskItem";
+}
+
 function singleTablePmBlock(nodes: DiffHunk["before"] | DiffHunk["after"]): TablePmBlock | null {
   if (!Array.isArray(nodes) || nodes.length !== 1) return null;
   const node = nodes[0];
@@ -1314,6 +1324,7 @@ function buildListRowReplace(
   beforeNode: ListPmBlock,
   afterNode: ListPmBlock,
   input: Omit<BlockPatchInput, "op" | "blocks" | "blockCount" | "replaceBeforeBlocks">,
+  options: { forceGranular?: boolean } = {},
 ): BlockPatchInput | null {
   if (beforeNode.type !== afterNode.type) return null;
   const beforeBlocks = pmNodesToViewBlocks([beforeNode]);
@@ -1345,7 +1356,7 @@ function buildListRowReplace(
   // granular 只在任意深度的行级 diff 真的标出了可见变化，且变化可由文本/marks 保真表达时才置；
   // 节点类型或 attrs 变化回退完整块级替换，避免局部正文与实际提交结构不一致。
   const rowLevelVisible = hasVisibleListRowDiff(rowDiff);
-  const needsBlockHover = pmStructureOrAttrsChanged(beforeNode, afterNode);
+  const needsBlockHover = !options.forceGranular && pmStructureOrAttrsChanged(beforeNode, afterNode);
   return {
     ...input,
     op: "replace",
@@ -1354,6 +1365,30 @@ function buildListRowReplace(
     blockCount: 1,
     ...(rowLevelVisible && !needsBlockHover ? { granular: true } : {}),
   };
+}
+
+function buildListItemRowReplace(
+  hunk: DiffHunk,
+  input: Omit<BlockPatchInput, "op" | "blocks" | "blockCount" | "replaceBeforeBlocks">,
+): BlockPatchInput | null {
+  if (hunk.blockPath.length !== 2) return null;
+  const hasBeforeItem = isSingleListItemNode(hunk.before);
+  const hasAfterItem = isSingleListItemNode(hunk.after);
+  if (
+    (hunk.op === "replace" && (!hasBeforeItem || !hasAfterItem)) ||
+    (hunk.op === "insert" && !hasAfterItem) ||
+    (hunk.op === "delete" && !hasBeforeItem)
+  ) {
+    return null;
+  }
+  const beforeParent = listPmBlockFromDiffNode(hunk.beforeBlock);
+  const afterParent = listPmBlockFromDiffNode(hunk.afterBlock);
+  if (!beforeParent || !afterParent || beforeParent.type !== afterParent.type) return null;
+  return buildListRowReplace(beforeParent, afterParent, {
+    ...input,
+    anchorBlockId: beforeParent.attrs.blockId || afterParent.attrs.blockId,
+    beforePmNodes: [beforeParent],
+  }, { forceGranular: true });
 }
 
 function buildTableCellReplace(
@@ -1992,12 +2027,6 @@ export function suggestionToBlockPatchInputs(
   const hunk = suggestionDiffHunk(suggestion);
   if (!hunk) return [];
 
-  if (hunk.op === "insert" || hunk.op === "delete") {
-    const single = suggestionToBlockPatchInput(suggestion, order);
-    return single ? [single] : [];
-  }
-  if (hunk.op !== "replace") return [];
-
   const anchorIndex = hunk.blockPath[0];
   const shared = {
     patchId: suggestion.id,
@@ -2008,6 +2037,14 @@ export function suggestionToBlockPatchInputs(
     ...(validBlockPathIndex(anchorIndex) ? { anchorIndex } : {}),
     ...(Array.isArray(hunk.before) ? { beforePmNodes: hunk.before as readonly PmBlockNode[] } : {}),
   };
+  const listItemInput = buildListItemRowReplace(hunk, shared);
+  if (listItemInput) return [listItemInput];
+
+  if (hunk.op === "insert" || hunk.op === "delete") {
+    const single = suggestionToBlockPatchInput(suggestion, order);
+    return single ? [single] : [];
+  }
+  if (hunk.op !== "replace") return [];
   const beforeListNode = singleListPmBlock(hunk.before);
   const afterListNode = singleListPmBlock(hunk.after);
   if (beforeListNode && afterListNode && beforeListNode.type === afterListNode.type) {

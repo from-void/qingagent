@@ -39,6 +39,29 @@ function taskList(blockId: string, items: Array<{ checked: boolean; text: string
   };
 }
 
+function bulletList(
+  blockId: string,
+  items: Array<{
+    blockId: string;
+    text: string;
+    marks?: PmMark[];
+    children?: PmBlockNode[];
+  }>,
+): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [
+        paragraph(`${item.blockId}-p`, [text(item.text, item.marks)]) as Extract<PmBlockNode, { type: "paragraph" }>,
+        ...(item.children ?? []),
+      ],
+    })),
+  };
+}
+
 function callout(blockId: string, value: string): PmBlockNode {
   return {
     type: "callout",
@@ -631,8 +654,8 @@ describe("proposalDiff shadow engine", () => {
     }
   });
 
-  it("taskList/callout/blockMath/codeBlock 块级 replace 提交 round-trip 不丢块", () => {
-    const cases: Array<[PmDoc, PmDoc, string]> = [
+  it("taskList 项级 replace 与其它结构块 replace 提交 round-trip 不丢块", () => {
+    const cases: Array<[PmDoc, PmDoc, string, string]> = [
       [
         doc([
           taskList("tasks", [
@@ -647,32 +670,36 @@ describe("proposalDiff shadow engine", () => {
           ]),
         ]),
         "taskList",
+        "taskItem",
       ],
       [
         doc([callout("risk-callout", "旧风险提示")]),
         doc([callout("risk-callout", "新风险提示")]),
+        "callout",
         "callout",
       ],
       [
         doc([blockMath("math-block", String.raw`E = mc^2`)]),
         doc([blockMath("math-block", String.raw`E = mc^2 + \epsilon`)]),
         "blockMath",
+        "blockMath",
       ],
       [
         doc([codeBlock("code-block", "ts", "const value = 1;")]),
         doc([codeBlock("code-block", "ts", "const value = 2;")]),
         "codeBlock",
+        "codeBlock",
       ],
     ];
 
-    for (const [base, draft, type] of cases) {
+    for (const [base, draft, parentType, hunkNodeType] of cases) {
       const hunks = buildDraftDiff(base, draft);
       expect(hunks).toHaveLength(1);
       expect(hunks[0]).toMatchObject({
         op: "replace",
-        before: [{ type }],
-        after: [{ type }],
-        afterBlock: { type },
+        before: [{ type: hunkNodeType }],
+        after: [{ type: hunkNodeType }],
+        afterBlock: { type: parentType },
       });
       expect(applyDiffHunks(base, [hunks[0]!]).doc).toEqual(draft);
     }
@@ -705,6 +732,197 @@ describe("proposalDiff shadow engine", () => {
     expect(overlapRatio).toBeGreaterThan(0);
     expect(overlapRatio).toBeLessThan(1);
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+});
+
+describe("P28 列表项级 hunk", () => {
+  it("改文本只产目标 listItem hunk，并可独立提交", () => {
+    const base = doc([bulletList("list", [
+      { blockId: "item-a", text: "保留" },
+      { blockId: "item-b", text: "旧文本" },
+    ])]);
+    const draft = doc([bulletList("list", [
+      { blockId: "item-a", text: "保留" },
+      { blockId: "item-b", text: "新文本" },
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      blockPath: [0, 1],
+      anchor: { blockId: "item-b" },
+      before: [{ type: "listItem", attrs: { blockId: "item-b" } }],
+      after: [{ type: "listItem", attrs: { blockId: "item-b" } }],
+      beforeBlock: { type: "bulletList" },
+      afterBlock: { type: "bulletList" },
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("改 mark 保持项级原子 replace，不退化成整列", () => {
+    const bold: PmMark = { type: "bold" };
+    const base = doc([bulletList("list-mark", [{ blockId: "item-mark", text: "同文" }])]);
+    const draft = doc([bulletList("list-mark", [{ blockId: "item-mark", text: "同文", marks: [bold] }])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      blockPath: [0, 0],
+      beforeText: "同文",
+      afterText: "同文",
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("插入一项产 insert hunk，blockPath 指向新项位置", () => {
+    const base = doc([bulletList("list-insert", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+    const draft = doc([bulletList("list-insert", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "insert",
+      blockPath: [0, 1],
+      anchor: { blockId: "item-a", gravity: "after" },
+      before: null,
+      after: [{ type: "listItem", attrs: { blockId: "item-b" } }],
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("删除一项产 delete hunk，并只 splice 该项", () => {
+    const base = doc([bulletList("list-delete", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+    const draft = doc([bulletList("list-delete", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "delete",
+      blockPath: [0, 1],
+      anchor: { blockId: "item-b" },
+      before: [{ type: "listItem", attrs: { blockId: "item-b" } }],
+      after: null,
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("换序检测到共享 blockId 逆序后回退整列 replace", () => {
+    const base = doc([bulletList("list-reorder", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+    const draft = doc([bulletList("list-reorder", [
+      { blockId: "item-b", text: "乙" },
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      blockPath: [0],
+      before: [{ type: "bulletList" }],
+      after: [{ type: "bulletList" }],
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("重复文本按 blockId 对齐，不把同文 sibling 配错", () => {
+    const base = doc([bulletList("list-duplicate", [
+      { blockId: "item-first", text: "重复" },
+      { blockId: "item-second", text: "重复" },
+    ])]);
+    const draft = doc([bulletList("list-duplicate", [
+      { blockId: "item-first", text: "已修改" },
+      { blockId: "item-second", text: "重复" },
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      blockPath: [0, 0],
+      anchor: { blockId: "item-first" },
+      beforeText: "重复",
+      afterText: "已修改",
+    });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("嵌套子列表变化只拆到第一层，整个父 item 是一个 replace hunk", () => {
+    const nested = (textValue: string) => bulletList("nested-list", [
+      { blockId: "nested-item", text: textValue },
+    ]);
+    const base = doc([bulletList("outer-list", [
+      { blockId: "outer-item", text: "父项", children: [nested("旧子项")] },
+    ])]);
+    const draft = doc([bulletList("outer-list", [
+      { blockId: "outer-item", text: "父项", children: [nested("新子项")] },
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      blockPath: [0, 0],
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    });
+    expect(hunks[0]!.blockPath).toHaveLength(2);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("配对失败率超过 50% 时回退整列；等于 50% 仍可逐项", () => {
+    const base = doc([bulletList("list-threshold", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+      { blockId: "item-c", text: "丙" },
+    ])]);
+    const overHalfDraft = doc([bulletList("list-threshold", [
+      { blockId: "item-a", text: "甲" },
+    ])]);
+    expect(buildDraftDiff(base, overHalfDraft)).toMatchObject([{
+      op: "replace",
+      blockPath: [0],
+      before: [{ type: "bulletList" }],
+    }]);
+
+    const halfBase = doc([bulletList("list-half", [{ blockId: "item-a", text: "甲" }])]);
+    const halfDraft = doc([bulletList("list-half", [
+      { blockId: "item-a", text: "甲" },
+      { blockId: "item-b", text: "乙" },
+    ])]);
+    expect(buildDraftDiff(halfBase, halfDraft)).toMatchObject([{
+      op: "insert",
+      blockPath: [0, 1],
+      after: [{ type: "listItem" }],
+    }]);
   });
 });
 describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () => {

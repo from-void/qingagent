@@ -172,6 +172,7 @@ export async function* settleDraftCandidate(opts: {
             toolCallId: hunk.hunkId,
             before: hunk.beforeText ?? "",
             after: hunk.afterText ?? "",
+            blockPath: [...hunk.blockPath],
             blockIndex: hunk.blockPath[0] ?? 0,
             suggestion,
             diffHunk: hunk,

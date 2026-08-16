@@ -370,6 +370,7 @@ function deserializeSuggestions(
       toolCallId: record.toolCallId,
       before: record.before,
       after: record.after,
+      blockPath: record.blockPath ?? record.diffHunk?.blockPath,
       blockIndex: record.blockIndex,
       suggestion,
       diffHunk: record.diffHunk,

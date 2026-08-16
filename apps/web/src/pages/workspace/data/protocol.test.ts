@@ -1316,6 +1316,54 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     assertInternallyConsistent(result);
   });
 
+  it("P28:listItem 级 hunk 投影为父列表中的单行 patch，不退化成 item 整块替换", () => {
+    const stableList = (middleText: string): PmBlockNode => ({
+      type: "bulletList",
+      attrs: { blockId: "p28-list" },
+      content: [
+        { type: "listItem", attrs: { blockId: "p28-a" }, content: [pmParagraph("p28-a-p", "保留甲")] },
+        { type: "listItem", attrs: { blockId: "p28-b" }, content: [pmParagraph("p28-b-p", middleText)] },
+        { type: "listItem", attrs: { blockId: "p28-c" }, content: [pmParagraph("p28-c-p", "保留丙")] },
+      ],
+    } as PmBlockNode);
+    const base = pmDoc([stableList("旧乙")]);
+    const draft = pmDoc([stableList("新乙")]);
+    const [hunk] = buildDraftDiff(base, draft);
+    if (!hunk) throw new Error("missing P28 item hunk");
+    expect(hunk).toMatchObject({
+      op: "replace",
+      blockPath: [0, 1],
+      before: [{ type: "listItem" }],
+      after: [{ type: "listItem" }],
+    });
+
+    const doc = pmDocToViewDocumentSnapshot(base, 1, "t");
+    const inputs = suggestionToBlockPatchInputs(blockSuggestion(hunk.hunkId, hunk), 0);
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      patchId: hunk.hunkId,
+      op: "replace",
+      anchorBlockId: "p28-list",
+      anchorIndex: 0,
+      blockCount: 1,
+      granular: true,
+    });
+    const projected = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(projected.items).toEqual(["保留甲", "新乙", "保留丙"]);
+    expect(projected.rowDiff?.map((row) => row.status)).toEqual(["same", "changed", "same"]);
+    expect(projected.rowDiff?.[1]).toMatchObject({ status: "changed", oldText: "旧乙" });
+    expect(projected.rowDiff?.[1]?.status === "changed" ? projected.rowDiff[1].spans : []).toEqual([
+      { kind: "patchDel", text: "旧", patchId: hunk.hunkId },
+      { kind: "patchIns", text: "新", patchId: hunk.hunkId },
+      { kind: "text", text: "乙" },
+    ]);
+    const result = derivePatchPresentation(doc, [], inputs);
+    expect(result.applied.map((patch) => patch.id)).toEqual([hunk.hunkId]);
+    expect(result.reviewTargets).toHaveLength(1);
+    assertInternallyConsistent(result);
+  });
+
   it("列表纯删与纯增保持孤立状态，不被误配成 replace", () => {
     const before = pmBulletListRows("list-pure", ["保留", "只删除"]);
     const afterDelete = pmBulletListRows("list-pure", ["保留"]);

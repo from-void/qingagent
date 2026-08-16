@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import {
+  countDocVisibleChars,
   detectNestedListIntent,
   pmDocHasNestedList,
   pmToPlainText,
@@ -31,6 +32,7 @@ import { AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
 import {
   countByUnit,
   countVisibleChars,
+  convertLengthSpecToCanonical,
   describeLengthSpec,
   getLengthStatus,
   makeLengthSpec,
@@ -479,6 +481,7 @@ export function createWriteDraftTool(opts: {
           title: input.title,
           phase,
           charCount,
+          charCountApproximate: true,
           excerpt: phase === "failed" ? null : fullExcerpt ? text : tailExcerpt(text, 220),
           diagnostic: phase === "failed" ? diagnostic : null,
           resetExcerpt,
@@ -558,6 +561,7 @@ export function createWriteDraftTool(opts: {
         document: ParsedAiDocument;
         doc: PmDoc;
         count: number;
+        canonicalSpec: LengthSpec | null;
         raw: string;
         kind: "express" | "fallback" | "refinement";
       };
@@ -566,9 +570,22 @@ export function createWriteDraftTool(opts: {
       const failureDiagnostics: WriteDraftFailureDiagnostic[] = [];
       const activeModelTier = resolveModelTier(context?.requestContext);
       const activeModelId = resolveModelId(context?.requestContext, "flash");
-      const countOf = (doc: PmDoc) =>
-        // 字数/长度验收只算正文文字:跳过图片/图表/附件等媒体节点(与右下角落款 countDocVisibleChars 同口径)
-        countByUnit(pmToPlainText(doc, { skipMedia: true }), lengthSpec?.unit ?? "withPunct");
+      const canonicalMeasurement = (doc: PmDoc) => {
+        const canonicalText = pmToPlainText(doc, {
+          skipMedia: true,
+          skipTaskMarkers: true,
+          skipFootnotes: true,
+        });
+        const canonicalCount = countDocVisibleChars(doc);
+        const canonicalSpec = lengthSpec
+          ? convertLengthSpecToCanonical(
+              lengthSpec,
+              countByUnit(canonicalText, lengthSpec.unit),
+              canonicalCount,
+            )
+          : null;
+        return { canonicalCount, canonicalSpec };
+      };
 
       /** 单路生成:一次内层调用+解析编译,失败返回 null(其余路兜着)。 */
       const runLane = async (params: {
@@ -652,11 +669,13 @@ export function createWriteDraftTool(opts: {
             return null;
           }
           innerSpan.end({ ok: true, outputText: raw });
+          const measurement = canonicalMeasurement(compiled.doc);
           const candidate: DraftCandidate = {
             laneKey,
             document,
             doc: compiled.doc,
-            count: countOf(compiled.doc),
+            count: measurement.canonicalCount,
+            canonicalSpec: measurement.canonicalSpec,
             raw,
             kind: params.kind,
           };
@@ -684,7 +703,7 @@ export function createWriteDraftTool(opts: {
         if (pool.length === 0) return null;
         if (!lengthSpec) return pool[0]!;
         return pool.reduce((a, b) =>
-          distanceToSpec(b.count, lengthSpec) <= distanceToSpec(a.count, lengthSpec) ? b : a,
+          distanceToSpec(b.count, b.canonicalSpec!) <= distanceToSpec(a.count, a.canonicalSpec!) ? b : a,
         );
       };
       const reachesNestedDepth = (candidate: DraftCandidate): boolean =>
@@ -697,7 +716,7 @@ export function createWriteDraftTool(opts: {
       const isStopWorthyCandidate = (candidate: DraftCandidate): boolean => {
         if (!reachesNestedDepth(candidate)) return false;
         if (runConfig.schedule === "budgeted" && candidate.kind !== "refinement") return false;
-        return lengthSpec ? withinSpec(candidate.count, lengthSpec) : true;
+        return lengthSpec ? withinSpec(candidate.count, candidate.canonicalSpec!) : true;
       };
       const selectChampion = (pool: readonly DraftCandidate[]): DraftCandidate | null => {
         if (pool.length === 0) return null;
@@ -890,7 +909,8 @@ export function createWriteDraftTool(opts: {
         };
       }
 
-      firstRoundBestCount = bestStructurallyAware(candidates)?.count ?? bestOf(candidates)?.count ?? null;
+      const firstRoundBest = bestStructurallyAware(candidates) ?? bestOf(candidates);
+      firstRoundBestCount = firstRoundBest?.count ?? null;
 
       // 注:不再因"想要嵌套但没达深度"额外补一路 LLM 重试(那是正则判意图驱动的强制重跑,
       // 易拖慢首稿且命中率提升有限)。嵌套结构仍由候选优选(bestStructurallyAware)挑达标的那版 +
@@ -898,10 +918,12 @@ export function createWriteDraftTool(opts: {
       const champion = acceptedCandidate ?? selectChampion(candidates)!;
       await emitWinnerFrame(champion.laneKey, champion.raw, champion.kind === "refinement" ? 1 : 0);
       await progressWriteChain;
-      const firstCount = firstRoundBestCount ?? champion.count;
+      const firstCanonicalCount = firstRoundBestCount ?? champion.count;
       const finalDoc = champion.doc;
       const finalDocument = champion.document;
-      const finalCount = countOf(finalDoc);
+      const finalMeasurement = canonicalMeasurement(finalDoc);
+      const finalCanonicalCount = finalMeasurement.canonicalCount;
+      const finalLengthSpec = finalMeasurement.canonicalSpec;
       const nestedListReachedDepth = nestedIntent.wantsNestedList
         ? pmDocHasNestedList(finalDoc, nestedIntent.minDepth)
         : undefined;
@@ -927,11 +949,11 @@ export function createWriteDraftTool(opts: {
       return {
         ok: true,
         blockCount: opts.state.docDraftCandidateDoc?.content.length ?? finalDoc.content.length,
-        visibleCharCount: finalCount,
-        targetLength: lengthSpec?.target,
-        minLength: lengthSpec?.min,
-        maxLength: lengthSpec?.max,
-        firstVisibleCharCount: lengthSpec ? firstCount : undefined,
+        visibleCharCount: finalCanonicalCount,
+        targetLength: finalLengthSpec?.target,
+        minLength: finalLengthSpec?.min,
+        maxLength: finalLengthSpec?.max,
+        firstVisibleCharCount: lengthSpec ? firstCanonicalCount : undefined,
         previewExcerpt: headExcerpt(aiIrStreamPreviewFromMarkup(champion.raw || JSON.stringify(finalDocument.blocks)), 240),
         // reason 模式下该字段复用为"成功精修路数";express 仍表示加赛轮数。
         revisionCount: runConfig.schedule === "budgeted"
@@ -939,7 +961,12 @@ export function createWriteDraftTool(opts: {
           : lengthSpec
             ? extraRoundsUsed
             : undefined,
-        lengthStatus: getLengthStatus(firstCount, finalCount, lengthSpec, extraRoundsUsed),
+        lengthStatus: getLengthStatus(
+          firstCanonicalCount,
+          finalCanonicalCount,
+          finalLengthSpec,
+          extraRoundsUsed,
+        ),
         nestedListReachedDepth,
         structuralFailures,
       };

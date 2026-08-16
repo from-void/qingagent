@@ -361,7 +361,11 @@ type _DetachFolderExact = Expect<Equal<z.infer<typeof detachFolderDataSchema>, D
 const externalProposeOpSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("fullDraft"), markdown: z.string() }),
   z.object({ kind: z.literal("qingmlDraft"), qingml: z.string() }),
-  z.object({ kind: z.literal("setTitle"), title: z.string().trim().min(1).max(48) }),
+  // write 通道接受长标题，由结算层按 48 字素显式截断并回传 notice，不能在入口静默拒绝。
+  z.object({
+    kind: z.literal("setTitle"),
+    title: z.string().trim().min(1).max(MAX_COMMAND_STRING_LENGTH),
+  }),
   z.object({
     kind: z.literal("strReplace"),
     old: z.string().min(1),
@@ -374,6 +378,8 @@ const externalProposeOpSchema = z.discriminatedUnion("kind", [
     markdown: z.string(),
   }),
   z.object({ kind: z.literal("appendSection"), markdown: z.string() }),
+  z.object({ kind: z.literal("deleteBlock"), blockId: boundedNonEmptyString(MAX_ID_LENGTH) }),
+  z.object({ kind: z.literal("deleteListItem"), blockId: boundedNonEmptyString(MAX_ID_LENGTH) }),
 ]) satisfies z.ZodType<ExternalProposeOp>;
 type _ExternalProposeOpExact = Expect<Equal<z.infer<typeof externalProposeOpSchema>, ExternalProposeOp>>;
 
@@ -382,6 +388,7 @@ const externalProposeDataSchema = z
     sessionId: z.string().min(1),
     expectedDocVersion: z.number().int().nonnegative(),
     clientMutationId: z.string().min(1).optional(),
+    opId: boundedNonEmptyString(MAX_ID_LENGTH).optional(),
     ops: z.array(externalProposeOpSchema).min(1).max(50),
   })
   .refine((data) => {
@@ -393,6 +400,12 @@ const externalProposeDataSchema = z
   .refine(
     (data) => data.ops.filter((op) => op.kind === "setTitle").length <= 1,
     "setTitle must not be repeated",
+  )
+  .refine(
+    (data) =>
+      !data.ops.some((op) => op.kind === "deleteBlock" || op.kind === "deleteListItem") ||
+      typeof data.opId === "string",
+    "deleteBlock/deleteListItem require request-level opId",
   ) satisfies z.ZodType<ExternalPropose>;
 type _ExternalProposeExact = Expect<Equal<z.infer<typeof externalProposeDataSchema>, ExternalPropose>>;
 

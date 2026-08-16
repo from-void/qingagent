@@ -130,6 +130,7 @@ describe("写稿小卡片帧协议", () => {
     expect(final.status.kind).toBe("done");
     expect(finalData.phase).toBe("done");
     expect(finalData.charCount).toBe(100);
+    expect(finalData.charCountApproximate).toBe(false);
     expect(finalData.lengthStatus).toBe("accepted_after_revision");
     expect(finalData.revisionCount).toBe(1);
   });

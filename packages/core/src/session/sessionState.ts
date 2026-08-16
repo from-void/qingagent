@@ -173,6 +173,8 @@ export interface SessionState {
   /** PM-native review-cycle baseline for suggestion restore/debugging. */
   suggestionBaseDoc: PmDoc | null;
   suggestionBaseVersion: number | null;
+  /** 已成功创建过审阅批次的外部结构 opId→请求摘要；与 pending draft 生命周期解耦。 */
+  externalStructuralOpDigests: Map<string, string>;
   /** Tracks the seq counter per message for chatMessageAppended */
   seqCounters: Map<string, number>;
   /** Uploaded and parsed materials, keyed by material ID. */
@@ -346,6 +348,7 @@ export function createSession(
     _draftMutationRevision: 0,
     suggestionBaseDoc: null,
     suggestionBaseVersion: null,
+    externalStructuralOpDigests: new Map(),
     seqCounters: new Map(),
     materials: new Map(),
     folderSources: new Map(),

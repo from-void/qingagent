@@ -81,6 +81,9 @@ type ExecuteResult = {
   ok: boolean;
   visibleCharCount?: number;
   firstVisibleCharCount?: number;
+  targetLength?: number;
+  minLength?: number;
+  maxLength?: number;
   revisionCount?: number;
   lengthStatus?: string;
 };
@@ -101,6 +104,7 @@ function progressEvents(writes: Array<Record<string, unknown>>) {
     .map((w) => w.progress as {
       phase: string;
       charCount: number;
+      charCountApproximate?: boolean;
       excerpt?: string | null;
       diagnostic?: {
         failureKind: string;
@@ -146,6 +150,29 @@ describe("writeDraft 赛马式字数控制", () => {
     const { pmToPlainText } = await import("@qingagent/pm-schema");
     expect(pmToPlainText(state.docDraftCandidateDoc!).startsWith("b")).toBe(true);
   }, 10_000);
+
+  it("noPunct 规格换算为 canonical 后再验收并展示同一组数字", async () => {
+    const { tool } = await makeTool();
+    mockGenerateReturning(
+      ...Array.from({ length: 4 }, () => qingmlParagraph("正文，".repeat(50))),
+    );
+
+    const out = await run(tool, {
+      title: "t",
+      outline: "o",
+      lengthTarget: 100,
+      lengthUnit: "noPunct",
+    });
+
+    expect(out).toMatchObject({
+      ok: true,
+      visibleCharCount: 150,
+      targetLength: 150,
+      minLength: 135,
+      maxLength: 165,
+      lengthStatus: "accepted_first_pass",
+    });
+  });
 
   it("最快候选未达标时不截停慢一点的达标候选", async () => {
     const { tool } = await makeTool();
@@ -298,6 +325,7 @@ describe("writeDraft 赛马式字数控制", () => {
     expect((out as { error?: string }).error).toContain("重新调用 writeDraft");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(progressEvents(writes).at(-1)).toMatchObject({ phase: "failed" });
+    expect(progressEvents(writes).at(-1)?.charCountApproximate).toBe(true);
   });
 
   it("表中表全路失败:明确报不支持并给出替代方案，failed 帧只带脱敏骨架", async () => {

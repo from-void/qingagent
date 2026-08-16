@@ -152,7 +152,7 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
         }
         case "deleteBlock": {
           const idx = indexByRef.get(op.ref);
-          if (idx === undefined) throw new OpError(opIndex, `块 ${op.ref} 不存在,请先 readDraft`);
+          if (idx === undefined) throw new OpError(opIndex, `块 ${op.ref} 不存在，请重新读取文档并使用最新 blockId`);
           deleteAt.add(idx);
           applied.push(op.ref);
           break;
@@ -889,9 +889,13 @@ function applyListItemEdits(
 
     if (op.action === "deleteListItem") {
       const target = findListItemByRef(workingDoc, op.ref);
-      if (!target) throw new OpError(opIndex, `列表行 ${op.ref} 不存在,请先 readDraft`);
+      if (!target) throw new OpError(opIndex, `列表行 ${op.ref} 不存在，请重新读取文档并使用最新 blockId`);
       if (target.parentList.content.length <= 1) {
-        throw new OpError(opIndex, `列表 ${target.parentList.attrs.blockId} 只有一行,拒绝删除后留下空列表`);
+        // 结构删除不允许留下空清单壳；最后一行被删时级联移除父清单。
+        workingDoc = removeNodeAtPath(workingDoc, target.parentPath);
+        applied.push(op.ref);
+        assertListEditDocValid(workingDoc, opIndex);
+        continue;
       }
       const nextItems = [...target.parentList.content] as ListItemNode[];
       nextItems.splice(target.index, 1);
@@ -1477,6 +1481,30 @@ function replaceNodeAtPath(doc: PmDoc, path: readonly number[], replacement: PmN
     ...doc,
     content: replaceInContent(doc.content, path, replacement) as PmBlockNode[],
   };
+}
+
+function removeNodeAtPath(doc: PmDoc, path: readonly number[]): PmDoc {
+  if (path.length === 0) throw new Error("不能删除 doc 根节点");
+  return {
+    ...doc,
+    content: removeFromContent(doc.content, path) as PmBlockNode[],
+  };
+}
+
+function removeFromContent(content: readonly unknown[], path: readonly number[]): unknown[] {
+  const [index, ...rest] = path;
+  if (index === undefined || index < 0 || index >= content.length) throw new Error("列表路径越界");
+  if (rest.length === 0) return content.filter((_, itemIndex) => itemIndex !== index);
+  const next = [...content];
+  next[index] = removeFromNode(content[index], rest);
+  return next;
+}
+
+function removeFromNode(node: unknown, path: readonly number[]): unknown {
+  if (!node || typeof node !== "object" || Array.isArray(node)) throw new Error("列表路径指向非节点");
+  const record = node as Record<string, unknown>;
+  if (!Array.isArray(record.content)) throw new Error("列表路径缺少 content");
+  return { ...record, content: removeFromContent(record.content, path) };
 }
 
 function replaceInContent(content: readonly unknown[], path: readonly number[], replacement: PmNode): unknown[] {

@@ -32,6 +32,11 @@ describe("progressLine", () => {
   it("writing 带实时字数与目标区间", () => {
     expect(progressLine(body({}))).toBe("正在写作 · 已写 320 字 / 目标 1350–1650 字");
   });
+  it("流式预览字数明确标成约数", () => {
+    expect(progressLine(body({ charCountApproximate: true }))).toBe(
+      "正在写作 · 已写 约 320 字 / 目标 1350–1650 字",
+    );
+  });
   it("revising 标修订轮次", () => {
     expect(progressLine(body({ phase: "revising", revisionCount: 1, charCount: 80 }))).toBe(
       "字数修订中(第 1 轮) · 已写 80 字 / 目标 1350–1650 字",

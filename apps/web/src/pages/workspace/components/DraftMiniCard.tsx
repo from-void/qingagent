@@ -24,20 +24,21 @@ export function lengthStatusLabel(
 
 /** 进行中状态行文案(导出供单测)。 */
 export function progressLine(body: WriteDraftCardBody): string {
+  const countPrefix = body.charCountApproximate ? "约 " : "";
   const range =
     body.minLength != null && body.maxLength != null
       ? ` / 目标 ${body.minLength}–${body.maxLength} 字`
       : "";
   if (body.phase === "revising") {
-    return `字数修订中(第 ${body.revisionCount} 轮) · 已写 ${body.charCount} 字${range}`;
+    return `字数修订中(第 ${body.revisionCount} 轮) · 已写 ${countPrefix}${body.charCount} 字${range}`;
   }
   if (body.phase === "finalizing") {
-    return `定稿中 · 已写 ${body.charCount} 字${range}`;
+    return `定稿中 · 已写 ${countPrefix}${body.charCount} 字${range}`;
   }
   if (body.phase === "failed") {
-    return `生成失败 · 已写 ${body.charCount} 字${range}`;
+    return `生成失败 · 已写 ${countPrefix}${body.charCount} 字${range}`;
   }
-  return `正在写作 · 已写 ${body.charCount} 字${range}`;
+  return `正在写作 · 已写 ${countPrefix}${body.charCount} 字${range}`;
 }
 
 const TONE_COLOR: Record<"ok" | "warn" | "bad", string> = {

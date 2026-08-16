@@ -7,7 +7,11 @@ import {
   type PmInlineNode,
   type PmMark,
 } from "@qingagent/pm-schema";
-import { applyDiffHunkToDoc, applyDiffHunks, buildDraftDiff } from "../proposalDiff.js";
+import {
+  applyDiffHunkToDoc,
+  applyDiffHunks,
+  buildDraftDiff,
+} from "../proposalDiff.js";
 
 function text(textValue: string, marks?: PmMark[]): PmInlineNode {
   return marks && marks.length > 0
@@ -778,6 +782,30 @@ describe("external block identity-only 过滤边界", () => {
     expect(buildDraftDiff(base, changedSource, {
       ignoreBlockIdentityOnlyReplacements: true,
     })).toHaveLength(1);
+  });
+
+  it("r17c：真实 differ 产出的归一化深等 no-op 会被 external 漏斗过滤", () => {
+    const base = doc([callout("title-before", "材料与工具清单")]);
+    const draft = doc([callout("title-after", "材料与工具清单")]);
+
+    expect(buildDraftDiff(base, draft)).toHaveLength(1);
+    expect(buildDraftDiff(base, draft, {
+      ignoreBlockIdentityOnlyReplacements: true,
+    })).toEqual([]);
+  });
+
+  it("纯 mark 变更必须存活 external no-op 漏斗", () => {
+    const base = doc([paragraph("marked-paragraph", [text("材料与工具清单")])]);
+    const draft = doc([paragraph("marked-paragraph", [
+      text("材料与工具清单", [{ type: "bold" }]),
+    ])]);
+
+    const hunks = buildDraftDiff(base, draft, {
+      ignoreBlockIdentityOnlyReplacements: true,
+    });
+
+    expect(hunks).not.toEqual([]);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 });
 

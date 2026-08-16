@@ -298,6 +298,7 @@ export function writeDraftCardFromResult(
     title: typeof args.title === "string" ? args.title : "",
     phase: ok ? "done" : "failed",
     charCount: num(toolResult.visibleCharCount) ?? 0,
+    charCountApproximate: false,
     // 完成卡保留开头预览(直播/历史重开都有内容);拿不到则 null。
     excerpt: typeof toolResult.previewExcerpt === "string" ? toolResult.previewExcerpt : null,
     diagnostic,

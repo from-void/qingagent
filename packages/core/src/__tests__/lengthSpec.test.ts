@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   countCharsNoPunct,
   countVisibleChars,
+  convertLengthSpecToCanonical,
   getLengthStatus,
   makeLengthSpec,
   withinSpec,
@@ -26,6 +27,27 @@ describe("countVisibleChars 计数口径(含标点不含空白)", () => {
   });
   it("不含标点口径统一覆盖各语种 Unicode 字母与数字", () => {
     expect(countCharsNoPunct("日本語，한국어 café １２３！")).toBe(13);
+  });
+});
+
+describe("lengthSpec canonical 换算", () => {
+  it("不含标点规格按候选正文比例换成 canonical 区间", () => {
+    const spec = makeLengthSpec({ lengthTarget: 100, lengthUnit: "noPunct" })!;
+
+    expect(convertLengthSpecToCanonical(spec, 100, 120)).toMatchObject({
+      target: 120,
+      min: 108,
+      max: 132,
+      workingTarget: 120,
+      unit: "withPunct",
+    });
+  });
+
+  it("正文只有标点时不会把正数字数下限误判为已满足", () => {
+    const spec = makeLengthSpec({ lengthTarget: 10, lengthUnit: "noPunct" })!;
+    const canonical = convertLengthSpecToCanonical(spec, 0, 20);
+
+    expect(withinSpec(20, canonical)).toBe(false);
   });
 });
 

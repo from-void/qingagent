@@ -416,7 +416,7 @@ describe("applyBlockEdits", () => {
     expect(r.applied.every((id) => !id.startsWith("ai-block-"))).toBe(true);
   });
 
-  it("deleteListItem 删除行;删除父列表唯一行时拒绝且原 doc 不变", () => {
+  it("deleteListItem 删除行；最后一行删除时级联清理父列表", () => {
     const base = doc([
       bulletList("list-a", [
         { blockId: "item-a", paragraphId: "item-a-p", text: "A" },
@@ -431,12 +431,41 @@ describe("applyBlockEdits", () => {
     expect(list.content.map((item) => item.attrs.blockId)).toEqual(["item-b"]);
 
     const single = doc([bulletList("list-one", [{ blockId: "only", paragraphId: "only-p", text: "唯一" }])]);
-    const before = getStablePmJson(single);
-    const rejected = applyBlockEdits(single, [{ action: "deleteListItem", ref: "only" }]);
-    expect(rejected.ok).toBe(false);
-    expect(rejected.doc).toBeNull();
-    expect(rejected.error).toContain("拒绝删除后留下空列表");
-    expect(getStablePmJson(single)).toBe(before);
+    const cascaded = applyBlockEdits(single, [{ action: "deleteListItem", ref: "only" }]);
+    expect(cascaded.ok).toBe(true);
+    expect(cascaded.doc?.content).toEqual([]);
+  });
+
+  it("r18b：八项任务删二加一仍是单一连续清单，且不存在空 taskItem", () => {
+    const base = doc([taskList("tasks-r18b", Array.from({ length: 8 }, (_, index) => ({
+      blockId: `task-${index + 1}`,
+      paragraphId: `task-${index + 1}-p`,
+      checked: false,
+      text: `任务 ${index + 1}`,
+    })))]);
+
+    const result = applyBlockEdits(base, [
+      { action: "deleteListItem", ref: "task-3" },
+      { action: "deleteListItem", ref: "task-6" },
+      {
+        action: "insertListItem",
+        parentRef: "tasks-r18b",
+        at: "after",
+        ref: "task-7",
+        item: { runs: [{ text: "新增任务" }], checked: false },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(result.doc?.content).toHaveLength(1);
+    const list = result.doc?.content[0];
+    expect(list?.type).toBe("taskList");
+    if (list?.type !== "taskList") return;
+    expect(list.content).toHaveLength(7);
+    expect(list.content.map((item) => firstText(item))).toEqual([
+      "任务 1", "任务 2", "任务 4", "任务 5", "任务 7", "新增任务", "任务 8",
+    ]);
+    expect(list.content.every((item) => firstText(item).trim().length > 0)).toBe(true);
   });
 
   it("行级 op 对非法 shape 和过期 ref fail-closed", () => {

@@ -41,12 +41,14 @@ describe("external PM 文档读写", () => {
     const baseline = await initial.json() as {
       docVersion: number;
       contentHash: string;
+      charCount: number;
       pmDoc: ReturnType<typeof doc>;
       ts: string;
     };
     expect(baseline).toMatchObject({
       docVersion: 0,
       contentHash: getPmContentHash(doc("")),
+      charCount: 0,
       pmDoc: { type: "doc", attrs: { schemaVersion: 1 }, content: [] },
       ts: expect.any(String),
     });
@@ -68,6 +70,7 @@ describe("external PM 文档读写", () => {
       clientMutationId: mutation.clientMutationId,
       docVersion: 1,
       contentHash: getPmContentHash(mutation.doc),
+      charCount: 6,
       ts: expect.any(String),
     });
 
@@ -83,6 +86,7 @@ describe("external PM 文档读写", () => {
       sessionId,
       docVersion: 1,
       contentHash: getPmContentHash(mutation.doc),
+      charCount: 6,
       state: "editing",
       agentBusy: false,
       pmDoc: mutation.doc,

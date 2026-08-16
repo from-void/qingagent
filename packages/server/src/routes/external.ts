@@ -44,6 +44,7 @@ import {
 } from "@qingagent/core";
 import {
   aiBlocksToQingml,
+  countDocVisibleChars,
   getPmContentHash,
   markdownToPm,
   normalizePmDoc,
@@ -466,6 +467,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
       contentHash: snapshot.contentHash,
       state: state.kind,
       agentBusy: sessionManager.isSessionBusy(sessionId),
+      charCount: countDocVisibleChars(snapshot.pmDoc),
       title: session.title.trim() || deriveTitleFromDoc(snapshot.pmDoc),
       ts: snapshot.ts,
       pmDoc: snapshot.pmDoc,
@@ -479,6 +481,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     docVersion: session.docVersion,
     state: state.kind,
     agentBusy: sessionManager.isSessionBusy(sessionId),
+    charCount: countDocVisibleChars(session.doc ?? currentPmDoc(session)),
     markdown,
     ...(c.req.query("lines") === "1" ? { markdownWithLineNumbers: withLineNumbers(markdown) } : {}),
     ...(format === "qingml"
@@ -548,6 +551,7 @@ externalRoutes.put("/sessions/:id/doc", async (c) => {
       docVersion: write.data.docVersion,
       contentHash: snapshot.contentHash,
       ts: snapshot.ts,
+      charCount: countDocVisibleChars(snapshot.pmDoc),
     });
   }
   if ("conflict" in write.data) {
@@ -1298,7 +1302,8 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
     }
     throw error;
   }
-  const summary = proposalSummary(frames);
+  const responseSession = await getOrRestoreSessionReadOnly(sessionId);
+  const summary = proposalSummary(frames, responseSession);
   externalLog("propose", { sessionId, ms: elapsed(startedAt), result: summary.logResult, hunks: summary.hunks });
   return proposalResponse(c, summary);
 });
@@ -1591,15 +1596,34 @@ interface ProposalSummary {
   seq: number | null;
 }
 
-function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
+function proposalSummary(entries: LoggedFrame[], session: SessionState | null = null): ProposalSummary {
   const frames = entries.map((entry) => entry.frame);
   const seq = maxSeq(entries);
+  const notices = frames.flatMap((frame) =>
+    frame.kind === "sessionMeta" && frame.data.notice?.kind === "title_truncated"
+      ? [{
+          code: "TITLE_TRUNCATED" as const,
+          message: `标题超过 ${frame.data.notice.maxChars} 个字符，已截断`,
+          maxChars: frame.data.notice.maxChars,
+        }]
+      : []
+  );
   const diff = frames.find((frame) => frame.kind === "docDiffReady");
   if (diff?.kind === "docDiffReady") {
     const patchIds = diff.data.suggestions.map((suggestion) => suggestion.id);
+    const responseDoc = diff.data.editedDoc
+      ?? session?.docDraftCandidateDoc
+      ?? (session ? currentPmDoc(session) : null);
+    const charCount = responseDoc ? countDocVisibleChars(responseDoc) : 0;
     return {
       status: 200,
-      body: withSeq({ status: "review", patchIds, count: patchIds.length }, seq),
+      body: withSeq({
+        status: "review",
+        patchIds,
+        count: patchIds.length,
+        charCount,
+        ...(notices.length > 0 ? { notices } : {}),
+      }, seq),
       logResult: "review",
       hunks: patchIds.length,
       seq,
@@ -1608,9 +1632,15 @@ function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
   const write = frames.find((frame) => frame.kind === "docWriteResult");
   if (write?.kind === "docWriteResult") {
     if (write.data.ok) {
+      const charCount = session ? countDocVisibleChars(currentPmDoc(session)) : 0;
       return {
         status: 200,
-        body: withSeq({ status: "committed", docVersion: write.data.docVersion }, seq),
+        body: withSeq({
+          status: "committed",
+          docVersion: write.data.docVersion,
+          charCount,
+          ...(notices.length > 0 ? { notices } : {}),
+        }, seq),
         logResult: "committed",
         hunks: 0,
         seq,
@@ -1636,7 +1666,9 @@ function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
     return errorSummary(
       400,
       "VALIDATION",
-      write.data.diagnostic ? "QingML 校验失败，请根据诊断修正后重试" : "未命中,请重读文档",
+      write.data.diagnostic
+        ? "QingML 校验失败，请根据诊断修正后重试"
+        : write.data.validationMessage ?? "未命中,请重读文档",
       seq,
       write.data.diagnostic,
     );

@@ -132,7 +132,7 @@ export function buildDraftDiff(
   });
 
   const effectiveHunks = options.ignoreBlockIdentityOnlyReplacements
-    ? hunks.filter((hunk) => !isBlockIdentityOnlyReplacement(hunk))
+    ? hunks.filter((hunk) => !isBlockIdentityOnlyReplacement(hunk) && !isNormalizedNoopHunk(hunk))
     : hunks;
   const groupedHunks = annotateReviewGroups(effectiveHunks, {
     baseVersion: options.baseVersion ?? 0,
@@ -164,6 +164,16 @@ function isBlockIdentityOnlyReplacement(hunk: DiffHunk): boolean {
   }
   return getStablePmJson(normalizeIdentityComparison(hunk.beforeBlock)) ===
     getStablePmJson(normalizeIdentityComparison(hunk.afterBlock));
+}
+
+/**
+ * P33 通用漏斗：只要 diff 已同时携带 before/after，就按与块身份过滤相同的
+ * canonical 规则深比；不限 op 类型，也不依赖 beforeBlock/afterBlock 辅助字段。
+ */
+export function isNormalizedNoopHunk(hunk: DiffHunk): boolean {
+  if (hunk.before === null || hunk.after === null) return false;
+  return getStablePmJson(normalizeIdentityComparison(hunk.before)) ===
+    getStablePmJson(normalizeIdentityComparison(hunk.after));
 }
 
 function normalizeIdentityComparison(value: unknown): unknown {

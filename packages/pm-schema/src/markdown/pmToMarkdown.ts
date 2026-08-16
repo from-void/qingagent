@@ -7,18 +7,70 @@ export interface PmToMarkdownOptions {
   baseUrl?: string;
 }
 
+export interface PmMarkdownBlockLineSpan {
+  blockIndex: number;
+  blockId: string;
+  blockType: PmBlockNode["type"];
+  /** 一基行号；空块不会进入 Markdown，也不会占用行号。 */
+  startLine: number;
+  /** 块正文最后一行；多行块内部行必须小于此值。 */
+  contentEndLine: number;
+  /** 含块间单个空白行的可锚定末行。 */
+  endLine: number;
+}
+
+export interface PmMarkdownWithLineMap {
+  markdown: string;
+  blocks: PmMarkdownBlockLineSpan[];
+}
+
 export function pmToMarkdown(doc: PmDoc, options: PmToMarkdownOptions = {}): string {
+  return pmToMarkdownWithLineMap(doc, options).markdown;
+}
+
+/**
+ * 在同一次整篇序列化中同时产出 Markdown 与顶层块行区间。
+ * 外部行号写入必须复用这里的区间，不能再逐块序列化后自行累加。
+ */
+export function pmToMarkdownWithLineMap(
+  doc: PmDoc,
+  options: PmToMarkdownOptions = {},
+): PmMarkdownWithLineMap {
   const footnotes = collectMarkdownFootnotes(doc);
   const serializable = replaceFootnotesWithMarkdownRefs(doc);
-  const body = serializable.content
-    .map((node) => blockToMarkdown(node, options))
-    .filter(Boolean)
-    .join("\n\n");
-  if (footnotes.length === 0) return body;
+  const chunks = serializable.content.flatMap((node, blockIndex) => {
+    const markdown = blockToMarkdown(node, options);
+    return markdown ? [{ node, blockIndex, markdown }] : [];
+  });
+  const body = chunks.map((chunk) => chunk.markdown).join("\n\n");
   const definitions = footnotes
     .map(({ id, note }) => `[^${id}]: ${escapeFootnoteDefinition(note)}`)
     .join("\n");
-  return `${body}\n\n${definitions}`.trim();
+  const markdown = footnotes.length === 0
+    ? body
+    : `${body}\n\n${definitions}`.trim();
+
+  let nextStartLine = 1;
+  const blocks = chunks.map((chunk, index): PmMarkdownBlockLineSpan => {
+    const contentEndLine = nextStartLine + countMarkdownLines(chunk.markdown) - 1;
+    const hasFollowingMarkdown = index < chunks.length - 1 || definitions.length > 0;
+    const endLine = contentEndLine + (hasFollowingMarkdown ? 1 : 0);
+    const span = {
+      blockIndex: chunk.blockIndex,
+      blockId: chunk.node.attrs.blockId,
+      blockType: chunk.node.type,
+      startLine: nextStartLine,
+      contentEndLine,
+      endLine,
+    };
+    nextStartLine = contentEndLine + 2;
+    return span;
+  });
+  return { markdown, blocks };
+}
+
+function countMarkdownLines(markdown: string): number {
+  return markdown.split(/\r?\n/).length;
 }
 
 function collectMarkdownFootnotes(doc: PmDoc): Array<{ id: string; note: string }> {

@@ -336,8 +336,10 @@ test("旧 session 401 后握手 401 会发现新实例、自愈 attached 并发�
   connection.dispose();
 });
 
-test("STARTING_LEASE 租约期内探测超过两次后连接已就绪的新实例", async () => {
-  let nowMs = Date.now();
+test("STARTING_LEASE 持续 12 秒后仍能探测并连接已就绪的新实例", async () => {
+  const recoveryEpochMs = Date.now();
+  const startingLeaseDurationMs = 12_000;
+  let nowMs = recoveryEpochMs;
   const sleeps: number[] = [];
   let rediscoverCount = 0;
   const restarted: DiscoveredInstance = {
@@ -364,7 +366,9 @@ test("STARTING_LEASE 租约期内探测超过两次后连接已就绪的新实�
     },
     rediscover: async () => {
       rediscoverCount += 1;
-      return rediscoverCount <= 3 ? { errorCode: "STARTING_LEASE" } : restarted;
+      return nowMs - recoveryEpochMs < startingLeaseDurationMs
+        ? { errorCode: "STARTING_LEASE" }
+        : restarted;
     },
   });
   const reasons: Array<string | null> = [];
@@ -374,9 +378,10 @@ test("STARTING_LEASE 租约期内探测超过两次后连接已就绪的新实�
   await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
   await recovered;
 
-  assert.equal(rediscoverCount, 4);
-  assert.deepEqual(sleeps, [1_000, 2_000, 4_000]);
-  assert.equal(reasons.includes("STARTING_LEASE"), true);
+  assert.equal(rediscoverCount, 5);
+  assert.equal(nowMs - recoveryEpochMs, 15_000);
+  assert.deepEqual(sleeps, [1_000, 2_000, 4_000, 8_000]);
+  assert.deepEqual(reasons, [null, "STARTING_LEASE", null]);
   assert.equal(connection.snapshot().instanceId, restarted.instanceId);
   detach();
   connection.dispose();
@@ -471,7 +476,7 @@ test("新实例握手 MALFORMED 时继续退避而非立即 dead", async () => {
   connection.dispose();
 });
 
-test("rediscover 空结果在四次配额耗尽后提前 dead，不在恢复预算内空转", async () => {
+test("rediscover 空结果按退避阶梯完成六次探测后 dead", async () => {
   const recoveryEpochMs = Date.now();
   let nowMs = recoveryEpochMs;
   const rediscoveryStartedAtMs: number[] = [];
@@ -497,12 +502,34 @@ test("rediscover 空结果在四次配额耗尽后提前 dead，不在恢复预�
   await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
   await died;
 
-  assert.equal(nowMs - recoveryEpochMs, 7_000);
-  assert.equal(sleeps.reduce((sum, delayMs) => sum + delayMs, 0), 7_000);
+  assert.equal(nowMs - recoveryEpochMs, 23_000);
+  assert.equal(sleeps.reduce((sum, delayMs) => sum + delayMs, 0), 23_000);
   assert.deepEqual(
     rediscoveryStartedAtMs.map((startedAtMs) => startedAtMs - recoveryEpochMs),
-    [0, 1_000, 3_000, 7_000],
+    [0, 1_000, 3_000, 7_000, 15_000, 23_000],
   );
+  assert.equal(connection.snapshot().errorCode, "AUTH_FAILED");
+  connection.dispose();
+});
+
+test("自愈退避 sleep 抛错时进入 dead 而非卡在 reauthenticating", async () => {
+  const connection = new AttachBackendConnection(instance, handshake(), {
+    dataProxyFetch: async () => Response.json(
+      { error: { code: "ATTACH_SESSION_EXPIRED" } },
+      { status: 401 },
+    ),
+    fetchImpl: (async () => new Response(null, { status: 401 })) as typeof fetch,
+    sleep: async () => {
+      throw new Error("injected sleep failure");
+    },
+    rediscover: async () => null,
+  });
+  const died = waitForConnectionStatus(connection, "dead");
+
+  await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
+  await died;
+
+  assert.equal(connection.snapshot().status, "dead");
   assert.equal(connection.snapshot().errorCode, "AUTH_FAILED");
   connection.dispose();
 });
@@ -533,18 +560,18 @@ test("自动自愈耗尽后立即显式 retry 会绕过旧限频窗口并真实 
     },
     rediscover: async () => {
       rediscoverCount += 1;
-      return rediscoverCount <= 4 ? null : restarted;
+      return rediscoverCount <= 6 ? null : restarted;
     },
   });
   const died = waitForConnectionStatus(connection, "dead");
 
   await connection.forwardDataRequest(new Request("qingagent-data://library/api/v1/home"));
   await died;
-  assert.equal(rediscoverCount, 4);
+  assert.equal(rediscoverCount, 6);
 
   await connection.retry();
 
-  assert.equal(rediscoverCount, 5);
+  assert.equal(rediscoverCount, 7);
   assert.equal(connection.snapshot().status, "attached");
   assert.equal(connection.snapshot().instanceId, restarted.instanceId);
   connection.dispose();

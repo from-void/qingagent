@@ -25,7 +25,7 @@ const REAUTH_RECOVERY_BUDGET_MS = 30_000;
 const REAUTH_REDISCOVERY_INITIAL_BACKOFF_MS = 1_000;
 const REAUTH_REDISCOVERY_MAX_BACKOFF_MS = 8_000;
 const REDISCOVERY_RATE_WINDOW_MS = 30_000;
-const REDISCOVERY_RATE_LIMIT = 4;
+const REDISCOVERY_RATE_LIMIT = 8;
 
 export type BackendConnectionListener = (snapshot: BackendConnectionSnapshot) => void;
 
@@ -591,6 +591,15 @@ export class AttachBackendConnection extends BaseBackendConnection {
   }
 
   async #recoverRestartedInstance(): Promise<void> {
+    try {
+      await this.#recoverRestartedInstanceWithinBudget();
+    } catch {
+      if (this.#disposed) return;
+      this.#publishAuthenticationFailure(new AttachConnectionError("AUTH_FAILED", 401));
+    }
+  }
+
+  async #recoverRestartedInstanceWithinBudget(): Promise<void> {
     if (this.#disposed) return;
     if (!this.#rediscover || !this.current.libraryId) {
       this.#publishAuthenticationFailure(new AttachConnectionError("AUTH_FAILED", 401));
@@ -651,7 +660,10 @@ export class AttachBackendConnection extends BaseBackendConnection {
           return;
         }
       }
-      if (discovered?.errorCode === "STARTING_LEASE") {
+      if (
+        discovered?.errorCode === "STARTING_LEASE"
+        && this.current.errorCode !== "STARTING_LEASE"
+      ) {
         this.publish({ errorCode: "STARTING_LEASE" });
       }
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
+  acknowledgedDocWriteContentHash,
   appliedDocVersionFromBroadcastFrame,
   broadcastContentFrameWritesDocumentVersion,
   decideBroadcastDocumentFrame,
@@ -32,6 +34,31 @@ describe("shouldHandleDocWriteResult", () => {
       isLatestOwnMutation: false,
       hasMatchingWaiter: true,
     })).toBe(true);
+  });
+
+  it("成功回执优先采用服务端 canonical hash，旧端缺字段才自算", () => {
+    const submittedDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId: "materialized-trailing" },
+      }],
+    };
+    expect(acknowledgedDocWriteContentHash(
+      {
+        ok: true,
+        clientMutationId: "mutation-canonical",
+        docVersion: 1,
+        contentHash: "pmv1-canonical",
+        createdNewVersion: false,
+      },
+      submittedDoc,
+    )).toBe("pmv1-canonical");
+    expect(acknowledgedDocWriteContentHash(
+      { ok: true, clientMutationId: "mutation-legacy", docVersion: 1 },
+      submittedDoc,
+    )).toBe(getPmContentHash(submittedDoc));
   });
 });
 

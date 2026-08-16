@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PmDoc } from "../types";
 import { arePmDocsPersistenceEquivalent } from "../persistenceEquivalence";
+import { TRAILING_NODE_NOT_AFTER } from "../tiptap/createQingagentExtensions";
 
 function orderedListDoc(options: {
   blockId?: string;
@@ -92,5 +93,55 @@ describe("arePmDocsPersistenceEquivalent", () => {
       paragraphDoc(true),
       paragraphDoc(false),
     )).toBe(false);
+  });
+
+  it("物化 schema 抛错时 fail closed 返回 false", () => {
+    expect(arePmDocsPersistenceEquivalent(
+      orderedListDoc({ materializedDefaults: true, trailingText: "" }),
+      orderedListDoc(),
+      {
+        nodeFromJSON: () => {
+          throw new Error("materialize failed");
+        },
+      },
+    )).toBe(false);
+  });
+
+  it("固定 trailingNode 自身类型与 notAfter 的持久等价边界", () => {
+    expect(TRAILING_NODE_NOT_AFTER).toEqual(["heading", "columnList"]);
+
+    const heading = (withTrailing: boolean): PmDoc => ({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "heading",
+        attrs: { blockId: "heading-1", level: 1 },
+        content: [{ type: "text", text: "标题" }],
+      }, ...(withTrailing
+        ? [{ type: "paragraph" as const, attrs: { blockId: "heading-trailing" } }]
+        : [])],
+    });
+    const columnList = (withTrailing: boolean): PmDoc => ({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "columnList",
+        attrs: { blockId: "columns-1" },
+        content: ["left", "right"].map((side) => ({
+          type: "column" as const,
+          attrs: { blockId: `column-${side}`, widthRatio: 1 },
+          content: [{
+            type: "paragraph" as const,
+            attrs: { blockId: `column-${side}-paragraph` },
+            content: [{ type: "text" as const, text: side }],
+          }],
+        })),
+      }, ...(withTrailing
+        ? [{ type: "paragraph" as const, attrs: { blockId: "columns-trailing" } }]
+        : [])],
+    } as PmDoc);
+
+    expect(arePmDocsPersistenceEquivalent(heading(true), heading(false))).toBe(false);
+    expect(arePmDocsPersistenceEquivalent(columnList(true), columnList(false))).toBe(false);
   });
 });

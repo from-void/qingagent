@@ -227,6 +227,7 @@ describe("审阅结算后的等价后台保存", () => {
     state.doc = initial.doc;
     state.docVersion = initial.docVersion;
     state.docState = { kind: "editing" };
+    let previousSubmittedPmDoc: PmDoc | null = null;
 
     for (const [index, text] of ["第一轮修改", "第二轮修改"].entries()) {
       state.docDraftBaseDoc = state.doc;
@@ -241,28 +242,48 @@ describe("审阅结算后的等价后台保存", () => {
       }));
       const suggestionIds = [...state.suggestions.keys()];
       expect(suggestionIds.length).toBeGreaterThan(0);
-      await collectFrames(commitPatches(state, suggestionIds));
+      const reviewFrames = await collectFrames(commitPatches(state, suggestionIds));
+      const committedSnapshot = reviewFrames.find(
+        (frame) => frame.kind === "documentSnapshotWritten",
+      );
+      if (committedSnapshot?.kind !== "documentSnapshotWritten" || !committedSnapshot.data.doc.doc) {
+        throw new Error("missing committed canonical snapshot");
+      }
 
+      const submittedPmDoc = editorMaterializedOrderedListDoc(text);
       const backgroundSave = await commitDocumentOp({
         docId: state.docId,
         threadId: state.threadId ?? state.sessionId,
         resourceId: state.resourceId,
         expectedDocumentSnapshot: state.docVersion,
-        baseContentHash: getPmContentHash(state.doc),
+        // F1 前客户端成功回执没有 canonical hash；下一笔真实会沿用上一笔实际提交过的
+        // 物化文档指纹，不能从服务端测试 state.doc 反推一个客户端从未拿到的 canonical 值。
+        baseContentHash: previousSubmittedPmDoc
+          ? getPmContentHash(previousSubmittedPmDoc)
+          : getPmContentHash(committedSnapshot.data.doc.doc as PmDoc),
         clientMutationId: `background-equivalent-save-${index}`,
         opKind: "replace_doc",
         actorType: "user",
         summary: "编辑器自动保存",
-        apply: () => ({ nextDoc: editorMaterializedOrderedListDoc(text) }),
+        apply: () => ({ nextDoc: submittedPmDoc }),
       });
-      expect(backgroundSave.status).toBe("committed");
-      if (backgroundSave.status !== "committed") {
-        throw new Error(backgroundSave.status);
+      previousSubmittedPmDoc = submittedPmDoc;
+      if (index === 0) {
+        expect(backgroundSave.status).toBe("committed");
+        if (backgroundSave.status !== "committed") {
+          throw new Error(backgroundSave.status);
+        }
+        expect(backgroundSave.createdNewVersion).toBe(false);
+        expect(backgroundSave.docVersion).toBe(2);
+        state.doc = backgroundSave.doc;
+        state.docVersion = backgroundSave.docVersion;
+      } else {
+        expect(backgroundSave).toEqual({
+          status: "conflict",
+          currentVersion: 3,
+          currentHash: getPmContentHash(state.doc),
+        });
       }
-      expect(backgroundSave.createdNewVersion).toBe(false);
-      expect(backgroundSave.docVersion).toBe(index + 2);
-      state.doc = backgroundSave.doc;
-      state.docVersion = backgroundSave.docVersion;
     }
 
     const versions = await listVersions(state.docId);

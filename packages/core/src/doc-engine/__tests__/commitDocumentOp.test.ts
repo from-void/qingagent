@@ -487,6 +487,89 @@ describe("commitDocumentOp", () => {
     });
   });
 
+  it("持久等价物化失败时按不同内容继续写入版本", async () => {
+    const docId = "doc-persistence-materialize-failure";
+    const canonical: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: { blockId: "materialize-list", start: 1 },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "materialize-item" },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "materialize-paragraph" },
+            content: [{ type: "text", text: "可见正文相同" }],
+          }],
+        }],
+      }],
+    };
+    const materialized: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "orderedList",
+        attrs: {
+          blockId: "materialize-list",
+          start: 1,
+          listStyle: "decimal",
+        },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "materialize-item" },
+          content: [{
+            type: "paragraph",
+            attrs: { blockId: "materialize-paragraph", textAlign: null },
+            content: [{ type: "text", text: "可见正文相同" }],
+          }],
+        }],
+      }, {
+        type: "paragraph",
+        attrs: { blockId: "materialize-trailing", textAlign: null },
+      }],
+    };
+    expect(getPmContentHash(materialized)).not.toBe(getPmContentHash(canonical));
+    await documentRepo.save(documentInput(docId, {
+      threadId: `thread-${docId}`,
+      docVersion: 1,
+      pmDoc: canonical,
+    }));
+
+    const result = await commitDocumentOp(
+      commitInput({
+        docId,
+        threadId: `thread-${docId}`,
+        baseContentHash: getPmContentHash(canonical),
+        clientMutationId: "client-materialize-failure",
+        apply: () => ({ nextDoc: materialized }),
+      }),
+      {
+        persistenceSchema: {
+          nodeFromJSON: () => {
+            throw new Error("materialize failed");
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "committed",
+      docVersion: 2,
+      createdNewVersion: true,
+    });
+    await expect(documentRepo.load(docId)).resolves.toMatchObject({
+      docVersion: 2,
+      pmDoc: {
+        content: [
+          { type: "orderedList", attrs: { listStyle: "decimal" } },
+          { type: "paragraph", attrs: { blockId: "materialize-trailing" } },
+        ],
+      },
+    });
+  });
+
   it("单标签快速连续手打在 coalesce 窗口内仍合并，并持久化撤销/重做", async () => {
     await seedDocument("doc-coalesce", "before", 1);
 
@@ -865,6 +948,7 @@ describe("commitDocumentOp", () => {
     expect(replay).toMatchObject({
       status: "committed",
       docVersion: 3,
+      contentHash: getPmContentHash(pmDocFromText("second edit")),
       doc: pmDocFromText("second edit"),
       createdNewVersion: false,
       committedAt: "2026-01-02T00:00:00.000Z",

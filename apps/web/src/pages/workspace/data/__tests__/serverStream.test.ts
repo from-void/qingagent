@@ -1217,13 +1217,28 @@ describe("ServerStream", () => {
     const source = await waitForEventSource();
     source.emitFrame({
       kind: "docWriteResult",
-      data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
+      data: {
+        ok: true,
+        clientMutationId: "mutation-1",
+        docVersion: 2,
+        contentHash: "pmv1-canonical",
+        createdNewVersion: false,
+      },
     } satisfies BridgeFrame, "3");
 
     await expect(promise).resolves.toEqual([{ kind: "docWriteResult" }]);
     const parsed = JSON.parse(capturedBody!);
     expect(parsed.kind).toBe("updateDoc");
-    expect(frames[0]?.kind).toBe("docWriteResult");
+    expect(frames[0]).toEqual({
+      kind: "docWriteResult",
+      data: {
+        ok: true,
+        clientMutationId: "mutation-1",
+        docVersion: 2,
+        contentHash: "pmv1-canonical",
+        createdNewVersion: false,
+      },
+    });
   });
 
   it("startSession then sendMessage flows over command/event split", async () => {

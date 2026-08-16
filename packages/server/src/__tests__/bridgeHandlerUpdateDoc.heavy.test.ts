@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Command, BridgeFrame } from "@qingagent/contract-ts";
-import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { prepareTempDocumentsDb } from "@qingagent/db/testing";
 import { pmDocFromBlocks, pmDocFromText } from "./pmTestUtils.js";
 
 const originalUserVersionWindowMs = process.env.QINGAGENT_USER_VERSION_WINDOW_MS;
@@ -46,6 +47,23 @@ async function loadBridge() {
     runAgentTurn,
     invalidateDraftStateAfterCanonicalWrite,
   };
+}
+
+async function loadBridgeWithRealCommit() {
+  vi.resetModules();
+  vi.doMock("@qingagent/core", async () => {
+    const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
+    return {
+      ...actual,
+      createSessionThread: vi.fn(async () => undefined),
+      persistSessionMetadata: vi.fn(async () => undefined),
+      schedulePersist: vi.fn(async () => undefined),
+      runAgentTurn: vi.fn(async function* (..._args: unknown[]): AsyncGenerator<BridgeFrame> {}),
+    };
+  });
+  vi.doMock("@qingagent/db", async () =>
+    vi.importActual<typeof import("@qingagent/db")>("@qingagent/db"));
+  return await import("../gateway/bridgeHandler");
 }
 
 async function createDraftSession(
@@ -114,6 +132,64 @@ function updateCommand(sessionId: string, overrides: Partial<Extract<Command, { 
   };
 }
 
+function compactOrderedListDoc(text: string): PmDoc {
+  return normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "orderedList",
+      attrs: { blockId: "bridge-list", start: 1 },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "bridge-list-item" },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "bridge-list-paragraph" },
+          content: [{ type: "text", text }],
+        }],
+      }],
+    }],
+  });
+}
+
+function materializedOrderedListDoc(text: string): PmDoc {
+  return normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "orderedList",
+      attrs: { blockId: "bridge-list", start: 1, listStyle: "decimal" },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "bridge-list-item" },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "bridge-list-paragraph" },
+          content: [{ type: "text", text }],
+        }],
+      }],
+    }, {
+      type: "paragraph",
+      attrs: { blockId: "bridge-trailing-paragraph" },
+    }],
+  });
+}
+
+function successfulDocWriteAck(
+  frames: BridgeFrame[],
+  clientMutationId: string,
+): Extract<Extract<BridgeFrame, { kind: "docWriteResult" }>["data"], { ok: true }> {
+  const frame = frames.find(
+    (candidate) =>
+      candidate.kind === "docWriteResult" &&
+      candidate.data.clientMutationId === clientMutationId,
+  );
+  if (frame?.kind !== "docWriteResult" || !frame.data.ok) {
+    throw new Error(`missing successful docWriteResult: ${clientMutationId}`);
+  }
+  return frame.data;
+}
+
 describe("handleCommand updateDoc", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -164,7 +240,13 @@ describe("handleCommand updateDoc", () => {
     expect(frames).toEqual([
       {
         kind: "docWriteResult",
-        data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
+        data: {
+          ok: true,
+          clientMutationId: "mutation-1",
+          docVersion: 2,
+          contentHash: getPmContentHash(submittedDoc),
+          createdNewVersion: true,
+        },
       },
     ]);
     expect(session.doc).toEqual(submittedDoc);
@@ -286,6 +368,42 @@ describe("handleCommand updateDoc", () => {
     expect(session.lastContentEditedAt).toBe(originalContentTime);
   });
 
+  it("stale 幂等回放 ack 使用单调块后的 session canonical hash", async () => {
+    const { bridge, commitDocumentOp } = await loadBridge();
+    const session = await createDraftSession(bridge);
+    const currentDoc = pmDocFromText("current version 3");
+    session.doc = currentDoc;
+    session.docVersion = 3;
+    const staleDoc = pmDocFromText("stale version 2");
+    commitDocumentOp.mockResolvedValue({
+      status: "committed",
+      docVersion: 2,
+      contentHash: getPmContentHash(staleDoc),
+      doc: staleDoc,
+      versionId: "version-stale-2",
+      createdNewVersion: false,
+      committedAt: "2026-03-04T05:06:07.000Z",
+    });
+
+    const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
+      clientMutationId: "mutation-stale-replay",
+      doc: staleDoc as never,
+    })));
+
+    expect(frames).toEqual([{
+      kind: "docWriteResult",
+      data: {
+        ok: true,
+        clientMutationId: "mutation-stale-replay",
+        docVersion: 3,
+        contentHash: getPmContentHash(currentDoc),
+        createdNewVersion: false,
+      },
+    }]);
+    expect(session.doc).toEqual(currentDoc);
+    expect(session.docVersion).toBe(3);
+  });
+
   it("no-op 保存向客户端确认当前版本，不虚增 session 基线", async () => {
     const { bridge, commitDocumentOp } = await loadBridge();
     const session = await createDraftSession(bridge);
@@ -310,12 +428,105 @@ describe("handleCommand updateDoc", () => {
     expect(frames).toEqual([
       {
         kind: "docWriteResult",
-        data: { ok: true, clientMutationId: "mutation-noop", docVersion: 1 },
+        data: {
+          ok: true,
+          clientMutationId: "mutation-noop",
+          docVersion: 1,
+          contentHash: getPmContentHash(originalDoc),
+          createdNewVersion: false,
+        },
       },
     ]);
     expect(session.docVersion).toBe(1);
     expect(session.doc).toEqual(originalDoc);
     expect(session.lastContentEditedAt).toBe(originalContentTime);
+  });
+
+  it("等价短路 ack 的 canonical hash 可让下一笔真实客户端编辑继续提交", async () => {
+    const originalDatabaseUrl = process.env.DATABASE_URL;
+    const tempDb = prepareTempDocumentsDb("qingagent-bridge-canonical-ack-");
+    try {
+      const bridge = await loadBridgeWithRealCommit();
+      const startFrames = await collectFrames(bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "new", data: { template: null } } },
+      }));
+      const meta = startFrames.find((frame) => frame.kind === "sessionMeta");
+      if (meta?.kind !== "sessionMeta") throw new Error("missing sessionMeta");
+
+      const compactDoc = compactOrderedListDoc("等价正文");
+      const seedMutationId = "mutation-canonical-seed";
+      const seedFrames = await collectFrames(bridge.handleCommand(updateCommand(
+        meta.data.sessionId,
+        {
+          expectedDocumentSnapshot: 0,
+          baseContentHash: getPmContentHash({
+            type: "doc",
+            attrs: { schemaVersion: 1 },
+            content: [],
+          }),
+          clientMutationId: seedMutationId,
+          doc: compactDoc as never,
+        },
+      )));
+      const seedAck = successfulDocWriteAck(seedFrames, seedMutationId);
+      expect(seedAck).toMatchObject({
+        docVersion: 1,
+        contentHash: getPmContentHash(compactDoc),
+        createdNewVersion: true,
+      });
+
+      const materializedDoc = materializedOrderedListDoc("等价正文");
+      const equivalentMutationId = "mutation-equivalent-shortcut";
+      const equivalentFrames = await collectFrames(bridge.handleCommand(updateCommand(
+        meta.data.sessionId,
+        {
+          expectedDocumentSnapshot: seedAck.docVersion,
+          baseContentHash: seedAck.contentHash ?? getPmContentHash(compactDoc),
+          clientMutationId: equivalentMutationId,
+          doc: materializedDoc as never,
+        },
+      )));
+      const equivalentAck = successfulDocWriteAck(
+        equivalentFrames,
+        equivalentMutationId,
+      );
+      expect(equivalentAck).toMatchObject({
+        docVersion: 1,
+        contentHash: getPmContentHash(compactDoc),
+        createdNewVersion: false,
+      });
+      // 旧端缺字段会回落到物化表示的自算值；它与服务端 canonical 不同，正是 F1 红测条件。
+      expect(getPmContentHash(materializedDoc)).not.toBe(equivalentAck.contentHash);
+
+      const editedDoc = materializedOrderedListDoc("下一笔真实编辑");
+      const editMutationId = "mutation-real-edit-after-shortcut";
+      const editFrames = await collectFrames(bridge.handleCommand(updateCommand(
+        meta.data.sessionId,
+        {
+          expectedDocumentSnapshot: equivalentAck.docVersion,
+          baseContentHash:
+            equivalentAck.contentHash ?? getPmContentHash(materializedDoc),
+          clientMutationId: editMutationId,
+          doc: editedDoc as never,
+        },
+      )));
+      const editAck = successfulDocWriteAck(editFrames, editMutationId);
+      expect(editAck).toMatchObject({
+        docVersion: 2,
+        contentHash: getPmContentHash(editedDoc),
+        createdNewVersion: true,
+      });
+      expect(bridge.getSession(meta.data.sessionId)).toMatchObject({
+        docVersion: 2,
+        doc: editedDoc,
+      });
+    } finally {
+      tempDb.cleanup();
+      if (originalDatabaseUrl !== undefined) {
+        process.env.DATABASE_URL = originalDatabaseUrl;
+      }
+    }
   });
 
   it("commits PM updateDoc through commitDocumentOp and keeps canonical state in sync", async () => {
@@ -328,6 +539,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-2",
       doc: pmDoc,
       versionId: "version-2",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
 
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
@@ -345,7 +558,13 @@ describe("handleCommand updateDoc", () => {
     expect(frames).toEqual([
       {
         kind: "docWriteResult",
-        data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
+        data: {
+          ok: true,
+          clientMutationId: "mutation-1",
+          docVersion: 2,
+          contentHash: getPmContentHash(pmDoc),
+          createdNewVersion: true,
+        },
       },
     ]);
     expect(session.doc).toEqual(pmDoc);
@@ -377,6 +596,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-sanitized",
       doc: input.apply().nextDoc,
       versionId: "version-sanitized",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     }));
 
     await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
@@ -407,6 +628,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-title",
       doc: pmDoc,
       versionId: "version-title",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
 
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
@@ -417,7 +640,13 @@ describe("handleCommand updateDoc", () => {
       { kind: "sessionMeta", data: { sessionId: session.sessionId, title: "新标题" } },
       {
         kind: "docWriteResult",
-        data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
+        data: {
+          ok: true,
+          clientMutationId: "mutation-1",
+          docVersion: 2,
+          contentHash: getPmContentHash(pmDoc),
+          createdNewVersion: true,
+        },
       },
     ]);
     expect(session.title).toBe("新标题");
@@ -442,7 +671,13 @@ describe("handleCommand updateDoc", () => {
       { type: "paragraph", text: "正文" },
     ]);
     commitDocumentOp.mockResolvedValue({
-      status: "committed", docVersion: 2, contentHash: "hash-pinned", doc: pmDoc, versionId: "version-pinned",
+      status: "committed",
+      docVersion: 2,
+      contentHash: "hash-pinned",
+      doc: pmDoc,
+      versionId: "version-pinned",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, { doc: pmDoc as never })));
     expect(frames.some((frame) => frame.kind === "sessionMeta")).toBe(false);
@@ -461,6 +696,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-2",
       doc: submittedDoc,
       versionId: "version-2",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
 
     await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
@@ -470,6 +707,34 @@ describe("handleCommand updateDoc", () => {
     expect(commitDocumentOp).toHaveBeenCalledWith(expect.objectContaining({
       coalesce: { windowMs: 0 },
     }));
+  });
+
+  it("外部同标题幂等成功回执携带当前 canonical hash 且不创建版本", async () => {
+    const { bridge } = await loadBridge();
+    const session = await createDraftSession(bridge);
+    session.title = "固定标题";
+    session.titlePinned = true;
+
+    const frames = await collectFrames(bridge.handleCommand({
+      kind: "externalPropose",
+      data: {
+        sessionId: session.sessionId,
+        expectedDocVersion: session.docVersion,
+        clientMutationId: "mutation-title-replay",
+        ops: [{ kind: "setTitle", title: "固定标题" }],
+      },
+    }));
+
+    expect(frames).toEqual([{
+      kind: "docWriteResult",
+      data: {
+        ok: true,
+        clientMutationId: "mutation-title-replay",
+        docVersion: 1,
+        contentHash: getPmContentHash(session.doc!),
+        createdNewVersion: false,
+      },
+    }]);
   });
 
   it("returns machine-readable conflict with actual doc_version", async () => {
@@ -563,6 +828,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-1",
       doc: submittedDoc,
       versionId: "version-1",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
 
     const frames = await collectFrames(
@@ -591,7 +858,13 @@ describe("handleCommand updateDoc", () => {
     const ack = frames.find((f) => f.kind === "docWriteResult");
     expect(ack).toEqual({
       kind: "docWriteResult",
-      data: { ok: true, clientMutationId: "mutation-1", docVersion: 1 },
+      data: {
+        ok: true,
+        clientMutationId: "mutation-1",
+        docVersion: 1,
+        contentHash: getPmContentHash(submittedDoc),
+        createdNewVersion: true,
+      },
     });
     const docStateIndex = frames.findIndex(
       (f) =>
@@ -631,6 +904,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-2",
       doc: submittedDoc,
       versionId: "version-2",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
     await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
       doc: submittedDoc as never,

@@ -318,6 +318,35 @@ function pmDoc(content: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
 }
 
+function pmPersistenceListDoc(text: string, materialized: boolean): PmDoc {
+  return normalizePmDoc({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "orderedList",
+      attrs: {
+        blockId: "persistence-list",
+        start: 1,
+        ...(materialized ? { listStyle: "decimal" as const } : {}),
+      },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "persistence-item" },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: "persistence-paragraph" },
+          content: [{ type: "text", text }],
+        }],
+      }],
+    }, ...(materialized
+      ? [{
+          type: "paragraph" as const,
+          attrs: { blockId: "persistence-trailing" },
+        }]
+      : [])],
+  });
+}
+
 function wireSnapshotFromPmDoc(doc: PmDoc, version: number): DocumentSnapshot {
   return {
     version,
@@ -2573,8 +2602,11 @@ describe("WorkspacePage review controls", () => {
     }
     await render(<ControllerHarness />);
     const stream = latestServerStream();
-    const initialDoc = pmDoc([pmParagraph("p-noop", "未修改正文")]);
-    const changedDoc = pmDoc([pmParagraph("p-noop", "确有修改正文")]);
+    const initialDoc = pmPersistenceListDoc("未修改正文", false);
+    const savedDoc = pmPersistenceListDoc("未修改正文", true);
+    const changedDoc = pmPersistenceListDoc("确有修改正文", true);
+    const canonicalHash = getPmContentHash(initialDoc);
+    expect(getPmContentHash(savedDoc)).not.toBe(canonicalHash);
     await emitFrames(stream, [
       { kind: "sessionMeta", data: { sessionId: "s-1", title: "no-op 保存" } },
       {
@@ -2600,18 +2632,24 @@ describe("WorkspacePage review controls", () => {
             writeCount === 1
               ? command.data.expectedDocumentSnapshot
               : command.data.expectedDocumentSnapshot + 1,
+          contentHash:
+            writeCount === 1
+              ? canonicalHash
+              : getPmContentHash(changedDoc),
+          createdNewVersion: writeCount !== 1,
         },
       });
     });
 
     await act(async () => {
-      await captured.current!.handleEditorChange(initialDoc);
+      await captured.current!.handleEditorChange(savedDoc);
     });
     await flushMicrotasks(3);
 
     expect(updateDocCommands(stream)[0]?.data.expectedDocumentSnapshot).toBe(7);
     expect(captured.current?.state.version).toBe(7);
-    expect(captured.current?.state.doc?.pmDoc).toEqual(initialDoc);
+    // 只修 canonical 保存基线，不把紧凑服务端正文回灌覆盖编辑器物化视图。
+    expect(captured.current?.state.doc?.pmDoc).toEqual(savedDoc);
 
     await act(async () => {
       await captured.current!.handleEditorChange(changedDoc);
@@ -2620,7 +2658,7 @@ describe("WorkspacePage review controls", () => {
 
     const realSave = updateDocCommands(stream)[1];
     expect(realSave?.data.expectedDocumentSnapshot).toBe(7);
-    expect(realSave?.data.baseContentHash).toBe(getPmContentHash(initialDoc));
+    expect(realSave?.data.baseContentHash).toBe(canonicalHash);
     expect(captured.current?.state.version).toBe(8);
     expect(captured.current?.state.doc?.pmDoc).toEqual(changedDoc);
   }, 60_000);

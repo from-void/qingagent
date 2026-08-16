@@ -1,10 +1,18 @@
-import { getSchema } from "@tiptap/core";
-import { createQingagentExtensions } from "./tiptap/createQingagentExtensions";
+import { TRAILING_NODE_NOT_AFTER } from "./tiptap/createQingagentExtensions";
+import { qingagentSchema } from "./tiptap/qingagentSchema";
 import { normalizePmDoc } from "./validators";
 import type { PmDoc } from "./types";
 
-const persistenceSchema = getSchema(createQingagentExtensions());
-const trailingNodeDisabledTypes = new Set(["paragraph", "heading", "columnList"]);
+type MaterializedPmDocument = {
+  eq(other: MaterializedPmDocument): boolean;
+};
+
+export interface PmPersistenceSchemaMaterializer {
+  nodeFromJSON(value: unknown): MaterializedPmDocument;
+}
+
+// paragraph 是 trailingNode 自身补出的节点类型；其余类型来自 StarterKit 的 notAfter。
+const trailingNodeDisabledTypes = new Set(["paragraph", ...TRAILING_NODE_NOT_AFTER]);
 
 /**
  * 判断两份已通过 wire 校验的 PM 文档是否只存在编辑器表示差异。
@@ -13,14 +21,18 @@ const trailingNodeDisabledTypes = new Set(["paragraph", "heading", "columnList"]
  * 单独生成持久版本。blockId 则是落库身份的一部分，必须保留在比较中，避免吞掉块 ID
  * 自愈。任何 schema 物化异常都按“不等价”处理，让提交路径安全失败而不是漏写。
  */
-export function arePmDocsPersistenceEquivalent(left: PmDoc, right: PmDoc): boolean {
+export function arePmDocsPersistenceEquivalent(
+  left: PmDoc,
+  right: PmDoc,
+  schema: PmPersistenceSchemaMaterializer = qingagentSchema,
+): boolean {
   try {
     const leftVariants = persistenceVariants(left);
     const rightVariants = persistenceVariants(right);
     for (const leftVariant of leftVariants) {
-      const leftNode = persistenceSchema.nodeFromJSON(leftVariant);
+      const leftNode = schema.nodeFromJSON(leftVariant);
       for (const rightVariant of rightVariants) {
-        if (leftNode.eq(persistenceSchema.nodeFromJSON(rightVariant))) return true;
+        if (leftNode.eq(schema.nodeFromJSON(rightVariant))) return true;
       }
     }
   } catch {

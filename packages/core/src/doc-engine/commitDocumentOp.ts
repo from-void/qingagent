@@ -6,6 +6,7 @@ import {
   getPmContentHash,
   safeParsePmDoc,
   type PmDoc,
+  type PmPersistenceSchemaMaterializer,
   type PmStep,
 } from "@qingagent/pm-schema";
 import {
@@ -124,6 +125,8 @@ export interface CommitDocumentOpOptions {
     docVersion: number;
     contentHash: string;
   }) => string;
+  /** 默认使用产品 schema；参数化以便调用方对物化失败执行 fail-closed 验证。 */
+  persistenceSchema?: PmPersistenceSchemaMaterializer;
   hooks?: {
     afterDocumentUpdate?: () => void | Promise<void>;
     afterVersionInsert?: () => void | Promise<void>;
@@ -469,7 +472,11 @@ export async function commitDocumentOp(
       input.actorType === "user" &&
       (
         contentHash === current.contentHash ||
-        arePmDocsPersistenceEquivalent(nextDoc, current.pmDoc)
+        arePmDocsPersistenceEquivalent(
+          nextDoc,
+          current.pmDoc,
+          options.persistenceSchema,
+        )
       )
     ) {
       const currentVersion = await getVersionSnapshotByDocumentSnapshot(

@@ -160,7 +160,13 @@ async function updateDoc(sessionId: string, version: number, doc: PmDoc, mutatio
   const frames = await collectFrames(bridge.handleCommand(command));
   expect(frames).toContainEqual({
     kind: "docWriteResult",
-    data: { ok: true, clientMutationId: mutation, docVersion: version + 1 },
+    data: {
+      ok: true,
+      clientMutationId: mutation,
+      docVersion: version + 1,
+      contentHash: getPmContentHash(doc),
+      createdNewVersion: true,
+    },
   });
 }
 

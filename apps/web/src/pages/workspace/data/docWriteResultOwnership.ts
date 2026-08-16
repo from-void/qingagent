@@ -1,5 +1,16 @@
 import type { BridgeFrame } from "@qingagent/contract-ts";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
+
+type DocWriteResultData = Extract<BridgeFrame, { kind: "docWriteResult" }>["data"];
+type DocWriteSuccessData = Extract<DocWriteResultData, { ok: true }>;
+
+/** 新服务端回权威 canonical hash；旧服务端缺字段时保持本地自算兼容。 */
+export function acknowledgedDocWriteContentHash(
+  result: DocWriteSuccessData,
+  submittedDoc: PmDoc,
+): string {
+  return result.contentHash ?? getPmContentHash(submittedDoc);
+}
 
 /**
  * docWriteResult 是某次 clientMutationId 的私有回执，却会经会话 FrameLog 广播给

@@ -3,10 +3,14 @@ import {
   EXTERNAL_STRUCTURAL_OP_KINDS,
   type ExternalProposeOp,
 } from "../../ExternalPropose";
+import type { ExternalProposeOp as ExternalApiProposeOp } from "../../ExternalApi";
 import { DRAFT_MARK_COLORS } from "../../DraftMutation";
 import { tableSelectionTextSignature } from "../../TableSelection";
 import { commandSchema, COMMAND_KINDS, COMMAND_KIND_SET } from "../command";
 import { MAX_COMMAND_ARRAY_LENGTH, MAX_COMMAND_STRING_LENGTH } from "../common";
+import type { Equal, Expect } from "../typeAssert";
+
+type _ParallelExternalProposeOpExact = Expect<Equal<ExternalApiProposeOp, ExternalProposeOp>>;
 
 function sendMessageWithChip(chip: unknown): unknown {
   return {

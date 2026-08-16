@@ -379,6 +379,46 @@ describe("textEditOps", () => {
     });
   });
 
+  it("批量 replaceText/markText 与逐 match 旧路径结果等价", () => {
+    const bold = aiRunMarkToPmMark({ type: "bold" });
+    const base = doc([paragraph("block-a", "的甲的乙的")]);
+    const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "的", true);
+    const descending = [...matches].sort((left, right) => right.pmFrom - left.pmFrom);
+
+    const markedInBatch = markTextRuns(base, matches, bold, "add");
+    const markedOneByOne = descending.reduce(
+      (current, match) => markTextRuns(current, [match], bold, "add"),
+      base,
+    );
+    const replacedInBatch = replaceTextRuns(base, matches, "了");
+    const replacedOneByOne = descending.reduce(
+      (current, match) => replaceTextRuns(current, [match], "了"),
+      base,
+    );
+
+    expect(getStablePmJson(markedInBatch)).toBe(getStablePmJson(markedOneByOne));
+    expect(getStablePmJson(replacedInBatch)).toBe(getStablePmJson(replacedOneByOne));
+  });
+
+  it("千级命中批量编辑不重复校验整篇文档", () => {
+    const hitCount = 6_000;
+    const source = "的123456".repeat(hitCount);
+    const base = doc([paragraph("large-block", source)]);
+    const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "的", true);
+    const bold = aiRunMarkToPmMark({ type: "bold" });
+
+    const startedAt = performance.now();
+    const marked = markTextRuns(base, matches, bold, "add");
+    const replaced = replaceTextRuns(base, matches, "了");
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(matches).toHaveLength(hitCount);
+    expect(inlineText(marked)).toBe(source);
+    expect(JSON.stringify(marked).match(/\"type\":\"bold\"/g)).toHaveLength(hitCount);
+    expect(inlineText(replaced)).toBe(source.replaceAll("的", "了"));
+    expect(elapsedMs).toBeLessThan(2_000);
+  });
+
   it("tx-markText-readDiff-visible: 纯 markText 会产生 markAdd hunk", () => {
     const bold = aiRunMarkToPmMark({ type: "bold" });
     const base = doc([paragraph("block-a", "山水")]);

@@ -147,28 +147,48 @@ export async function applyExternalProposalOps(
   const insertCursorByAnchor = new Map<string, string>();
   for (const op of ops) {
     if (op.kind === "markText") {
-      const blocks = collectTopLevelTextBlocks(workingDoc, op.withinRef);
-      const regexResult = op.isRegex
-        ? await findSafeRegexMatches(blocks, op.find, op.all === true)
-        : null;
-      if (regexResult && !regexResult.ok) {
-        return { ok: false, error: regexResult.error };
-      }
-      const matches = regexResult
-        ? regexResult.matches
-        : findLiteralMatches(blocks, op.find, op.all === true);
-      if (matches.length === 0) {
+      try {
+        const allBlocks = collectTopLevelTextBlocks(workingDoc, op.withinRef);
+        const hasCodeBlock = allBlocks.some((block) => block.node.type === "codeBlock");
+        const blocks = allBlocks.filter((block) => block.node.type !== "codeBlock");
+        const regexResult = op.isRegex
+          ? await findSafeRegexMatches(blocks, op.find, op.all === true)
+          : null;
+        if (regexResult && !regexResult.ok) {
+          return { ok: false, error: regexResult.error };
+        }
+        const matches = regexResult
+          ? regexResult.matches
+          : findLiteralMatches(blocks, op.find, op.all === true);
+        if (matches.length === 0) {
+          return {
+            ok: false,
+            error: hasCodeBlock
+              ? "代码块不支持行内标记，或文本未命中"
+              : "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true",
+          };
+        }
+        const markedDoc = markTextRuns(
+          workingDoc,
+          matches,
+          aiRunMarkToPmMark(op.mark),
+          op.op,
+        );
+        if (markedDoc === workingDoc) {
+          return {
+            ok: false,
+            error: op.op === "add"
+              ? "标记已存在，无需重复添加；如需替换请先 remove 再 add"
+              : "标记不存在，无需重复移除；请检查 mark 后重试",
+          };
+        }
+        workingDoc = markedDoc;
+      } catch {
         return {
           ok: false,
-          error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true",
+          error: "行内标记应用失败，请重新读取文档并避开代码块后重试",
         };
       }
-      workingDoc = markTextRuns(
-        workingDoc,
-        matches,
-        aiRunMarkToPmMark(op.mark),
-        op.op,
-      );
       continue;
     }
     if (op.kind === "strReplace") {

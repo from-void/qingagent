@@ -187,6 +187,10 @@ export type ExternalProposeOp =
   | { kind: "qingmlDraft"; qingml: string }
   | { kind: "setTitle"; title: string }
   | { kind: "strReplace"; old: string; new: string; nth?: number }
+  /**
+   * 为命中文本添加或移除行内标记。已知呈现限制：命中列表项时，审阅卡暂按
+   * 顶层块粒度显示为整列表 replace；列表项级 hunk 由后续能力处理。
+   */
   | {
       kind: "markText";
       find: string;

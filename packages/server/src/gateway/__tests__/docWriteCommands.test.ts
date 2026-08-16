@@ -160,6 +160,60 @@ describe("compileExternalQingmlDraft", () => {
     expect(JSON.stringify(result.doc).match(/"type":"code"/g)).toHaveLength(2);
   });
 
+  it("markText 只命中代码块时返回可自纠错误", async () => {
+    const result = await applyExternalProposalOps(
+      markdownToPm("```ts\nconst 目标 = 1;\n```"),
+      [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "代码块不支持行内标记，或文本未命中",
+    });
+  });
+
+  it("markText 混合命中代码块与段落时只标记段落", async () => {
+    const result = await applyExternalProposalOps(
+      markdownToPm("```ts\nconst 目标 = 1;\n```\n\n段落目标"),
+      [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const codeBlock = result.doc.content.find((block) => block.type === "codeBlock");
+    const paragraph = result.doc.content.find((block) => block.type === "paragraph");
+    expect(JSON.stringify(codeBlock)).not.toContain('"marks"');
+    expect(JSON.stringify(paragraph)).toContain('"type":"bold"');
+  });
+
+  it("markText add 已存在的标记时返回无需重复添加文案", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("**目标**"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "bold" },
+      op: "add",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "标记已存在，无需重复添加；如需替换请先 remove 再 add",
+    });
+  });
+
+  it("markText remove 不存在的标记时返回无需重复移除文案", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "bold" },
+      op: "remove",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "标记不存在，无需重复移除；请检查 mark 后重试",
+    });
+  });
+
   it("局部插入只拼接受影响区间，未触碰块保留原节点引用与 blockId", async () => {
     const canonical = markdownToPm("第一段。\n\n第二段。\n\n第三段。");
     const candidate = structuredClone(canonical);

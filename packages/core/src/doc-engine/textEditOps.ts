@@ -334,48 +334,153 @@ function replaceInlineContent(
   return next;
 }
 
-function markInlineContent(
+interface InlineRange {
+  from: number;
+  to: number;
+}
+
+interface InlineReplacement extends InlineRange {
+  replacement: string;
+}
+
+function sliceInlineContent(
   content: readonly PmInlineNode[] | undefined,
   from: number,
   to: number,
-  mark: PmMark,
-  op: "add" | "remove",
 ): PmInlineNode[] {
   const next: PmInlineNode[] = [];
   let offset = 0;
+  for (const node of content ?? []) {
+    const len = inlineNodeLen(node);
+    const nodeFrom = offset;
+    const nodeTo = offset + len;
+    offset = nodeTo;
+    if (nodeTo <= from || nodeFrom >= to) continue;
+    if (node.type === "text") {
+      const textFrom = Math.max(from, nodeFrom) - nodeFrom;
+      const textTo = Math.min(to, nodeTo) - nodeFrom;
+      const value = node.text.slice(textFrom, textTo);
+      if (value) next.push({ ...node, text: value });
+      continue;
+    }
+    if (nodeFrom >= from && nodeTo <= to) next.push(node);
+  }
+  return next;
+}
+
+function replaceInlineContentBatch(
+  content: readonly PmInlineNode[] | undefined,
+  replacements: InlineReplacement[],
+): PmInlineNode[] {
+  const ordered = [...replacements].sort((left, right) => left.from - right.from);
+  // 正常匹配器只产出非重叠区间，可基于原 content 一次重建；对手写的重叠
+  // QuoteMatch 输入保留旧实现的倒序逐区间语义，避免改变导出函数的边界行为。
+  const hasOverlap = ordered.some((range, index) =>
+    index > 0 && range.from < ordered[index - 1]!.to
+  );
+  if (hasOverlap) {
+    return [...replacements]
+      .sort((left, right) => right.from - left.from)
+      .reduce(
+        (current, range) => replaceInlineContent(
+          current,
+          range.from,
+          range.to,
+          range.replacement,
+        ),
+        [...(content ?? [])],
+      );
+  }
+
+  const next: PmInlineNode[] = [];
+  let cursor = 0;
+  for (const range of ordered) {
+    next.push(...sliceInlineContent(content, cursor, range.from));
+    next.push(...textToInlineNodes(range.replacement, inheritedMarks(content, range.from)));
+    cursor = range.to;
+  }
+  next.push(...sliceInlineContent(content, cursor, Number.POSITIVE_INFINITY));
+  return next;
+}
+
+function markInlineContentBatch(
+  content: readonly PmInlineNode[] | undefined,
+  ranges: InlineRange[],
+  mark: PmMark,
+  op: "add" | "remove",
+): { content: PmInlineNode[]; changed: boolean } {
+  // 用区间事件扫描代替“每个 match 重新扫描已切碎的 content”，同时保留所有
+  // match 边界（相邻区间的 delta 即使抵消，Map 中的边界仍然存在）。
+  const eventDeltas = new Map<number, number>();
+  for (const range of ranges) {
+    if (range.from >= range.to) continue;
+    eventDeltas.set(range.from, (eventDeltas.get(range.from) ?? 0) + 1);
+    eventDeltas.set(range.to, (eventDeltas.get(range.to) ?? 0) - 1);
+  }
+  const events = [...eventDeltas.entries()]
+    .map(([position, delta]) => ({ position, delta }))
+    .sort((left, right) => left.position - right.position);
+  if (events.length === 0) return { content: [...(content ?? [])], changed: false };
+
+  const next: PmInlineNode[] = [];
+  let offset = 0;
+  let eventIndex = 0;
+  let activeRanges = 0;
+  let changed = false;
+
+  const applyEventsThrough = (position: number): void => {
+    while (eventIndex < events.length && events[eventIndex]!.position <= position) {
+      activeRanges += events[eventIndex]!.delta;
+      eventIndex += 1;
+    }
+  };
 
   for (const node of content ?? []) {
     const len = inlineNodeLen(node);
     const nodeFrom = offset;
     const nodeTo = offset + len;
+    applyEventsThrough(nodeFrom);
 
-    if (node.type !== "text" || nodeTo <= from || nodeFrom >= to) {
+    if (node.type !== "text") {
       next.push(node);
       offset = nodeTo;
       continue;
     }
 
-    const markFrom = Math.max(from, nodeFrom) - nodeFrom;
-    const markTo = Math.min(to, nodeTo) - nodeFrom;
-    const before = node.text.slice(0, markFrom);
-    const middle = node.text.slice(markFrom, markTo);
-    const after = node.text.slice(markTo);
+    const pieces: PmInlineNode[] = [];
+    let pieceFrom = nodeFrom;
+    let nodeChanged = false;
+    const appendPiece = (pieceTo: number): void => {
+      if (pieceTo <= pieceFrom) return;
+      const value = node.text.slice(pieceFrom - nodeFrom, pieceTo - nodeFrom);
+      const hasMark = (node.marks ?? []).some((candidate) => sameMark(candidate, mark));
+      const pieceChanged = activeRanges > 0 && (op === "add" ? !hasMark : hasMark);
+      const marks = pieceChanged
+        ? (op === "add" ? addMark(node.marks, mark) : removeMark(node.marks, mark))
+        : node.marks ? [...node.marks] : undefined;
+      pieces.push(setTextNodeMarks({ ...node, text: value }, marks));
+      nodeChanged ||= pieceChanged;
+      pieceFrom = pieceTo;
+    };
 
-    if (before) {
-      next.push(setTextNodeMarks({ ...node, text: before }, node.marks ? [...node.marks] : undefined));
+    while (eventIndex < events.length && events[eventIndex]!.position < nodeTo) {
+      const position = Math.max(nodeFrom, events[eventIndex]!.position);
+      appendPiece(position);
+      applyEventsThrough(events[eventIndex]!.position);
     }
-    if (middle) {
-      const marks = op === "add" ? addMark(node.marks, mark) : removeMark(node.marks, mark);
-      next.push(setTextNodeMarks({ ...node, text: middle }, marks));
-    }
-    if (after) {
-      next.push(setTextNodeMarks({ ...node, text: after }, node.marks ? [...node.marks] : undefined));
-    }
+    appendPiece(nodeTo);
+    applyEventsThrough(nodeTo);
 
+    if (nodeChanged) {
+      next.push(...pieces);
+      changed = true;
+    } else {
+      next.push(node);
+    }
     offset = nodeTo;
   }
 
-  return next;
+  return { content: next, changed };
 }
 
 function updateNodeAtPath(
@@ -456,22 +561,39 @@ export function replaceTextRuns(
   const reassembledFromBlock =
     typeof options !== "boolean" && options.reassembledFromBlock === true;
   const ordered = [...matches].sort((left, right) => right.pmFrom - left.pmFrom);
-  return ordered.reduce((currentDoc, match) => {
-    const from = match.pmFrom - match.block.textStart;
-    const to = match.pmTo - match.block.textStart;
-    const expanded = expandReplacement(replace, match, captures);
-    const replacement = reassembledFromBlock
-      ? trimReassembledOverlap(match.block.text, from, to, expanded)
-      : expanded;
-    const content = updateNodeAtPath(currentDoc.content, match.block.path, (node) => {
+  if (ordered.length === 0) return doc;
+  const matchesByBlock = new Map<string, QuoteMatch[]>();
+  for (const match of ordered) {
+    const key = match.block.path.join(".");
+    const group = matchesByBlock.get(key);
+    if (group) group.push(match);
+    else matchesByBlock.set(key, [match]);
+  }
+
+  let content: PmNode[] = doc.content;
+  for (const blockMatches of matchesByBlock.values()) {
+    const block = blockMatches[0]!.block;
+    content = updateNodeAtPath(content, block.path, (node) => {
       if (!isInlineTextBlock(node)) return node;
+      const replacements = blockMatches.map((match): InlineReplacement => {
+        const from = match.pmFrom - match.block.textStart;
+        const to = match.pmTo - match.block.textStart;
+        const expanded = expandReplacement(replace, match, captures);
+        return {
+          from,
+          to,
+          replacement: reassembledFromBlock
+            ? trimReassembledOverlap(match.block.text, from, to, expanded)
+            : expanded,
+        };
+      });
       return {
         ...node,
-        content: replaceInlineContent(node.content, from, to, replacement),
+        content: replaceInlineContentBatch(node.content, replacements),
       } as PmBlockNode;
-    }) as PmBlockNode[];
-    return normalizePmDoc({ ...currentDoc, content });
-  }, doc);
+    });
+  }
+  return normalizePmDoc({ ...doc, content: content as PmBlockNode[] });
 }
 
 export function markTextRuns(
@@ -481,16 +603,38 @@ export function markTextRuns(
   op: "add" | "remove",
 ): PmDoc {
   const ordered = [...matches].sort((left, right) => right.pmFrom - left.pmFrom);
-  return ordered.reduce((currentDoc, match) => {
-    const from = match.pmFrom - match.block.textStart;
-    const to = match.pmTo - match.block.textStart;
-    const content = updateNodeAtPath(currentDoc.content, match.block.path, (node) => {
+  if (ordered.length === 0) return doc;
+  const matchesByBlock = new Map<string, QuoteMatch[]>();
+  for (const match of ordered) {
+    const key = match.block.path.join(".");
+    const group = matchesByBlock.get(key);
+    if (group) group.push(match);
+    else matchesByBlock.set(key, [match]);
+  }
+
+  let content: PmNode[] = doc.content;
+  let changed = false;
+  for (const blockMatches of matchesByBlock.values()) {
+    const block = blockMatches[0]!.block;
+    content = updateNodeAtPath(content, block.path, (node) => {
       if (!isInlineTextBlock(node)) return node;
+      const result = markInlineContentBatch(
+        node.content,
+        blockMatches.map((match) => ({
+          from: match.pmFrom - match.block.textStart,
+          to: match.pmTo - match.block.textStart,
+        })),
+        mark,
+        op,
+      );
+      if (!result.changed) return node;
+      changed = true;
       return {
         ...node,
-        content: markInlineContent(node.content, from, to, mark, op),
+        content: result.content,
       } as PmBlockNode;
-    }) as PmBlockNode[];
-    return normalizePmDoc({ ...currentDoc, content });
-  }, doc);
+    });
+  }
+  if (!changed) return doc;
+  return normalizePmDoc({ ...doc, content: content as PmBlockNode[] });
 }

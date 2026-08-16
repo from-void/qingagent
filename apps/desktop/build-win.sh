@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Windows 客户端一键构建脚本(在 WSL/Linux 上交叉构建)
 #
-# 做四件事:
+# 做五件事:
 #   1) 构建 web 前端 + electron main/preload(esbuild)
 #   2) electron-builder --win --dir 出 win-unpacked(无 wine,不出 nsis)
-#   3) 注入 win 版原生依赖(libsql + @napi-rs/canvas),去掉错误平台的 linux 原生
+#   3) 用纯 JS resedit 给 qingagent.exe 写入青简品牌与版本资源
+#   4) 注入 win 版原生依赖(libsql + @napi-rs/canvas),去掉错误平台的 linux 原生
 #      —— pnpm 在 Linux 上只装 linux 原生,直接打进 win 包会导致
 #         Windows 上 "Cannot find module '@libsql/win32-x64-msvc'" 或 canvas native 加载失败
-#   4) 把整个 win-unpacked 复制到 Windows 本地盘 C:\qingagent\win-unpacked
+#   5) 把整个 win-unpacked 复制到 Windows 本地盘 C:\qingagent\win-unpacked
 #      —— 从本地盘运行才有硬件加速;从 \\wsl.localhost UNC 路径运行 GPU 子进程会崩
 #
 # 用法:bash apps/desktop/build-win.sh
@@ -35,10 +36,10 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]; then BUILD_SH
 export QINGAGENT_BUILD_INFO="${BUILD_TS} · ${BUILD_SHA}"
 echo "==> 打包信息: $QINGAGENT_BUILD_INFO"
 
-echo "==> [1/4] 构建 web 前端"
+echo "==> [1/5] 构建 web 前端"
 pnpm --filter @qingagent/web build
 
-echo "==> [2/4] 构建 electron main/preload + 打包 win-unpacked"
+echo "==> [2/5] 构建 electron main/preload + 打包 win-unpacked"
 cd "$DESKTOP_DIR"
 pnpm run build
 # 本地跨平台构建强制 asar:false(-c.asar=false 覆盖 electron-builder.yml 的 asar:true):
@@ -49,11 +50,19 @@ pnpm run build
 pnpm exec electron-builder --win --dir -c.asar=false   # 只出 win-unpacked,nsis 需 wine 故跳过
 
 UNPACKED="$DESKTOP_DIR/release/win-unpacked"
+EXE="$UNPACKED/qingagent.exe"
+if [ ! -f "$EXE" ]; then
+  echo "!! win-unpacked 缺 qingagent.exe,无法写入版本资源" >&2
+  exit 1
+fi
+echo "==> [3/5] 写入 qingagent.exe 青简品牌与版本资源"
+node "$DESKTOP_DIR/winVersionInfo.mjs" stamp "$EXE"
+
 LIBSQL_DIR="$UNPACKED/resources/app/node_modules/@libsql"
 NAPI_RS_DIR="$UNPACKED/resources/app/node_modules/@napi-rs"
 CANVAS_WIN_VERSION="$(node -e 'const { createRequire } = require("node:module"); const { dirname, join } = require("node:path"); const { existsSync, readFileSync } = require("node:fs"); const req = createRequire(process.argv[1] + "/package.json"); let dir = dirname(req.resolve("pdf-parse")); while (dir !== dirname(dir)) { const pkg = join(dir, "package.json"); if (existsSync(pkg) && JSON.parse(readFileSync(pkg, "utf8")).name === "pdf-parse") break; dir = dirname(dir); } const canvasPkg = createRequire(join(dir, "package.json")).resolve("@napi-rs/canvas/package.json"); const canvas = JSON.parse(readFileSync(canvasPkg, "utf8")); process.stdout.write(canvas.optionalDependencies["@napi-rs/canvas-win32-x64-msvc"]);' "$DESKTOP_DIR")"
 
-echo "==> [3/4] 注入 win 版原生依赖"
+echo "==> [4/5] 注入 win 版原生依赖"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 ( mkdir -p "$TMP/libsql" && cd "$TMP/libsql" && npm pack "@libsql/win32-x64-msvc@$LIBSQL_VERSION" >/dev/null && tar -xzf ./*.tgz )
@@ -78,7 +87,7 @@ if [ ! -d "$UNPACKED/resources/app/node_modules/execa" ]; then
   exit 1
 fi
 
-echo "==> [4/4] 复制到 Windows 本地盘 $WIN_DEST"
+echo "==> [5/5] 复制到 Windows 本地盘 $WIN_DEST"
 if [ -d /mnt/c ]; then
   rm -rf "$WIN_DEST/win-unpacked"
   mkdir -p "$WIN_DEST"

@@ -1026,7 +1026,13 @@ export function aiRunMarkToPmMark(mark: AiRunMark): PmMark {
     case "strikeThrough":
       return { type: "strike" };
     case "link":
-      return { type: "link", attrs: { href: mark.href, title: mark.title ?? null } };
+      return {
+        type: "link",
+        attrs: {
+          href: mark.href,
+          ...(mark.title == null ? {} : { title: mark.title }),
+        },
+      };
     case "textColor":
       return { type: "textColor", attrs: { color: mark.color } };
     case "highlight":

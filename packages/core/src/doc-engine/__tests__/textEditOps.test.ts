@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aiRunMarkToPmMark,
   getStablePmJson,
+  normalizePmDoc,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
@@ -359,6 +360,61 @@ describe("textEditOps", () => {
     });
   });
 
+  it("tx-markText-link-remove-normalized: link add 后同参 remove,缺省和显式 title 均可摘除", () => {
+    const cases = [
+      aiRunMarkToPmMark({ type: "link", href: "https://example.com/a" }),
+      aiRunMarkToPmMark({ type: "link", href: "https://example.com/b", title: "示例" }),
+    ];
+
+    for (const link of cases) {
+      const base = doc([paragraph("block-a", "目标")]);
+      const addMatches = findLiteralMatches(collectTopLevelTextBlocks(base), "目标", false);
+      const added = markTextRuns(base, addMatches, link, "add");
+      const removeMatches = findLiteralMatches(collectTopLevelTextBlocks(added), "目标", false);
+      const removed = markTextRuns(added, removeMatches, link, "remove");
+
+      expect(added.content[0]).toMatchObject({
+        content: [{ text: "目标", marks: [link] }],
+      });
+      expect(removed.content[0]).toMatchObject({ content: [{ text: "目标" }] });
+      expect(JSON.stringify(removed)).not.toContain('"type":"link"');
+    }
+  });
+
+  it("tx-markText-add-replaces-same-type: link 换 href、highlight 换色后只保留新 attrs", () => {
+    const oldLink = aiRunMarkToPmMark({ type: "link", href: "https://example.com/a" });
+    const newLink = aiRunMarkToPmMark({ type: "link", href: "https://example.com/b" });
+    const oldHighlight = aiRunMarkToPmMark({ type: "highlight", color: "yellow" });
+    const newHighlight = aiRunMarkToPmMark({ type: "highlight", color: "green" });
+    const base = doc([paragraph("block-a", [
+      text("链接", [oldLink]),
+      text("高亮", [oldHighlight]),
+    ])]);
+
+    const linkMatches = findLiteralMatches(collectTopLevelTextBlocks(base), "链接", false);
+    const relinked = markTextRuns(base, linkMatches, newLink, "add");
+    const highlightMatches = findLiteralMatches(collectTopLevelTextBlocks(relinked), "高亮", false);
+    const settled = normalizePmDoc(markTextRuns(
+      relinked,
+      highlightMatches,
+      newHighlight,
+      "add",
+    ));
+
+    expect(settled.content[0]).toMatchObject({
+      content: [
+        { text: "链接", marks: [newLink] },
+        { text: "高亮", marks: [newHighlight] },
+      ],
+    });
+    const content = (settled.content[0] as Extract<PmBlockNode, { type: "paragraph" }>).content ?? [];
+    for (const node of content) {
+      if (node.type !== "text") continue;
+      const types = (node.marks ?? []).map((mark) => mark.type);
+      expect(new Set(types).size).toBe(types.length);
+    }
+  });
+
   it("tx-markText-overlap: mark 区间套和部分 remove 正确切分", () => {
     const bold = aiRunMarkToPmMark({ type: "bold" });
     const highlight = aiRunMarkToPmMark({ type: "highlight", color: "yellow" });
@@ -377,6 +433,46 @@ describe("textEditOps", () => {
         { text: "水", marks: [highlight] },
       ],
     });
+  });
+
+  it("批量 replaceText/markText 与逐 match 旧路径结果等价", () => {
+    const bold = aiRunMarkToPmMark({ type: "bold" });
+    const base = doc([paragraph("block-a", "的甲的乙的")]);
+    const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "的", true);
+    const descending = [...matches].sort((left, right) => right.pmFrom - left.pmFrom);
+
+    const markedInBatch = markTextRuns(base, matches, bold, "add");
+    const markedOneByOne = descending.reduce(
+      (current, match) => markTextRuns(current, [match], bold, "add"),
+      base,
+    );
+    const replacedInBatch = replaceTextRuns(base, matches, "了");
+    const replacedOneByOne = descending.reduce(
+      (current, match) => replaceTextRuns(current, [match], "了"),
+      base,
+    );
+
+    expect(getStablePmJson(markedInBatch)).toBe(getStablePmJson(markedOneByOne));
+    expect(getStablePmJson(replacedInBatch)).toBe(getStablePmJson(replacedOneByOne));
+  });
+
+  it("千级命中批量编辑不重复校验整篇文档", () => {
+    const hitCount = 6_000;
+    const source = "的123456".repeat(hitCount);
+    const base = doc([paragraph("large-block", source)]);
+    const matches = findLiteralMatches(collectTopLevelTextBlocks(base), "的", true);
+    const bold = aiRunMarkToPmMark({ type: "bold" });
+
+    const startedAt = performance.now();
+    const marked = markTextRuns(base, matches, bold, "add");
+    const replaced = replaceTextRuns(base, matches, "了");
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(matches).toHaveLength(hitCount);
+    expect(inlineText(marked)).toBe(source);
+    expect(JSON.stringify(marked).match(/\"type\":\"bold\"/g)).toHaveLength(hitCount);
+    expect(inlineText(replaced)).toBe(source.replaceAll("的", "了"));
+    expect(elapsedMs).toBeLessThan(2_000);
   });
 
   it("tx-markText-readDiff-visible: 纯 markText 会产生 markAdd hunk", () => {

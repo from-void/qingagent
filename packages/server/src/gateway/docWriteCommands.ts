@@ -6,9 +6,11 @@ import type {
   WriteDraftFailureDiagnostic,
 } from "@qingagent/contract-ts";
 import { EXTERNAL_STRUCTURAL_OP_KINDS } from "@qingagent/contract-ts";
+import { findSafeRegexMatches, markTextRuns } from "@qingagent/core/doc-engine";
 import {
   compileAiDocumentToPm,
   applyBlockEdits,
+  aiRunMarkToPmMark,
   assertUniquePmBlockIds,
   blockToAi,
   getPmContentHash,
@@ -41,6 +43,7 @@ import {
   hasCanonicalDoc,
   invalidateDraftStateAfterCanonicalWrite,
   mapAnnotationGroupsThroughSteps,
+  mastra,
   persistSessionMetadata,
   parseAiDocumentFromQingml,
   replaceDraftCandidateDoc,
@@ -137,13 +140,63 @@ export function compileExternalQingmlDraft(
  * 本函数刻意不 clone 入参，并复用未触碰节点引用；禁止传入 session.doc、
  * docDraftBaseDoc 或其它 canonical/base 文档。调用方必须先建立候选副本。
  */
-export function applyExternalProposalOps(
+export async function applyExternalProposalOps(
   candidateDoc: PmDoc,
   ops: ExternalProposeOp[],
-): { ok: true; doc: PmDoc } | { ok: false; error: string } {
+): Promise<{ ok: true; doc: PmDoc } | { ok: false; error: string }> {
   let workingDoc = candidateDoc;
   const insertCursorByAnchor = new Map<string, string>();
   for (const op of ops) {
+    if (op.kind === "markText") {
+      try {
+        const allBlocks = collectTopLevelTextBlocks(workingDoc, op.withinRef);
+        const hasCodeBlock = allBlocks.some((block) => block.node.type === "codeBlock");
+        const blocks = allBlocks.filter((block) => block.node.type !== "codeBlock");
+        const regexResult = op.isRegex
+          ? await findSafeRegexMatches(blocks, op.find, op.all === true)
+          : null;
+        if (regexResult && !regexResult.ok) {
+          return { ok: false, error: regexResult.error };
+        }
+        const matches = regexResult
+          ? regexResult.matches
+          : findLiteralMatches(blocks, op.find, op.all === true);
+        if (matches.length === 0) {
+          return {
+            ok: false,
+            error: `文本未命中或未唯一命中,请缩小 withinRef 或设 all:true${
+              hasCodeBlock ? "；注:代码块内文本不参与行内标记" : ""
+            }`,
+          };
+        }
+        const markedDoc = markTextRuns(
+          workingDoc,
+          matches,
+          aiRunMarkToPmMark(op.mark),
+          op.op,
+        );
+        if (markedDoc === workingDoc) {
+          return {
+            ok: false,
+            error: op.op === "add"
+              ? "标记已存在，无需重复添加；同类型不同属性可直接 add 替换"
+              : "标记不存在，无需重复移除；请检查 mark 后重试",
+          };
+        }
+        workingDoc = markedDoc;
+      } catch (error) {
+        mastra.getLogger().warn("[external-proposal] markText failed", {
+          markType: op.mark.type,
+          operation: op.op,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          ok: false,
+          error: "操作失败:行内标记应用异常,请重新读取文档后重试",
+        };
+      }
+      continue;
+    }
     if (op.kind === "strReplace") {
       const blocks = collectTopLevelTextBlocks(workingDoc);
       const matches = op.nth
@@ -873,7 +926,7 @@ export async function* handleDocWriteCommand(
         workingDoc = clonePmDoc(qingmlDraft.doc);
       } else {
         workingDoc = baseCandidate;
-        const applied = applyExternalProposalOps(workingDoc, contentOps);
+        const applied = await applyExternalProposalOps(workingDoc, contentOps);
         if (!applied.ok) {
           yield docWriteReason(clientMutationId, "validation_error", undefined, applied.error);
           return;

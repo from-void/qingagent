@@ -248,6 +248,158 @@ describe("external proposals", () => {
     expect(session?.chatHistory.filter((message) => message.role.kind === "agent" && message.parts.length === 0)).toHaveLength(0);
   });
 
+  it("markText 走完整 proposal→审阅流并产出 markAdd/markRemove hunk", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "新增标记，**移除标记**。" }],
+    });
+
+    const arbitraryColor = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{
+        kind: "markText",
+        find: "新增标记",
+        mark: { type: "highlight", color: "#ff0" },
+        op: "add",
+      }],
+    });
+    expect(arbitraryColor.status).toBe(400);
+    expect(await arbitraryColor.json()).toMatchObject({ code: "VALIDATION" });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [
+        {
+          kind: "markText",
+          find: "新增标记",
+          mark: { type: "highlight", color: "yellow" },
+          op: "add",
+        },
+        {
+          kind: "markText",
+          find: "移除标记",
+          mark: { type: "bold" },
+          op: "remove",
+        },
+      ],
+    });
+
+    expect(proposed.status).toBe(200);
+    expect(await proposed.json()).toMatchObject({ status: "review", count: 2 });
+    const session = await getOrRestoreSession(sessionId);
+    expect([...session!.suggestions.values()].map((record) => record.diffHunk?.op))
+      .toEqual(expect.arrayContaining(["markAdd", "markRemove"]));
+    expect(JSON.stringify(session!.docDraftCandidateDoc)).toContain(
+      '\"type\":\"highlight\",\"attrs\":{\"color\":\"yellow\"}',
+    );
+  });
+
+  it("markText 只命中代码块时返回 400 与可自纠文案", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "```ts\nconst 目标 = 1;\n```" }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    });
+
+    expect(proposed.status).toBe(400);
+    expect(await proposed.json()).toMatchObject({
+      code: "VALIDATION",
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true；注:代码块内文本不参与行内标记",
+    });
+  });
+
+  it("markText 含代码块时非 all 多义命中同时返回 all 与代码块自纠说明", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{
+        kind: "fullDraft",
+        markdown: "```ts\nconst 目标 = 1;\n```\n\n段落目标一\n\n段落目标二",
+      }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    });
+
+    expect(proposed.status).toBe(400);
+    const body = await proposed.json() as { code: string; error: string };
+    expect(body).toMatchObject({
+      code: "VALIDATION",
+      error: expect.stringContaining("all:true"),
+    });
+    expect(body.error).toContain("代码块内文本不参与行内标记");
+  });
+
+  it("markText 混合命中代码块与段落时正常标记段落", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{
+        kind: "fullDraft",
+        markdown: "```ts\nconst 目标 = 1;\n```\n\n段落目标",
+      }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    });
+
+    expect(proposed.status).toBe(200);
+    expect(await proposed.json()).toMatchObject({ status: "review" });
+    const candidate = (await getOrRestoreSession(sessionId))!.docDraftCandidateDoc!;
+    const codeBlock = candidate.content.find((block) => block.type === "codeBlock");
+    const paragraph = candidate.content.find((block) => block.type === "paragraph");
+    expect(JSON.stringify(codeBlock)).not.toContain('"marks"');
+    expect(JSON.stringify(paragraph)).toContain('"type":"bold"');
+  });
+
+  it("markText add 已存在的标记时返回可自纠文案", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "**目标**" }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    });
+
+    expect(proposed.status).toBe(400);
+    expect(await proposed.json()).toMatchObject({
+      code: "VALIDATION",
+      error: "标记已存在，无需重复添加；同类型不同属性可直接 add 替换",
+    });
+  });
+
+  it("markText remove 不存在的标记时返回可自纠文案", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "目标" }],
+    });
+
+    const proposed = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "remove" }],
+    });
+
+    expect(proposed.status).toBe(400);
+    expect(await proposed.json()).toMatchObject({
+      code: "VALIDATION",
+      error: "标记不存在，无需重复移除；请检查 mark 后重试",
+    });
+  });
+
   it("丢弃仅由块身份重建产生的逐字节相同 hunk，并按空提案拒绝", async () => {
     const sessionId = await createSession();
     const qingml = [

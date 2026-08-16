@@ -8,10 +8,10 @@ const sourcePath = resolve(packageDir, "src/ExternalApi.ts");
 const targetPath = resolve(repoDir, "packages/qa-cli/src/generated/externalApi.ts");
 const packageJson = JSON.parse(await readFile(resolve(packageDir, "package.json"), "utf8"));
 const source = await readFile(sourcePath, "utf8");
-// ExternalApi 在契约源内直接复用正式 BridgeFrame/DocDiffReady/PmDoc/AttachIdentity；qa-cli 的
+// ExternalApi 在契约源内直接复用正式 BridgeFrame/DocDiffReady/PmDoc/AttachIdentity/DraftTextMark；qa-cli 的
 // 生成副本把这些纯类型 import 指向工作区包，编译后不会留下运行期依赖。
 const generatedSource = source.replace(
-  /from "\.\/(?:BridgeFrame|DocDiffReady|PmDoc|Attach)";/g,
+  /from "\.\/(?:BridgeFrame|DocDiffReady|PmDoc|Attach|DraftMutation)";/g,
   'from "@qingagent/contract-ts";',
 );
 const generated = `// 生成物勿手改：由 @qingagent/contract-ts 生成。\n// 源：packages/contract-ts/src/ExternalApi.ts（contract-ts@${packageJson.version}）\n\n${generatedSource}`;

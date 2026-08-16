@@ -1029,4 +1029,51 @@ describe("QingML draft tools", () => {
       ],
     });
   });
+
+  it("editDraft markText link add/remove 共用归一口径,同类型 add 直接替换 attrs", async () => {
+    const state = createSession("s-mark-link-normalized");
+    bindDoc(state, doc([paragraph("block-a", "链接目标")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const roundTrip = await editDraft.execute!({
+      ops: [
+        {
+          action: "markText",
+          find: "链接目标",
+          mark: { type: "link", href: "https://example.com/a" },
+          op: "add",
+        },
+        {
+          action: "markText",
+          find: "链接目标",
+          mark: { type: "link", href: "https://example.com/a" },
+          op: "remove",
+        },
+        {
+          action: "markText",
+          find: "链接目标",
+          mark: { type: "link", href: "https://example.com/a" },
+          op: "add",
+        },
+        {
+          action: "markText",
+          find: "链接目标",
+          mark: { type: "link", href: "https://example.com/b", title: "新链接" },
+          op: "add",
+        },
+      ],
+    }, ctx) as any;
+
+    expect(roundTrip.ok).toBe(true);
+    expect(state.docDraftCandidateDoc?.content[0]).toMatchObject({
+      content: [{
+        text: "链接目标",
+        marks: [{
+          type: "link",
+          attrs: { href: "https://example.com/b", title: "新链接" },
+        }],
+      }],
+    });
+    expect(JSON.stringify(state.docDraftCandidateDoc).match(/"type":"link"/g)).toHaveLength(1);
+  });
 });

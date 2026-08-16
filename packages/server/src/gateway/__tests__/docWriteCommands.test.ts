@@ -23,6 +23,7 @@ describe("compileExternalQingmlDraft", () => {
       qingmlDraft: { kind: "qingmlDraft", qingml: "<p>正文</p>" },
       setTitle: { kind: "setTitle", title: "标题" },
       strReplace: { kind: "strReplace", old: "旧", new: "新" },
+      markText: { kind: "markText", find: "正文", mark: { type: "bold" }, op: "add" },
       insertAfterLine: { kind: "insertAfterLine", line: 1, markdown: "插入" },
       insertAfterBlock: { kind: "insertAfterBlock", blockId: "block-1", markdown: "插入" },
       appendSection: { kind: "appendSection", markdown: "追加" },
@@ -66,14 +67,203 @@ describe("compileExternalQingmlDraft", () => {
     });
   });
 
-  it("局部插入只拼接受影响区间，未触碰块保留原节点引用与 blockId", () => {
+  it("markText add 为唯一命中文本添加行内标记", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("前缀目标后缀"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "highlight", color: "yellow" },
+      op: "add",
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.doc.content[0]).toMatchObject({
+      content: [
+        { text: "前缀" },
+        { text: "目标", marks: [{ type: "highlight", attrs: { color: "yellow" } }] },
+        { text: "后缀" },
+      ],
+    });
+  });
+
+  it("markText remove 移除指定标记并保留正文", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("**目标**"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "bold" },
+      op: "remove",
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.doc.content[0]).toMatchObject({ content: [{ text: "目标" }] });
+    expect(JSON.stringify(result.doc)).not.toContain('"type":"bold"');
+  });
+
+  it("markText link add 后同参 remove 可摘除缺省或显式 title 的链接", async () => {
+    for (const mark of [
+      { type: "link" as const, href: "https://example.com/a" },
+      { type: "link" as const, href: "https://example.com/b", title: "示例" },
+    ]) {
+      const result = await applyExternalProposalOps(markdownToPm("目标"), [
+        { kind: "markText", find: "目标", mark, op: "add" },
+        { kind: "markText", find: "目标", mark, op: "remove" },
+      ]);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(JSON.stringify(result.doc)).not.toContain('"type":"link"');
+    }
+  });
+
+  it("markText all:true 应用全部命中", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标一\n\n目标二"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "underline" },
+      op: "add",
+      all: true,
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(JSON.stringify(result.doc).match(/"type":"underline"/g)).toHaveLength(2);
+  });
+
+  it("markText withinRef 只在指定块内匹配", async () => {
+    const candidate = markdownToPm("目标一\n\n目标二");
+    const targetBlockId = candidate.content[1]!.attrs.blockId;
+    const result = await applyExternalProposalOps(candidate, [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "italic" },
+      op: "add",
+      withinRef: targetBlockId,
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(JSON.stringify(result.doc.content[0])).not.toContain('"type":"italic"');
+    expect(JSON.stringify(result.doc.content[1])).toContain('"type":"italic"');
+  });
+
+  it("markText 非 all 多义命中返回可自纠文案", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标一\n\n目标二"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "bold" },
+      op: "add",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true",
+    });
+  });
+
+  it("markText isRegex 通过安全正则应用匹配", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标1 与目标2"), [{
+      kind: "markText",
+      find: "目标\\d",
+      mark: { type: "code" },
+      op: "add",
+      all: true,
+      isRegex: true,
+    }]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(JSON.stringify(result.doc).match(/"type":"code"/g)).toHaveLength(2);
+  });
+
+  it("markText 只命中代码块时返回可自纠错误", async () => {
+    const result = await applyExternalProposalOps(
+      markdownToPm("```ts\nconst 目标 = 1;\n```"),
+      [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true；注:代码块内文本不参与行内标记",
+    });
+  });
+
+  it("markText 含代码块时非 all 多义命中同时返回 all 与代码块自纠说明", async () => {
+    const result = await applyExternalProposalOps(
+      markdownToPm("```ts\nconst 目标 = 1;\n```\n\n段落目标一\n\n段落目标二"),
+      [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "文本未命中或未唯一命中,请缩小 withinRef 或设 all:true；注:代码块内文本不参与行内标记",
+    });
+  });
+
+  it("markText 混合命中代码块与段落时只标记段落", async () => {
+    const result = await applyExternalProposalOps(
+      markdownToPm("```ts\nconst 目标 = 1;\n```\n\n段落目标"),
+      [{ kind: "markText", find: "目标", mark: { type: "bold" }, op: "add" }],
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const codeBlock = result.doc.content.find((block) => block.type === "codeBlock");
+    const paragraph = result.doc.content.find((block) => block.type === "paragraph");
+    expect(JSON.stringify(codeBlock)).not.toContain('"marks"');
+    expect(JSON.stringify(paragraph)).toContain('"type":"bold"');
+  });
+
+  it("markText add 已存在的标记时返回无需重复添加文案", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("**目标**"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "bold" },
+      op: "add",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "标记已存在，无需重复添加；同类型不同属性可直接 add 替换",
+    });
+  });
+
+  it("markText remove 不存在的标记时返回无需重复移除文案", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "bold" },
+      op: "remove",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "标记不存在，无需重复移除；请检查 mark 后重试",
+    });
+  });
+
+  it("markText 异常返回通用操作失败文案,不再单一归因代码块", async () => {
+    const result = await applyExternalProposalOps(markdownToPm("目标"), [{
+      kind: "markText",
+      find: "目标",
+      mark: { type: "math" } as never,
+      op: "add",
+    }]);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "操作失败:行内标记应用异常,请重新读取文档后重试",
+    });
+  });
+
+  it("局部插入只拼接受影响区间，未触碰块保留原节点引用与 blockId", async () => {
     const canonical = markdownToPm("第一段。\n\n第二段。\n\n第三段。");
     const candidate = structuredClone(canonical);
     const untouched = [...candidate.content];
     expect(candidate).not.toBe(canonical);
     expect(candidate.content[0]).not.toBe(canonical.content[0]);
 
-    const result = applyExternalProposalOps(candidate, [
+    const result = await applyExternalProposalOps(candidate, [
       { kind: "insertAfterLine", line: 2, markdown: "插入段。" },
     ]);
 
@@ -90,7 +280,7 @@ describe("compileExternalQingmlDraft", () => {
     expect(canonical).toEqual(markdownToPm("第一段。\n\n第二段。\n\n第三段。"));
   });
 
-  it("P34：整篇行偏移跨 30+ 行表格后仍把插入落在第 36/37 项之间", () => {
+  it("P34：整篇行偏移跨 30+ 行表格后仍把插入落在第 36/37 项之间", async () => {
     const table = [
       "| 序号 | 内容 |",
       "| --- | --- |",
@@ -107,7 +297,7 @@ describe("compileExternalQingmlDraft", () => {
     );
     expect(target).toBeTruthy();
 
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterLine",
       line: target!.contentEndLine,
       markdown: "插在 36/37 之间",
@@ -120,11 +310,11 @@ describe("compileExternalQingmlDraft", () => {
     expect(out.indexOf("插在 36/37 之间")).toBeLessThan(out.indexOf("第 37 项"));
   });
 
-  it("P34：多行大块内部行拒绝吸附，并指向 insertAfterBlock 与同批行号过期", () => {
+  it("P34：多行大块内部行拒绝吸附，并指向 insertAfterBlock 与同批行号过期", async () => {
     const candidate = markdownToPm("| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\n尾段");
     const table = pmToMarkdownWithLineMap(candidate).blocks.find((span) => span.blockType === "table");
     expect(table).toBeTruthy();
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterLine",
       line: table!.startLine + 1,
       markdown: "不应插入",
@@ -136,10 +326,10 @@ describe("compileExternalQingmlDraft", () => {
     expect(result.error).toContain("同批前序操作会使后续行号过期");
   });
 
-  it("insertAfterBlock 对顶层末尾锚点插入多个块，清单容器锚点仍按顶层解释", () => {
+  it("insertAfterBlock 对顶层末尾锚点插入多个块，清单容器锚点仍按顶层解释", async () => {
     const candidate = markdownToPm("- [ ] 清单项");
     const taskListId = candidate.content[0]!.attrs.blockId;
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterBlock",
       blockId: taskListId,
       markdown: "新增一\n\n新增二",
@@ -154,7 +344,7 @@ describe("compileExternalQingmlDraft", () => {
     assertUniquePmBlockIds(result.doc);
   });
 
-  it("insertAfterBlock 在嵌套列表项后插入同深度兄弟，并保留新项后代", () => {
+  it("insertAfterBlock 在嵌套列表项后插入同深度兄弟，并保留新项后代", async () => {
     const candidate = markdownToPm("- 父项\n  - 子项甲\n  - 子项乙\n- 尾项");
     const root = candidate.content[0]!;
     expect(root.type).toBe("bulletList");
@@ -163,7 +353,7 @@ describe("compileExternalQingmlDraft", () => {
     expect(nested?.type).toBe("bulletList");
     if (nested?.type !== "bulletList") return;
 
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterBlock",
       blockId: nested.content[0]!.attrs.blockId,
       markdown: "- 新子项\n  - 随行后代",
@@ -179,14 +369,14 @@ describe("compileExternalQingmlDraft", () => {
     assertUniquePmBlockIds(result.doc);
   });
 
-  it("insertAfterBlock 拒绝表格 cell 内锚点", () => {
+  it("insertAfterBlock 拒绝表格 cell 内锚点", async () => {
     const candidate = markdownToPm("| A | B |\n| --- | --- |\n| 1 | 2 |");
     const table = candidate.content[0]!;
     expect(table.type).toBe("table");
     if (table.type !== "table") return;
     const cellParagraphId = table.content[1]!.content[0]!.content[0]!.attrs.blockId;
 
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterBlock",
       blockId: cellParagraphId,
       markdown: "不应插入",
@@ -199,13 +389,13 @@ describe("compileExternalQingmlDraft", () => {
     ["非列表 markdown", "普通段落"],
     ["不同类列表", "- 普通列表项"],
     ["多个同类列表项", "- [ ] 新任务一\n- [ ] 新任务二"],
-  ])("insertAfterBlock 列表锚点拒绝%s", (_label, markdown) => {
+  ])("insertAfterBlock 列表锚点拒绝%s", async (_label, markdown) => {
     const candidate = markdownToPm("- [ ] 原任务");
     const taskList = candidate.content[0]!;
     expect(taskList.type).toBe("taskList");
     if (taskList.type !== "taskList") return;
 
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterBlock",
       blockId: taskList.content[0]!.attrs.blockId,
       markdown,
@@ -217,14 +407,14 @@ describe("compileExternalQingmlDraft", () => {
     });
   });
 
-  it("insertAfterBlock 拒绝空 Markdown 与空 taskItem", () => {
+  it("insertAfterBlock 拒绝空 Markdown 与空 taskItem", async () => {
     const paragraph = markdownToPm("原段");
-    expect(applyExternalProposalOps(paragraph, [{
+    expect(await applyExternalProposalOps(paragraph, [{
       kind: "insertAfterBlock",
       blockId: paragraph.content[0]!.attrs.blockId,
       markdown: " \n ",
     }])).toMatchObject({ ok: false, error: expect.stringContaining("不能为空") });
-    expect(applyExternalProposalOps(paragraph, [{
+    expect(await applyExternalProposalOps(paragraph, [{
       kind: "insertAfterBlock",
       blockId: paragraph.content[0]!.attrs.blockId,
       markdown: "- [ ]   ",
@@ -234,14 +424,14 @@ describe("compileExternalQingmlDraft", () => {
     const taskList = tasks.content[0]!;
     expect(taskList.type).toBe("taskList");
     if (taskList.type !== "taskList") return;
-    expect(applyExternalProposalOps(tasks, [{
+    expect(await applyExternalProposalOps(tasks, [{
       kind: "insertAfterBlock",
       blockId: taskList.content[0]!.attrs.blockId,
       markdown: "- [ ]   ",
     }])).toMatchObject({ ok: false, error: expect.stringContaining("不能为空") });
   });
 
-  it("insertAfterBlock 同批先删锚点时整批失败且不泄漏删除", () => {
+  it("insertAfterBlock 同批先删锚点时整批失败且不泄漏删除", async () => {
     const candidate = markdownToPm("- [ ] 任务甲\n- [ ] 任务乙");
     const before = structuredClone(candidate);
     const taskList = candidate.content[0]!;
@@ -249,7 +439,7 @@ describe("compileExternalQingmlDraft", () => {
     if (taskList.type !== "taskList") return;
     const anchorId = taskList.content[0]!.attrs.blockId;
 
-    const result = applyExternalProposalOps(candidate, [
+    const result = await applyExternalProposalOps(candidate, [
       { kind: "deleteListItem", blockId: anchorId },
       { kind: "insertAfterBlock", blockId: anchorId, markdown: "- [ ] 新任务" },
     ]);
@@ -258,14 +448,14 @@ describe("compileExternalQingmlDraft", () => {
     expect(candidate).toEqual(before);
   });
 
-  it("insertAfterBlock 同批多个同锚点插入按 op 顺序排列", () => {
+  it("insertAfterBlock 同批多个同锚点插入按 op 顺序排列", async () => {
     const candidate = markdownToPm("- [ ] 任务甲\n- [ ] 任务乙");
     const taskList = candidate.content[0]!;
     expect(taskList.type).toBe("taskList");
     if (taskList.type !== "taskList") return;
     const anchorId = taskList.content[0]!.attrs.blockId;
 
-    const result = applyExternalProposalOps(candidate, [
+    const result = await applyExternalProposalOps(candidate, [
       { kind: "insertAfterBlock", blockId: anchorId, markdown: "- [ ] 新任务一" },
       { kind: "insertAfterBlock", blockId: anchorId, markdown: "- [ ] 新任务二" },
     ]);
@@ -277,7 +467,7 @@ describe("compileExternalQingmlDraft", () => {
     ].join("\n"));
   });
 
-  it("P34：整篇序列化过滤的空块不再额外占两行", () => {
+  it("P34：整篇序列化过滤的空块不再额外占两行", async () => {
     const candidate = markdownToPm("第一段\n\n第二段");
     candidate.content.splice(1, 0, {
       type: "paragraph",
@@ -288,7 +478,7 @@ describe("compileExternalQingmlDraft", () => {
     expect(serialized.markdown).toBe("第一段\n\n第二段");
     expect(serialized.blocks.map((span) => span.blockIndex)).toEqual([0, 2]);
 
-    const result = applyExternalProposalOps(candidate, [{
+    const result = await applyExternalProposalOps(candidate, [{
       kind: "insertAfterLine",
       line: 2,
       markdown: "插入段",
@@ -303,10 +493,10 @@ describe("compileExternalQingmlDraft", () => {
     ]);
   });
 
-  it("结构操作整批失败不泄漏前序删除", () => {
+  it("结构操作整批失败不泄漏前序删除", async () => {
     const candidate = markdownToPm("第一段\n\n第二段");
     const before = structuredClone(candidate);
-    const result = applyExternalProposalOps(candidate, [
+    const result = await applyExternalProposalOps(candidate, [
       { kind: "deleteBlock", blockId: candidate.content[0]!.attrs.blockId },
       { kind: "deleteBlock", blockId: "missing-block" },
     ]);

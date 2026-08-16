@@ -119,16 +119,11 @@ function withoutUnpersistedTrailingParagraph(value: unknown): unknown | null {
   if (!trailing || typeof trailing !== "object") return null;
   const node = trailing as {
     type?: unknown;
-    attrs?: unknown;
     content?: unknown;
   };
-  const attrs = node.attrs && typeof node.attrs === "object"
-    ? node.attrs as { blockId?: unknown }
-    : null;
   if (
     node.type !== "paragraph" ||
-    (Array.isArray(node.content) && node.content.length > 0) ||
-    attrs?.blockId != null
+    (Array.isArray(node.content) && node.content.length > 0)
   ) {
     return null;
   }

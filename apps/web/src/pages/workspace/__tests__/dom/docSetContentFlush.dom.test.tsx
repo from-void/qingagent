@@ -6,8 +6,13 @@ import type { Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { applyBlockEdits, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { APPLYING_REMOTE_META } from "@qingagent/pm-schema/tiptap";
+import type { BridgeFrame } from "@qingagent/contract-ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
+import {
+  appliedDocVersionFromBroadcastFrame,
+  decideBroadcastDocumentFrame,
+} from "../../data/docWriteResultOwnership";
 import {
   DocumentSnapshotView,
   type DocumentSnapshotViewHandle,
@@ -193,6 +198,26 @@ function listDoc(): PmDoc {
         content: [{ type: "text", text: "列表结尾" }],
       },
     ],
+  } as PmDoc;
+}
+
+function orderedListEndingDoc(itemTexts: readonly string[]): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "orderedList",
+      attrs: { blockId: "list-settlement", start: 1 },
+      content: itemTexts.map((text, index) => ({
+        type: "listItem" as const,
+        attrs: { blockId: `list-settlement-item-${index + 1}` },
+        content: [{
+          type: "paragraph" as const,
+          attrs: { blockId: `list-settlement-item-${index + 1}-p` },
+          content: [{ type: "text" as const, text }],
+        }],
+      })),
+    }],
   } as PmDoc;
 }
 
@@ -1333,5 +1358,106 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(viewRef.current?.compareIncomingDocument(canonical)).toBe("equivalent");
     expect(viewRef.current?.hasLocalDocumentChanges()).toBe(false);
     expect(onEditorChange).not.toHaveBeenCalled();
+  });
+
+  it("P27：列表结尾文档贯穿结算乐观帧、canonical 与下轮审阅均保持干净且不冲突", async () => {
+    const viewRef = createRef<DocumentSnapshotViewHandle>();
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const oldCanonical = orderedListEndingDoc(["旧条目一", "旧条目二"]);
+    const settledCanonical = orderedListEndingDoc(["新条目一", "新条目二"]);
+    const decisions: Array<ReturnType<typeof decideBroadcastDocumentFrame>> = [];
+
+    const render = (doc: PmDoc, version: number, reviewActive = false) => {
+      act(() => {
+        root.render(
+          <DocumentSnapshotView
+            ref={viewRef}
+            doc={pmDocToViewDocumentSnapshot(doc, version)}
+            editable
+            interactiveEditable
+            deferBlockIdNormalization={reviewActive}
+            showPatches={reviewActive}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            onEditorReady={(readyEditor) => {
+              editor = readyEditor;
+            }}
+            onEditorChange={onEditorChange}
+          />,
+        );
+      });
+    };
+    const expectCleanCheckpoint = (label: string) => {
+      expect(viewRef.current?.hasLocalDocumentChanges(), label).toBe(false);
+      expect(onEditorChange, label).not.toHaveBeenCalled();
+    };
+    const decideIncoming = (frame: BridgeFrame, reviewActive = false) => {
+      const applied = appliedDocVersionFromBroadcastFrame(frame);
+      expect(applied).not.toBeNull();
+      const comparison = viewRef.current!.compareIncomingDocument(applied!.pmDoc);
+      const decision = decideBroadcastDocumentFrame({
+        frame,
+        editorDirty: viewRef.current!.hasLocalDocumentChanges(),
+        pendingDocWrite: false,
+        queuedDocWrite: false,
+        scheduledDocWrite: false,
+        incomingDocumentMatchesEditor: comparison === "equivalent",
+        incomingDocumentComparisonUnavailable: comparison === "unavailable",
+        reviewActive,
+        reviewBaseVersion: reviewActive ? applied!.version : null,
+      });
+      decisions.push(decision);
+      expect(decision.kind).not.toBe("conflict");
+      return decision;
+    };
+
+    render(oldCanonical, 3);
+    await flush();
+    expect(editor).not.toBeNull();
+    expectCleanCheckpoint("初次挂载 list-ending canonical");
+
+    const optimisticFrame: BridgeFrame = {
+      kind: "docGenerationEvent",
+      data: {
+        kind: "generation_finished",
+        data: {
+          generationId: "p27-settlement",
+          seq: 1,
+          prevSeq: null,
+          doc: oldCanonical,
+          finalVersion: 4,
+          contentHash: "optimistic-old-content",
+        },
+      },
+    };
+    expect(decideIncoming(optimisticFrame)).toEqual({ kind: "apply" });
+    render(oldCanonical, 4);
+    await flush();
+    expectCleanCheckpoint("结算乐观帧：旧正文@v+1");
+
+    const canonicalFrame: BridgeFrame = {
+      kind: "documentSnapshotWritten",
+      data: { doc: { version: 4, ts: "p27-canonical", doc: settledCanonical } },
+    };
+    expect(decideIncoming(canonicalFrame)).toEqual({ kind: "apply" });
+    render(settledCanonical, 4);
+    await flush();
+    expectCleanCheckpoint("权威 canonical v+1");
+
+    const nextReviewFrame: BridgeFrame = {
+      kind: "docDiffReady",
+      data: {
+        baseVersion: 4,
+        suggestions: [],
+        previewDoc: settledCanonical,
+        editedDoc: settledCanonical,
+      },
+    };
+    expect(decideIncoming(nextReviewFrame)).toEqual({ kind: "apply" });
+    render(settledCanonical, 4, true);
+    await flush();
+    expectCleanCheckpoint("下轮 review 帧");
+    expect(decisions.some((decision) => decision.kind === "conflict")).toBe(false);
   });
 });

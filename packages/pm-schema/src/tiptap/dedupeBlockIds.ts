@@ -41,8 +41,9 @@ export const DedupeBlockIds = Extension.create({
           // 新建段落不只来自粘贴：原子块后的 Enter 也会由 ProseMirror 插入一个没有
           // blockId 的 paragraph。若等到保存归一化才补 ID，版本回声会被后续缺 ID
           // 修复路径整篇 setContent，进而重置当前选区。因此所有本地插入都在同一
-          // appendTransaction 内补齐 ID；远端事务仍严格跳过。
-          const insertedRanges = collectLocalInsertedRanges(transactions);
+          // appendTransaction 内补齐 ID；远端事务仍严格跳过，trailingNode 的文末
+          // 空段只是编辑脚手架，不进入持久身份分配。
+          const insertedRanges = collectLocalInsertedRanges(transactions, newState.doc);
           const missing = insertedRanges.length > 0
             ? collectMissingBlockIds(newState.doc, insertedRanges)
             : [];
@@ -118,17 +119,53 @@ function collectMissingBlockIds(doc: PmNode, ranges: readonly { from: number; to
   return missing;
 }
 
-function collectLocalInsertedRanges(transactions: readonly Transaction[]): Array<{ from: number; to: number }> {
+function collectLocalInsertedRanges(
+  transactions: readonly Transaction[],
+  doc: PmNode,
+): Array<{ from: number; to: number }> {
   const ranges: Array<{ from: number; to: number }> = [];
   for (const tr of transactions) {
     if (!tr.docChanged || tr.getMeta(DEDUPE_META) || shouldSkipDedupeTransaction(tr)) continue;
     for (const step of tr.steps) {
       step.getMap().forEach((_oldStart, _oldEnd, newStart, newEnd) => {
-        if (newEnd > newStart) ranges.push({ from: newStart, to: newEnd });
+        if (
+          newEnd > newStart &&
+          !isTrailingNodeScaffoldInsertion({
+            doc,
+            appendedTransaction: tr.getMeta("appendedTransaction") != null,
+            newStart,
+            newEnd,
+          })
+        ) {
+          ranges.push({ from: newStart, to: newEnd });
+        }
       });
     }
   }
   return ranges;
+}
+
+function isTrailingNodeScaffoldInsertion(input: {
+  doc: PmNode;
+  appendedTransaction: boolean;
+  newStart: number;
+  newEnd: number;
+}): boolean {
+  // trailingNode 是对前一笔正文事务的 appendTransaction；用户显式点击文末新增空段
+  // 则是批次里的首笔事务，仍应走正常 blockId 分配。这里只排除前者的精确形态。
+  if (
+    !input.appendedTransaction ||
+    input.newEnd !== input.doc.content.size
+  ) {
+    return false;
+  }
+  const trailing = input.doc.nodeAt(input.newStart);
+  return Boolean(
+    trailing &&
+    trailing.type.name === "paragraph" &&
+    trailing.content.size === 0 &&
+    input.newEnd - input.newStart === trailing.nodeSize,
+  );
 }
 
 function findDuplicateBlockIds(occurrences: readonly BlockIdOccurrence[]): BlockIdOccurrence[] {

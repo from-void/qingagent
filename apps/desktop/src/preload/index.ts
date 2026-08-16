@@ -18,6 +18,16 @@ import {
   QINGJIAN_OPEN_SESSION_CHANNEL,
   type QingjianOpenSessionIntent,
 } from "../qingjianDeepLinkContract.js";
+import {
+  BACKEND_CONNECTION_CHANGED_CHANNEL,
+  BACKEND_CONNECTION_GET_CHANNEL,
+  BACKEND_CONNECTION_RETRY_CHANNEL,
+  BACKEND_STARTUP_ACTION_CHANNEL,
+  BACKEND_STARTUP_PROMPT_CHANNEL,
+  type BackendConnectionSnapshot,
+  type BackendStartupAction,
+  type BackendStartupPrompt,
+} from "../backendConnectionContract.js";
 
 type UpdateStatusPayload = {
   kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
@@ -31,7 +41,13 @@ ipcRenderer.on(QINGJIAN_OPEN_SESSION_CHANNEL, (_event, rawIntent: unknown) => {
   if (!rawIntent || typeof rawIntent !== "object") return;
   const engineSessionId = (rawIntent as { engineSessionId?: unknown }).engineSessionId;
   if (typeof engineSessionId !== "string") return;
-  const intent = { engineSessionId };
+  const result = (rawIntent as { result?: unknown }).result;
+  const intent: QingjianOpenSessionIntent = {
+    engineSessionId,
+    ...(result === "found" || result === "not-found" || result === "unavailable"
+      ? { result: result as QingjianOpenSessionIntent["result"] }
+      : {}),
+  };
   if (qingjianOpenSessionListeners.size === 0) {
     pendingQingjianOpenSession = intent;
     return;
@@ -49,6 +65,39 @@ function onQingjianOpenSession(
     callback(intent);
   }
   return () => qingjianOpenSessionListeners.delete(callback);
+}
+
+function getBackendConnection(): BackendConnectionSnapshot | null {
+  try {
+    const value = ipcRenderer.sendSync(BACKEND_CONNECTION_GET_CHANNEL) as unknown;
+    return value && typeof value === "object" ? value as BackendConnectionSnapshot : null;
+  } catch {
+    return null;
+  }
+}
+
+function onBackendConnectionChanged(
+  callback: (snapshot: BackendConnectionSnapshot) => void,
+): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) => {
+    if (snapshot && typeof snapshot === "object") callback(snapshot as BackendConnectionSnapshot);
+  };
+  ipcRenderer.on(BACKEND_CONNECTION_CHANGED_CHANNEL, listener);
+  return () => ipcRenderer.removeListener(BACKEND_CONNECTION_CHANGED_CHANNEL, listener);
+}
+
+let pendingBackendStartupPrompt: BackendStartupPrompt | null = null;
+const backendStartupPromptListeners = new Set<(prompt: BackendStartupPrompt) => void>();
+ipcRenderer.on(BACKEND_STARTUP_PROMPT_CHANNEL, (_event, prompt: unknown) => {
+  if (!prompt || typeof prompt !== "object") return;
+  pendingBackendStartupPrompt = prompt as BackendStartupPrompt;
+  for (const listener of backendStartupPromptListeners) listener(pendingBackendStartupPrompt);
+});
+
+function onBackendStartupPrompt(callback: (prompt: BackendStartupPrompt) => void): () => void {
+  backendStartupPromptListeners.add(callback);
+  if (pendingBackendStartupPrompt) callback(pendingBackendStartupPrompt);
+  return () => backendStartupPromptListeners.delete(callback);
 }
 
 // 应用版本号:启动期同步取一次(主进程回 app.getVersion()),供关于页显示与「复制版本信息」。
@@ -149,6 +198,13 @@ contextBridge.exposeInMainWorld("electron", {
   platform: process.platform,
   isDesktop: true,
   onQingjianOpenSession,
+  dataOrigin: "qingagent-data://library",
+  getBackendConnection,
+  onBackendConnectionChanged,
+  retryBackendConnection: () => ipcRenderer.invoke(BACKEND_CONNECTION_RETRY_CHANNEL) as Promise<boolean>,
+  onBackendStartupPrompt,
+  respondToBackendStartupPrompt: (action: BackendStartupAction) =>
+    ipcRenderer.invoke(BACKEND_STARTUP_ACTION_CHANNEL, action) as Promise<boolean>,
   saveExportDownload,
   revealExportDownload,
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),

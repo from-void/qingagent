@@ -6,6 +6,7 @@ import { splitGraphemes } from "../../data/presentationSpans";
 import { reviewTableCellKey, type ReviewTableCellTypedCounts } from "../../data/tableTypewriter";
 import { ReadonlyImageFigure } from "../ImageView";
 import { DiagramRenderer } from "../diagram/DiagramRenderer";
+import { desktopDataUrl } from "../../../../system/desktopDataTransport";
 
 const PmTextRendererContext = createContext<((text: string) => ReactNode) | null>(null);
 const PmFootnoteNumbersContext = createContext<ReadonlyMap<string, number> | null>(null);
@@ -163,7 +164,7 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
     case "fileAttachment":
       return (
         <p>
-          <a href={`/api/v1/files/${encodeURIComponent(node.attrs.fileId)}/${encodeURIComponent(node.attrs.filename)}`}>
+          <a href={desktopDataUrl(`/api/v1/files/${encodeURIComponent(node.attrs.fileId)}/${encodeURIComponent(node.attrs.filename)}`)}>
             {node.attrs.filename}
           </a>
         </p>

@@ -1,57 +1,130 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import * as ts from "typescript";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-test("desktop main only touches @qingagent/core barrel after server startup", () => {
+function importClauseHasRuntimeValue(clause: ts.ImportClause | undefined): boolean {
+  if (!clause) return true;
+  if (clause.isTypeOnly) return false;
+  if (clause.name) return true;
+  if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) return true;
+  return clause.namedBindings?.elements.some((element) => !element.isTypeOnly) ?? false;
+}
+
+function resolveRelativeModule(importer: string, specifier: string): string {
+  const base = path.resolve(path.dirname(importer), specifier);
+  const extension = path.extname(base);
+  const candidates = [
+    base,
+    ...(extension === ".js" ? [`${base.slice(0, -3)}.ts`, `${base.slice(0, -3)}.tsx`] : []),
+    ...(extension === ".mjs" ? [`${base.slice(0, -4)}.mts`] : []),
+    ...(extension === ".cjs" ? [`${base.slice(0, -4)}.cts`] : []),
+    ...(!extension ? [
+      `${base}.ts`, `${base}.tsx`, `${base}.js`,
+      path.join(base, "index.ts"), path.join(base, "index.tsx"), path.join(base, "index.js"),
+    ] : []),
+  ];
+  const resolved = candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+  assert.ok(resolved, `无法解析 ${path.relative(__dirname, importer)} -> ${specifier}`);
+  return resolved;
+}
+
+function inspectRuntimeImportGraph(entry: string): {
+  visited: Set<string>;
+  forbidden: Array<{ importer: string; specifier: string }>;
+} {
+  const visited = new Set<string>();
+  const forbidden: Array<{ importer: string; specifier: string }> = [];
+  const visit = (filePath: string): void => {
+    if (visited.has(filePath)) return;
+    visited.add(filePath);
+    const source = ts.createSourceFile(
+      filePath,
+      readFileSync(filePath, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    for (const statement of source.statements) {
+      let specifier: string | null = null;
+      let hasRuntimeValue = false;
+      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+        specifier = statement.moduleSpecifier.text;
+        hasRuntimeValue = importClauseHasRuntimeValue(statement.importClause);
+      } else if (
+        ts.isExportDeclaration(statement)
+        && statement.moduleSpecifier
+        && ts.isStringLiteral(statement.moduleSpecifier)
+      ) {
+        specifier = statement.moduleSpecifier.text;
+        hasRuntimeValue = !statement.isTypeOnly
+          && (!statement.exportClause
+            || ts.isNamespaceExport(statement.exportClause)
+            || statement.exportClause.elements.some((element) => !element.isTypeOnly));
+      }
+      if (!specifier || !hasRuntimeValue) continue;
+      if (specifier.startsWith(".")) {
+        visit(resolveRelativeModule(filePath, specifier));
+      } else if (/^@qingagent\/(?:server|core|db)(?:\/|$)/.test(specifier)) {
+        forbidden.push({ importer: filePath, specifier });
+      }
+    }
+  };
+  visit(entry);
+  return { visited, forbidden };
+}
+
+test("desktop 先完成发现/模式决策，只在 embedded 分支初始化 server/core/DB", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const lines = source.split(/\r?\n/);
-
-  const firstCoreBarrelLine = findLine(lines, 'import("@qingagent/core")');
-  const startServerLine = findLine(lines, "const serverReady = embeddedServerReady ??= startServer({");
-  const serverReadyLine = findLine(lines, "({ port, commandAuthToken, externalAuthToken } = await serverReady)");
-
-  assert.notEqual(firstCoreBarrelLine, -1, "需要保留一个迁移后的 @qingagent/core barrel 导入作为回归哨兵");
-  assert.notEqual(startServerLine, -1, "未找到 server 启动调用");
-  assert.notEqual(serverReadyLine, -1, "未找到 server 就绪等待");
-  assert.ok(
-    firstCoreBarrelLine > serverReadyLine,
-    `@qingagent/core barrel 首次导入必须晚于 server 就绪: barrel=${firstCoreBarrelLine + 1}, serverReady=${serverReadyLine + 1}`,
+  const resolver = source.slice(
+    source.indexOf("async function resolveStartupBackend"),
+    source.indexOf("let detachBackendSnapshotListener"),
   );
+  const discovery = resolver.indexOf("await runAttachDiscovery()");
+  const decision = resolver.indexOf("decideAttachMode(report, boundLibraryId)");
+  const embedded = resolver.indexOf('decision.kind === "embedded"');
+  const lease = resolver.indexOf("acquireStartingLease", embedded);
+  const runtime = resolver.indexOf("initializeEmbeddedRuntime()", lease);
+  const server = resolver.indexOf("runtime.startServer({", runtime);
+
+  assert.ok(0 <= discovery && discovery < decision && decision < embedded);
+  assert.ok(embedded < lease && lease < runtime && runtime < server);
+  const moduleGraph = inspectRuntimeImportGraph(path.join(__dirname, "index.ts"));
+  assert.ok(moduleGraph.visited.size >= 40, "门禁必须遍历 index.ts 的真实相对 runtime import 闭包");
+  assert.deepEqual(moduleGraph.forbidden, [], "attach 可达模块禁止顶层求值 server/core/DB");
+  assert.match(resolver, /connectSelectedAttach\(decision\.instance\)/);
 });
 
-test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航内容页", () => {
+test("desktop 暖纸启动壳常显，模式/协议就绪后才同窗导航内容页", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const browserWindowLine = source.indexOf("mainWindow = new BrowserWindow(");
   const shellLoadLine = source.indexOf("contentWindow.loadURL(STARTUP_SHELL_URL)", browserWindowLine);
   const shellShowLine = source.indexOf("contentWindow.show();", shellLoadLine);
-  const startServerLine = source.indexOf("const serverReady = embeddedServerReady ??= startServer({", shellShowLine);
-  const serverReadyLine = source.indexOf(
-    "({ port, commandAuthToken, externalAuthToken } = await serverReady)",
-    startServerLine,
-  );
-  const seedLine = source.indexOf("await maybeSeedInitialContent();", serverReadyLine);
-  const telemetryLine = source.indexOf("attachRendererTelemetry(contentWindow", seedLine);
+  const shellReadyLine = source.indexOf("await startupShellReady;", shellShowLine);
+  const backendLine = source.indexOf("await resolveStartupBackend(contentWebContents)", shellReadyLine);
+  const protocolLine = source.indexOf("await installRendererProtocols", backendLine);
+  const seedLine = source.indexOf("await maybeSeedInitialContent();", protocolLine);
+  const telemetryLine = source.indexOf("attachRendererTelemetry(contentWindow", protocolLine);
   const finishLoadLine = source.indexOf('contentWebContents.on("did-finish-load"', telemetryLine);
   const contentLoadLine = source.indexOf("desktopDeepLinks.setNavigator", finishLoadLine);
   const createWindowSource = source.slice(source.indexOf("async function createWindow()"), source.indexOf("// 首启示例内容"));
 
   assert.ok(browserWindowLine >= 0, "未创建主窗口");
   assert.ok(
-    browserWindowLine < shellLoadLine && shellLoadLine < shellShowLine && shellShowLine < startServerLine,
-    "主窗口必须先加载并显示启动壳，再并行发起 server 启动",
+    browserWindowLine < shellLoadLine && shellLoadLine < shellShowLine && shellShowLine < shellReadyLine,
+    "主窗口必须先加载并显示启动壳",
   );
   assert.ok(
-    startServerLine < serverReadyLine && serverReadyLine < seedLine && seedLine < contentLoadLine,
-    "内容页导航必须晚于 server 就绪与首启 seed",
+    shellReadyLine < backendLine && backendLine < protocolLine && protocolLine < contentLoadLine,
+    "内容页导航必须晚于最终 BackendConnection 与双 origin 协议就绪",
   );
   assert.ok(
-    seedLine < telemetryLine && telemetryLine < contentLoadLine,
-    "renderer telemetry 必须跳过启动壳并覆盖内容页",
+    protocolLine < seedLine && seedLine < telemetryLine && telemetryLine < contentLoadLine,
+    "embedded seed 与 renderer telemetry 必须跳过启动壳",
   );
   assert.ok(
     telemetryLine < finishLoadLine && finishLoadLine < contentLoadLine,
@@ -63,6 +136,40 @@ test("desktop 暖纸启动壳常显，再等待 server 和 seed 后同窗导航�
   assert.match(readStartupShellHtml(source), /background:\s*#ece4d3/);
   assert.match(readStartupShellHtml(source), /color:\s*#2f2a22/);
   assert.doesNotMatch(readStartupShellHtml(source), /https?:\/\//i, "启动壳不得引用外部资源");
+});
+
+test("启动决策自动重试有界退避，超限后进入阻断 UI", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const helper = source.slice(
+    source.indexOf("const STARTUP_AUTO_RETRY_DELAYS_MS"),
+    source.indexOf("async function connectSelectedAttach"),
+  );
+  const resolver = source.slice(
+    source.indexOf("async function resolveStartupBackend"),
+    source.indexOf("let detachBackendSnapshotListener"),
+  );
+  assert.match(helper, /STARTUP_AUTO_RETRY_DELAYS_MS = \[100, 250, 500\]/);
+  assert.match(helper, /await new Promise<void>\(\(resolve\) => setTimeout\(resolve, delayMs\)\)/);
+  assert.match(helper, /requestBackendStartupAction\([\s\S]*kind: "blocked"/);
+  assert.match(helper, /errorCodes: \[errorCode\]/);
+  assert.equal(
+    resolver.match(/handleAutomaticStartupFailure\(/g)?.length,
+    3,
+    "租约失败、竞态握手失败、attach 消失三条自动 continue 都必须受同一预算约束",
+  );
+});
+
+test("data origin 可执行装载黑名单覆盖 object 与 media", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const filterSource = source.slice(
+    source.indexOf("const dataResourceFilter"),
+    source.indexOf("const BOUND_LIBRARY_CONFIG_KEY"),
+  );
+  for (const resourceType of [
+    "mainFrame", "subFrame", "script", "stylesheet", "worker", "sharedWorker", "object", "media",
+  ]) {
+    assert.match(filterSource, new RegExp(`"${resourceType}"`), resourceType);
+  }
 });
 
 test("首启真实会话使用 v2 once 门，失败时不落标记以便下次重试", () => {
@@ -80,20 +187,30 @@ test("首启真实会话使用 v2 once 门，失败时不落标记以便下次�
   assert.match(seedSource, /catch \(err\)/, "seed 失败必须被捕获，不能阻塞开窗");
 });
 
-test("Crashpad 在任何 renderer 创建前启用且只写本地", () => {
+test("Crashpad 只在 embedded 争锁成功后启用，attach 分支不创建 dump", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const mkdirLine = source.indexOf("mkdirSync(crashDumpsDir, { recursive: true })");
   const setPathLine = source.indexOf('app.setPath("crashDumps", crashDumpsDir)');
   const startLine = source.indexOf("crashReporter.start({");
-  const browserWindowLine = source.indexOf("mainWindow = new BrowserWindow(");
-  const crashReporterSource = source.slice(startLine, browserWindowLine);
+  const crashReporterSource = source.slice(
+    source.indexOf("function startEmbeddedCrashReporter"),
+    source.indexOf('app.on("child-process-gone"'),
+  );
+  const resolver = source.slice(
+    source.indexOf("async function resolveStartupBackend"),
+    source.indexOf("let detachBackendSnapshotListener"),
+  );
+  const leaseAcquired = resolver.indexOf('claim.kind === "existing"');
+  const startCall = resolver.indexOf("startEmbeddedCrashReporter()", leaseAcquired);
+  const runtimeCall = resolver.indexOf("initializeEmbeddedRuntime()", startCall);
 
   assert.ok(
     mkdirLine >= 0 && mkdirLine < setPathLine && setPathLine < startLine,
     "Crashpad 目录必须先创建，再覆盖 crashDumps 并启动 reporter",
   );
-  assert.ok(startLine < browserWindowLine, "Crashpad 必须早于首个主窗 renderer 启动");
   assert.match(crashReporterSource, /uploadToServer:\s*false/);
+  assert.ok(leaseAcquired >= 0 && leaseAcquired < startCall && startCall < runtimeCall);
+  assert.equal(source.match(/startEmbeddedCrashReporter\(\)/g)?.length, 2);
   assert.match(source, /app\.on\("child-process-gone"/);
 });
 
@@ -111,13 +228,10 @@ test("硬件加速配置在 app ready 前读取并应用", () => {
   );
 });
 
-test("冷启动与二次实例深链均排队到 server/protocol 就绪后，并由恢复流程保留目标 URL", () => {
+test("冷启动与二次实例深链均排队到 BackendConnection/protocol 就绪后", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const serverReadyLine = source.indexOf("({ port, commandAuthToken, externalAuthToken } = await serverReady)");
-  const protocolReadyLine = source.indexOf(
-    "installPackagedRendererProtocol(port, commandAuthToken, externalAuthToken)",
-    serverReadyLine,
-  );
+  const backendReadyLine = source.indexOf("await resolveStartupBackend(contentWebContents)");
+  const protocolReadyLine = source.indexOf("await installRendererProtocols", backendReadyLine);
   const navigatorReadyLine = source.indexOf("desktopDeepLinks.setNavigator", protocolReadyLine);
   const initialLoadLine = source.indexOf("loadDesiredContent()", navigatorReadyLine);
   const recoveryStart = source.indexOf("const recoverContentLoad = async");
@@ -128,12 +242,13 @@ test("冷启动与二次实例深链均排队到 server/protocol 就绪后，并
   assert.match(source, /offerCommandLine\(commandLine\)/, "second-instance 必须转交完整启动参数");
   assert.match(source, /app\.on\("open-url", \(event, url\) =>/);
   assert.ok(
-    serverReadyLine >= 0
-      && protocolReadyLine > serverReadyLine
+    backendReadyLine >= 0
+      && protocolReadyLine > backendReadyLine
       && navigatorReadyLine > protocolReadyLine
       && initialLoadLine > navigatorReadyLine,
-    "深链导航器与首次内容加载必须晚于 server 及打包协议 handler 就绪",
+    "深链导航器与首次内容加载必须晚于最终后台及协议 handler 就绪",
   );
+  assert.match(source, /resolveQingjianDeepLink\(backend, intent\.engineSessionId\)/);
   assert.match(recoverySource, /contentWindow\.loadURL\(desiredContentUrl\)/);
   assert.doesNotMatch(recoverySource, /contentWindow\.loadURL\(contentUrl\)/);
 });
@@ -152,7 +267,7 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
   assert.ok(failLoadLine > recoveryLine && failLoadLine < contentLoadLine, "did-fail-load 必须在首次内容页导航前注册");
   assert.match(failLoadSource, /!isMainFrame \|\| errorCode === CHROMIUM_ERR_ABORTED/);
   assert.match(failLoadSource, /recoverContentLoad\(\{ errorCode, errorDescription, validatedURL \}\)/);
-  assert.match(recoverySource, /probeEmbeddedServerHealth\(port\)/);
+  assert.match(recoverySource, /await backend\.probe\(\)/);
   assert.match(recoverySource, /contentWindow\.loadURL\(STARTUP_SHELL_URL\)/);
   assert.match(recoverySource, /rendererDialogBroker\.request\([\s\S]*"content-load-failed"/);
   assert.match(recoverySource, /showNativeContentRecoveryFallback\(contentWindow\)/);
@@ -184,29 +299,28 @@ test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () =
   assert.match(guardSource, /allowedAppOrigins,/);
   assert.match(guardSource, /shell\.openExternal\(targetUrl\)/);
   assert.doesNotMatch(guardSource, /currentIsWeb|current\.protocol/);
-  assert.match(source, /addAllowedOrigin\(allowedAppOrigins, `http:\/\/localhost:\$\{port\}`\)/);
-  assert.match(source, /addAllowedOrigin\(allowedAppOrigins, `http:\/\/127\.0\.0\.1:\$\{port\}`\)/);
+  assert.match(source, /allowedAppOrigins\.add\(DESKTOP_APP_ORIGIN\)/);
+  assert.doesNotMatch(source, /addAllowedOrigin\(allowedAppOrigins, `http:\/\/(?:localhost|127\.0\.0\.1):\$\{port\}`\)/);
 });
 
-test("非迁移类 startServer 失败会弹框并退出，不会停在启动壳", () => {
+test("后台初始化失败会弹框并退出，不会停在启动壳", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const awaitLine = source.indexOf("({ port, commandAuthToken, externalAuthToken } = await serverReady)");
+  const awaitLine = source.indexOf("backend = activeBackend ?? await resolveStartupBackend");
   const catchLine = source.indexOf("} catch (error) {", awaitLine);
   const exitLine = source.indexOf("app.exit(1);", catchLine);
-  const successLine = source.indexOf("embeddedServerPort = port;", exitLine);
-  const catchSource = source.slice(catchLine, successLine);
+  const catchSource = source.slice(catchLine, source.indexOf("attachRendererTelemetry", catchLine));
 
-  assert.ok(awaitLine >= 0 && catchLine > awaitLine && exitLine > catchLine, "serverReady reject 必须被收口");
-  assert.match(catchSource, /!isReportedServerStartupError\(error\)/);
+  assert.ok(awaitLine >= 0 && catchLine > awaitLine && exitLine > catchLine, "BackendConnection reject 必须被收口");
+  assert.match(catchSource, /runtime\?\.isReportedServerStartupError\(error\)/);
   assert.match(catchSource, /dialog\.showErrorBox\(/);
-  assert.match(catchSource, /"本地服务启动失败"/);
+  assert.match(catchSource, /"后台连接失败"/);
   assert.match(catchSource, /app\.exit\(1\)/);
 
   const serverSource = readFileSync(path.join(__dirname, "server.ts"), "utf8");
   assert.match(serverSource, /throw markServerStartupErrorReported\(err\)/, "迁移失败需标记为已报错，避免重复弹框");
 });
 
-test("createWindow 复用现有窗口并以启动标志阻止并发 server", () => {
+test("createWindow 复用现有窗口并复用最终 BackendConnection", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const wrapperStart = source.indexOf("async function createWindow() {");
   const workerStart = source.indexOf("async function createWindowOnce()", wrapperStart);
@@ -216,37 +330,42 @@ test("createWindow 复用现有窗口并以启动标志阻止并发 server", () 
   assert.match(wrapperSource, /if \(windowStartupInProgress\) return/);
   assert.match(wrapperSource, /windowStartupInProgress = true/);
   assert.match(wrapperSource, /finally \{\s*windowStartupInProgress = false/s);
-  assert.match(source, /embeddedServerReady \?\?= startServer\(/, "macOS 重开窗口必须复用同一 server promise");
+  assert.match(source, /activeBackend \?\? await resolveStartupBackend/);
+  assert.match(source, /embeddedServerReady \?\?= runtime\.startServer\(/, "embedded 重开窗口必须复用同一 server promise");
 });
 
-test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key provider", () => {
+test("desktop 仅在 embedded 决策后、server/core 求值前装配凭据 provider", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
-  const readyLine = source.indexOf("app.whenReady().then(async () => {");
-  const providerLine = source.indexOf("await configureDesktopCredentialKeyProvider(");
-  const probeLine = source.indexOf('process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1"', providerLine);
-  const createWindowLine = source.indexOf("await createWindow();", providerLine);
-
-  assert.ok(readyLine >= 0 && providerLine > readyLine, "safeStorage provider 必须在 app ready 后装配");
-  assert.ok(
-    createWindowLine > providerLine,
-    "key provider 必须早于 createWindow（startServer 在 createWindow 内执行）",
+  const runtimeSource = source.slice(
+    source.indexOf("async function initializeEmbeddedRuntimeOnce"),
+    source.indexOf("let appOpenedCaptured"),
   );
-  assert.ok(probeLine > providerLine && createWindowLine > probeLine, "沙箱探针必须继续在 createWindow 前短路");
+  const envLine = runtimeSource.indexOf("configureDesktopRuntimeEnv");
+  const providerLine = runtimeSource.indexOf("await configureDesktopCredentialKeyProvider(");
+  const serverImportLine = runtimeSource.indexOf('await import("./server.js")');
+  assert.ok(envLine >= 0 && envLine < providerLine && providerLine < serverImportLine);
+  const readySource = source.slice(
+    source.indexOf("app.whenReady().then(async () => {"),
+    source.indexOf("const quitCoordinator"),
+  );
+  assert.doesNotMatch(readySource, /configureDesktopCredentialKeyProvider|pdfRenderer|@qingagent\/(?:server|core|db)/);
 });
 
-test("第二实例也先把浏览器写入路径固定到 userData 且不启动 server", () => {
+test("attach/第二实例不提前注入浏览器写入路径", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const storagePathLine = source.indexOf("process.env.QINGAGENT_BROWSER_STORAGE_STATE = path.join(");
   const profilePathLine = source.indexOf("process.env.QINGAGENT_BROWSER_PROFILE_DIR = path.join(");
-  const readyGateLine = source.indexOf("if (hasSingleInstanceLock) app.whenReady().then(async () => {");
+  const runtimeStart = source.indexOf("async function initializeEmbeddedRuntimeOnce");
+  const runtimeEnd = source.indexOf("let appOpenedCaptured", runtimeStart);
 
   assert.ok(storagePathLine >= 0 && profilePathLine >= 0, "必须注入两类浏览器凭据的新写入位置");
   assert.ok(
-    storagePathLine < readyGateLine && profilePathLine < readyGateLine,
-    "即使锁失败，浏览器凭据路径也必须先脱离 cwd",
+    runtimeStart < storagePathLine && storagePathLine < runtimeEnd
+      && runtimeStart < profilePathLine && profilePathLine < runtimeEnd,
+    "浏览器凭据路径只能在 embedded runtime 内注入",
   );
-  assert.match(source.slice(storagePathLine, readyGateLine), /userDataDir/);
-  assert.doesNotMatch(source.slice(storagePathLine, readyGateLine), /process\.cwd\(\)/);
+  assert.match(source.slice(storagePathLine, runtimeEnd), /userDataDir/);
+  assert.doesNotMatch(source.slice(runtimeStart, runtimeEnd), /process\.cwd\(\)/);
 });
 
 test("QINGAGENT_DEVTOOLS=1 在打包态也以独立窗口打开主窗口 DevTools", () => {

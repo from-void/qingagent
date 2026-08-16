@@ -2,6 +2,7 @@ import { Button } from "@qingagent/ui-kit";
 import type { StyleTemplateItem } from "@qingagent/contract-ts";
 import { useEffect, useRef, useState } from "react";
 import { useConfirm } from "../../../../system";
+import { attachCapabilityEnabled } from "../../../../system/backendConnectionStore";
 import { buildTemplateSummary, DERIVATIVE_STARTER_PRESETS, LaunchModalShell, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "../launchModal";
 import type { ServerStream } from "../../data/serverStream";
 import type { DtypeDescriptor } from "./dtypeRegistry";
@@ -89,6 +90,8 @@ export function DerivativeGenerateModal(props: {
   onGenerate: (params: DerivativeGenerateParams) => void | Promise<void>;
 }) {
   const confirm = useConfirm();
+  const derivativeMutationEnabled = attachCapabilityEnabled("derivativeMutation");
+  const templateMutationEnabled = attachCapabilityEnabled("templateMutation");
   const [templates, setTemplates] = useState<StyleTemplateItem[]>([]);
   const [writingStyleId, setWritingStyleId] = useState(props.initial.writingStyleId ?? props.initial.templateId);
   const [layoutStyleId, setLayoutStyleId] = useState<string | null>(props.initial.layoutStyleId ?? null);
@@ -156,6 +159,7 @@ export function DerivativeGenerateModal(props: {
   }, [excludedTargetLanguagesKey, initialTargetLanguagesKey, props.descriptor.dtype, props.initial.layoutStyleId, props.initial.privatePrompt, props.initial.templateId, props.initial.writingStyleId, props.open, props.sessionId, props.singleTargetLang, props.stream]);
 
   const openTemplate = async (item: StyleTemplateItem) => {
+    if (!templateMutationEnabled) return;
     if (item.slot === "instruction") return;
     const request = {
       generation: detailRequestGenerationRef.current + 1,
@@ -194,6 +198,7 @@ export function DerivativeGenerateModal(props: {
   };
 
   const saveEditor = async (asNew: boolean) => {
+    if (!templateMutationEnabled) return;
     if (!editor || !editor.name.trim() || !editor.prompt.trim()) { setError("模板名和提示词不能为空"); return; }
     if (editor.dtype !== props.descriptor.dtype) return;
     const request = {
@@ -242,7 +247,7 @@ export function DerivativeGenerateModal(props: {
   };
 
   const deleteEditor = async () => {
-    if (!editor?.id || editor.builtin) return;
+    if (!editor?.id || editor.builtin || !templateMutationEnabled) return;
     const accepted = await confirm({
       title: `删除风格模板「${editor.name}」？`,
       message: "删除后无法恢复。",
@@ -265,6 +270,7 @@ export function DerivativeGenerateModal(props: {
   };
 
   const submitGenerate = (params: DerivativeGenerateParams): Promise<void> => {
+    if (!derivativeMutationEnabled) return Promise.resolve();
     const currentFlight = generateFlightRef.current;
     if (currentFlight) return currentFlight;
     const flight = Promise.resolve()
@@ -317,6 +323,7 @@ export function DerivativeGenerateModal(props: {
           placeholders={DERIVATIVE_EDITOR_PLACEHOLDERS[editor.slot]}
           starters={props.descriptor.dtype === "translate" ? [] : DERIVATIVE_STARTER_PRESETS[props.descriptor.dtype][editor.slot] ?? []}
           saving={saving}
+          mutationDisabled={!templateMutationEnabled}
           deleteDisabled={editor.builtin || templates.filter((item) => item.slot === editor.slot).length <= 1}
           deleteDisabledReason={editor.builtin ? "内置模板不可删除" : "每类至少保留一个模板"}
           onNameChange={(name) => setEditor((current) => current ? { ...current, name } : current)}
@@ -343,6 +350,7 @@ export function DerivativeGenerateModal(props: {
       ) : (
         <form className="ws-launch-form" onSubmit={(event) => {
           event.preventDefault();
+          if (!derivativeMutationEnabled) return;
           if (writingStyleId && (props.descriptor.dtype !== "translate" || targetLanguages.length > 0)) void submitGenerate({ templateId: writingStyleId, writingStyleId, layoutStyleId, privatePrompt, ...(props.descriptor.dtype === "translate" ? { targetLanguages } : {}) });
         }}>
           {props.descriptor.dtype === "translate" ? <section className="ws-translate-language-group" aria-label="目标语言">
@@ -369,6 +377,7 @@ export function DerivativeGenerateModal(props: {
                   summary: buildTemplateSummary(item.detail, item.prompt),
                 }))}
                 selectedId={selectedId(slot)}
+                mutationDisabled={!templateMutationEnabled}
                 onSelect={(id) => slot === "writing" ? setWritingStyleId(id) : setLayoutStyleId(id)}
                 onEdit={(item) => {
                   const template = slotTemplates.find((candidate) => candidate.id === item.id);
@@ -386,7 +395,7 @@ export function DerivativeGenerateModal(props: {
           />
           <div className="ws-launch-actions">
             <Button type="button" variant="ghost" disabled={submitting} onClick={props.onClose}>取消</Button>
-            <Button type="submit" variant="primary" disabled={submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)}>{submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
+            <Button type="submit" variant="primary" disabled={!derivativeMutationEnabled || submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)} title={derivativeMutationEnabled ? undefined : "连接外部后台时暂不支持生成衍生稿"}>{submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
           </div>
         </form>
       )}

@@ -6,10 +6,10 @@ import {
 } from "../Attach";
 
 describe("attach 手维护契约", () => {
-  it("协议版本与 16 项 capability 唯一枚举固定", () => {
+  it("协议版本与 17 项 capability 唯一枚举固定", () => {
     expect(ATTACH_PROTOCOL_VERSION).toBe(1);
     expect(ATTACH_CAPABILITY_NAMES).toEqual([
-      "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport",
+      "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport", "sessionDeletion",
       "credentialProvider", "modelKeys", "skillMutation", "connectors", "updates",
       "templateMutation", "derivativeMutation", "lexiconMutation", "deepLink",
       "docEditing", "review", "assets",

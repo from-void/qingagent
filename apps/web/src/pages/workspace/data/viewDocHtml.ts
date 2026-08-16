@@ -16,6 +16,7 @@ import {
 import { normalizeImageAlign } from "./imageAlign";
 import { viewDocSpanText } from "./protocol";
 import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "./protocol";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 
 export function viewDocToPm(doc: ViewDocumentSnapshot): PmDoc {
   // 装载侧安全网:把任何"伪装成代码块的 Mermaid/drawio"升级回 diagram 块,避免图表退化为死代码。
@@ -403,7 +404,7 @@ function sectionToHtml(section: ViewBlock): string {
         ` data-filename="${escAttr(section.filename)}"`,
         ` data-mime-type="${escAttr(section.mimeType)}"`,
         ` data-size="${escAttr(String(section.size))}">`,
-        `<a href="${escAttr(`/api/v1/files/${encodeURIComponent(section.fileId)}`)}" download="${escAttr(section.filename)}">${esc(section.filename)}</a>`,
+        `<a href="${escAttr(desktopDataUrl(`/api/v1/files/${encodeURIComponent(section.fileId)}`))}" download="${escAttr(section.filename)}">${esc(section.filename)}</a>`,
         "</div>",
       ].join("");
     // 保真块:把原始 pm 节点经 pmToClipboardHtml 序列化成 TipTap 可重解析的 HTML

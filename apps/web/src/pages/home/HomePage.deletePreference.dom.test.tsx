@@ -90,6 +90,7 @@ describe("HomePage 删除免提醒偏好", () => {
     act(() => root.unmount());
     host.remove();
     window.localStorage.clear();
+    delete window.electron;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -138,6 +139,42 @@ describe("HomePage 删除免提醒偏好", () => {
       window.localStorage.getItem("home-delete-confirm-skip-until"),
     );
     expect(expiresAt).toBeGreaterThan(Date.now());
+  });
+
+  it("attach capability 关闭时三层门禁的 renderer 删除入口置灰", async () => {
+    act(() => root.unmount());
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      getBackendConnection: () => ({
+        mode: "attach",
+        status: "attached",
+        generation: 0,
+        libraryId: "00000000-0000-4000-8000-000000000001",
+        instanceId: "00000000-0000-4000-8000-000000000002",
+        effectiveCapabilities: { sessionDeletion: false },
+        errorCode: null,
+        conflictKind: null,
+      }),
+      onBackendConnectionChanged: () => () => {},
+    };
+    root = createRoot(host);
+    await act(async () => root.render(
+      <ToastProvider>
+        <HomePage />
+      </ToastProvider>,
+    ));
+
+    const slot = host.querySelector<HTMLElement>(".qj-card-slot")!;
+    await act(async () => slot.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    })));
+    const deleteButton = buttonByText("删除", ".home-card-menu");
+    expect(deleteButton.disabled).toBe(true);
+    expect(deleteButton.title).toContain("暂不支持删除");
+    await act(async () => deleteButton.click());
+    expect(store.removeSession).not.toHaveBeenCalled();
   });
 });
 

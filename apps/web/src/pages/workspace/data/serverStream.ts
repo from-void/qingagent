@@ -20,6 +20,10 @@ import {
   RevisionedMutationCoordinator,
   askMoreMutationKey,
 } from "./revisionedMutation";
+import {
+  isAttachRenderer,
+  waitForMainBackendAttached,
+} from "../../../system/desktopDataTransport";
 
 /**
  * 从命令里尽力解析 sessionId（仅用于点击流埋点的关联，不影响请求逻辑）。
@@ -1345,16 +1349,21 @@ export class ServerStream {
     const probe = new AbortController();
     this.eventProbeController?.abort();
     this.eventProbeController = probe;
+    const attachMode = isAttachRenderer();
+    let backendReady = true;
     try {
-      await fetch("/health", {
-        method: "HEAD",
-        signal: AbortSignal.any([
-          probe.signal,
-          AbortSignal.timeout(3_000),
-        ]),
-      });
+      const signal = AbortSignal.any([probe.signal, AbortSignal.timeout(30_000)]);
+      if (attachMode) {
+        // attach 的连接健康、重鉴权与实例身份只由主进程拥有；renderer 仅消费 IPC 状态。
+        backendReady = await waitForMainBackendAttached(signal);
+      } else {
+        await fetch("/health", {
+          method: "HEAD",
+          signal: AbortSignal.any([probe.signal, AbortSignal.timeout(3_000)]),
+        });
+      }
     } catch {
-      // 断网时探测也会失败；仍按应用级指数退避重连。
+      // embedded 断网探测或 attach IPC 等待失败后仍按应用级退避恢复 EventSource。
     } finally {
       if (this.eventProbeController === probe) this.eventProbeController = null;
     }
@@ -1363,7 +1372,8 @@ export class ServerStream {
     this.eventReconnectTimer = setTimeout(() => {
       this.eventReconnectTimer = null;
       if (this.activeSessionId === sessionId && !this.eventSource) {
-        this.openEventSource(sessionId);
+        if (attachMode && !backendReady) void this.scheduleEventReconnect(sessionId);
+        else this.openEventSource(sessionId);
       }
     }, exponentialMs);
   }

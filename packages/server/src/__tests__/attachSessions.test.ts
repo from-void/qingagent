@@ -23,7 +23,7 @@ const identity: AttachIdentity = {
 };
 
 const allDesktopCapabilities = Object.fromEntries([
-  "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport",
+  "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport", "sessionDeletion",
   "credentialProvider", "modelKeys", "skillMutation", "connectors", "updates",
   "templateMutation", "derivativeMutation", "lexiconMutation", "deepLink",
   "docEditing", "review", "assets",
@@ -37,7 +37,7 @@ describe("attach session token", () => {
     expect(created.token).toMatch(/^qa_attach_[0-9a-f]{64}$/);
     expect(created.session.effectiveCapabilities).toEqual({
       folderSelection: false, confirmGrant: false, diagnosticsExport: false,
-      documentExport: false, credentialProvider: false, modelKeys: false,
+      documentExport: false, sessionDeletion: false, credentialProvider: false, modelKeys: false,
       skillMutation: false, connectors: false, updates: false,
       templateMutation: false, derivativeMutation: false, lexiconMutation: false,
       deepLink: true, docEditing: true, review: true, assets: true,

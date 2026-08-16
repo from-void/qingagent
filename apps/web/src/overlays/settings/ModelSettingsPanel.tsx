@@ -11,6 +11,7 @@ import { ModelVendorCard } from "./ModelVendorCard";
 import { PENDING_SUB } from "./modelSettingsTypes";
 import { type ModelProvider } from "./visitorKeyStore";
 import { useModelSettingsPanel } from "./useModelSettingsPanel";
+import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
 
 ensureSettingsDialogA11y();
 
@@ -34,9 +35,20 @@ export function ModelSettingsPanel({
     toggleUsageMode, switchUsageView, toggleUsageGroup, deepseekStatus,
     balanceVal, lowBalance, docs7, words7, avgPerDoc, docsPer10, estDocs,
   } = controller;
+  const modelKeysEnabled = attachCapabilityEnabled("modelKeys");
 
   return (
-    <div className="settings-model" data-wf="ModelSettingsPanel">
+    <fieldset
+      className="settings-model"
+      data-wf="ModelSettingsPanel"
+      disabled={!modelKeysEnabled}
+      aria-describedby={!modelKeysEnabled ? "attach-model-config-note" : undefined}
+    >
+      {!modelKeysEnabled ? (
+        <p id="attach-model-config-note" className="sm-keyhint">
+          当前使用外部后台的模型配置；桌面端不会读取或转交本机密钥。
+        </p>
+      ) : null}
       {view === "config" ? (
         <ModelConfigurationView controller={controller} />
       ) : (
@@ -113,6 +125,6 @@ export function ModelSettingsPanel({
           />
         </section>
       )}
-    </div>
+    </fieldset>
   );
 }

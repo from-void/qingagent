@@ -32,6 +32,9 @@ importers:
       '@mastra/observability':
         specifier: ^1.13.0
         version: 1.15.2(@mastra/core@1.49.0(express@5.2.1)(zod@4.4.3))(zod@4.4.3)
+      '@qingagent/contract-ts':
+        specifier: workspace:*
+        version: link:../../packages/contract-ts
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -5304,7 +5307,7 @@ packages:
     engines: {node: '>=12'}
 
   webp-wasm@1.0.6:
-    resolution: {}
+    resolution: {tarball: https://registry.npmmirror.com/webp-wasm/-/webp-wasm-1.0.6.tgz}
 
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}

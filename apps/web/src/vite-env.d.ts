@@ -59,13 +59,33 @@ type ElectronExportDownloadResult =
         | "window-closed";
     };
 
+interface ElectronBackendConnectionSnapshot {
+  mode: "embedded" | "attach";
+  status:
+    | "connecting" | "authenticating" | "attached" | "revalidating"
+    | "reauthenticating" | "dead" | "incompatible" | "conflict";
+  generation: number;
+  libraryId: string | null;
+  instanceId: string | null;
+  effectiveCapabilities: Record<string, boolean>;
+  errorCode: string | null;
+  conflictKind: "pending-conflict" | "conflict" | null;
+}
+
 interface Window {
   electron?: {
     platform: string;
     isDesktop: boolean;
     onQingjianOpenSession?: (callback: (intent: {
       engineSessionId: string;
+      result?: "found" | "not-found" | "unavailable";
     }) => void) => () => void;
+    dataOrigin?: string;
+    getBackendConnection?: () => ElectronBackendConnectionSnapshot | null;
+    onBackendConnectionChanged?: (
+      callback: (snapshot: ElectronBackendConnectionSnapshot) => void,
+    ) => () => void;
+    retryBackendConnection?: () => Promise<boolean>;
     saveExportDownload?: (input: {
       filename: string;
       format: ElectronExportFormat;

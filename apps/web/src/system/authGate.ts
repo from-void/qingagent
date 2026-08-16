@@ -59,6 +59,7 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 function shouldInterceptAuth(input: RequestInfo | URL): boolean {
+  if (window.electron?.getBackendConnection?.()?.mode === "attach") return false;
   const url = new URL(requestUrl(input), window.location.origin);
   return (
     url.origin === window.location.origin &&

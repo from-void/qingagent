@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AssetSource } from "../data/sources";
 import { FileIcon, fileKind } from "./AssetPanel";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 
 export interface AssetPreviewProps {
   source: AssetSource;
@@ -212,8 +213,8 @@ function PreviewContent({
 }
 
 function previewContentUrl(source: AssetSource): string | null {
-  if (source.preview?.kind === "url") return source.preview.url;
-  if (source.fileId) return `/api/v1/files/${source.fileId}`;
+  if (source.preview?.kind === "url") return desktopDataUrl(source.preview.url);
+  if (source.fileId) return desktopDataUrl(`/api/v1/files/${source.fileId}`);
   return null;
 }
 

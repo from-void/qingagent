@@ -16,6 +16,7 @@ export const SERVER_ATTACH_CAPABILITIES: Readonly<AttachCapabilities> = Object.f
   confirmGrant: false,
   diagnosticsExport: false,
   documentExport: false,
+  sessionDeletion: false,
   credentialProvider: false,
   modelKeys: false,
   skillMutation: false,

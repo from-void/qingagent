@@ -18,7 +18,7 @@ import { COMMANDS_MODEL_OVERRIDE_HEADERS } from "../lib/commandRequestHeaders";
 
 const TRUSTED_ORIGIN = "http://127.0.0.1:5173";
 const desktopCapabilities = Object.fromEntries([
-  "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport",
+  "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport", "sessionDeletion",
   "credentialProvider", "modelKeys", "skillMutation", "connectors", "updates",
   "templateMutation", "derivativeMutation", "lexiconMutation", "deepLink",
   "docEditing", "review", "assets",
@@ -97,7 +97,7 @@ describe("attach handshake", () => {
       serverCapabilities: {
         deepLink: true, docEditing: true, review: true, assets: true,
         folderSelection: false, confirmGrant: false, diagnosticsExport: false,
-        documentExport: false, credentialProvider: false, modelKeys: false,
+        documentExport: false, sessionDeletion: false, credentialProvider: false, modelKeys: false,
         skillMutation: false, connectors: false, updates: false,
         templateMutation: false, derivativeMutation: false, lexiconMutation: false,
       },

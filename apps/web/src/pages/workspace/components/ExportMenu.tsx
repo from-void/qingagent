@@ -4,6 +4,7 @@ import { useSkills } from "../../../overlays/settings/useSkills";
 import { useSessionStore } from "../../../stores/sessionStore";
 import type { ToastShow } from "../../../system/ToastProvider";
 import { useOverlayDismiss } from "../../../system/overlayDismissStack";
+import { attachCapabilityEnabled } from "../../../system/backendConnectionStore";
 
 // 导出二级菜单:确定性格式(PDF/Word/TXT)直接走后端导出下载;
 // 平台技能(飞书,启用了才显示)点了发 query 回对话,交给 agent 走流程。
@@ -87,6 +88,7 @@ export function ExportMenu({
   prepareDrawioForExport,
   flushPendingDocSave,
 }: ExportMenuProps) {
+  const documentExportEnabled = attachCapabilityEnabled("documentExport");
   const sessionId = useSessionStore((s) => s.currentSessionId);
   const sessionTitle = useSessionStore((s) => s.currentSessionTitle);
   const { skills } = useSkills();
@@ -226,7 +228,8 @@ export function ExportMenu({
           type="button"
           role="menuitem"
           className="ws-export-item"
-          disabled={busy !== null}
+          disabled={busy !== null || !documentExportEnabled}
+          title={documentExportEnabled ? undefined : "连接外部后台时暂不支持导出"}
           onClick={() => void download(f)}
           data-wf={`ExportFormat-${f.id}`}
         >

@@ -9,6 +9,7 @@ import {
   UPLOAD_SESSION_HEADER,
 } from "@qingagent/contract-ts";
 import { materialPreflightErrorMessage } from "./materialFilePreflight";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 
 export interface UploadedAsset {
   fileId: string;
@@ -87,7 +88,7 @@ export async function uploadAssetFile(file: File, options: UploadAssetOptions = 
 }
 
 export function uploadedAssetUrl(asset: Pick<UploadedAsset, "fileId" | "filename">): string {
-  return `/api/v1/files/${encodeURIComponent(asset.fileId)}/${encodeURIComponent(asset.filename)}`;
+  return desktopDataUrl(`/api/v1/files/${encodeURIComponent(asset.fileId)}/${encodeURIComponent(asset.filename)}`);
 }
 
 function uploadBinary(file: File, options: UploadAssetOptions): Promise<UploadedAsset> {

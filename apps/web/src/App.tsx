@@ -8,6 +8,7 @@ import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { onceAsync } from "./system/onceAsync";
 import { WORKSPACE_PAPER_CSS_VARIABLES } from "./system/workspacePaperGeometry";
+import { useBackendConnection } from "./system/backendConnectionStore";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 // 路由页面懒加载:首页只下载 home chunk,workspace 的 tiptap 编辑器等不再进首屏 bundle。
@@ -59,6 +60,7 @@ export default function App() {
     <ToastProvider>
       <ConfirmProvider>
         <AppShell />
+        <BackendConnectionBanner />
         <AppUpdateWatcher />
         <DesktopDialogHost />
         <AuthTokenGate />
@@ -66,6 +68,46 @@ export default function App() {
         <EditContextMenu />
       </ConfirmProvider>
     </ToastProvider>
+  );
+}
+
+function BackendConnectionBanner() {
+  const backend = useBackendConnection();
+  const [retrying, setRetrying] = useState(false);
+  if (!backend) return null;
+
+  const terminal = backend.status === "dead"
+    || backend.status === "incompatible"
+    || backend.status === "conflict";
+  const visible = backend.conflictKind !== null
+    || (backend.mode === "attach" && backend.status !== "attached");
+  if (!visible) return null;
+
+  const message = backend.conflictKind === "pending-conflict"
+    ? "检测到另一个青简后台正在启动，正在确认文库状态。"
+    : backend.conflictKind === "conflict" || backend.status === "conflict"
+      ? "检测到另一个文库。为避免写入错误文库，新增修改已暂停；请选择文库并重启青简。"
+      : backend.status === "incompatible"
+        ? "当前后台版本与桌面端不兼容，请升级后重试。"
+        : terminal
+          ? "后台连接已断开。文稿仍保留在原后台，重连前不会自动重放修改。"
+          : "后台连接正在恢复，读取会在主进程中有界等待，新增修改暂不发送。";
+
+  const retry = async () => {
+    if (!terminal || retrying) return;
+    setRetrying(true);
+    try { await window.electron?.retryBackendConnection?.(); } finally { setRetrying(false); }
+  };
+
+  return (
+    <aside className="backend-connection-banner" role="status" aria-live="polite">
+      <span>{message}</span>
+      {terminal && backend.status !== "conflict" ? (
+        <button type="button" disabled={retrying} onClick={() => void retry()}>
+          {retrying ? "重连中" : "重新连接"}
+        </button>
+      ) : null}
+    </aside>
   );
 }
 
@@ -89,29 +131,17 @@ function AppShell() {
   useEffect(() => {
     const subscribe = window.electron?.onQingjianOpenSession;
     if (!subscribe) return;
-    return subscribe(({ engineSessionId }) => {
+    return subscribe(({ engineSessionId, result }) => {
       const requestId = ++qingjianOpenRequestRef.current;
-      void fetch(
-        `/api/v1/external/sessions/${encodeURIComponent(engineSessionId)}/doc?format=pm`,
-        { method: "HEAD", cache: "no-store" },
-      ).then((response) => {
-        if (requestId !== qingjianOpenRequestRef.current) return;
-        if (response.ok) {
-          window.location.hash = `${routeToHash("workspace")}?session=${encodeURIComponent(engineSessionId)}`;
-          return;
-        }
-        toast.show({
-          message: response.status === 404 ? "未找到对应文稿" : "暂时无法打开文稿",
-          tone: "warn",
-          dedupeKey: "qingjian-deep-link-open-failed",
-        });
-      }).catch(() => {
-        if (requestId !== qingjianOpenRequestRef.current) return;
-        toast.show({
-          message: "暂时无法打开文稿",
-          tone: "warn",
-          dedupeKey: "qingjian-deep-link-open-failed",
-        });
+      if (requestId !== qingjianOpenRequestRef.current) return;
+      if (result === undefined || result === "found") {
+        window.location.hash = `${routeToHash("workspace")}?session=${encodeURIComponent(engineSessionId)}`;
+        return;
+      }
+      toast.show({
+        message: result === "not-found" ? "未找到对应文稿" : "暂时无法打开文稿",
+        tone: "warn",
+        dedupeKey: "qingjian-deep-link-open-failed",
       });
     });
   }, [toast]);

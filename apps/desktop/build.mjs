@@ -43,12 +43,13 @@ await build({
   ...sharedOptions,
   entryPoints: {
     index: "src/main/index.ts",
+    "attach-discovery-worker": "src/main/attachDiscoveryWorker.ts",
     "packaged-worker-smoke": "src/main/packagedWorkerSmoke.ts",
   },
   outdir: "dist/main",
 });
 
-console.log("Desktop main process bundled -> dist/main/index.js + packaged worker smoke");
+console.log("Desktop main process bundled -> dist/main/index.js + attach discovery worker + packaged worker smoke");
 
 // 遥测端点走构建期注入:源码默认空,官方包由 release 环境变量烤入 dist 产物。
 const telemetryBuildInfo = writeTelemetryBuildInfo({ outdir: "dist/main" });

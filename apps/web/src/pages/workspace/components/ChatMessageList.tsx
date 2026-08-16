@@ -19,6 +19,7 @@ import { StreamingChars, useStreamFxConfig } from "./StreamingText";
 import type { StreamFxConfig } from "../data/streamFxConfig";
 import { truncateLabel } from "../textUtils";
 import { countChars, longTextPreview, LongTextFullscreen } from "../../../system/longText";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 import { BrowserViewPart } from "./BrowserViewPart";
 import { DraftMiniCard } from "./DraftMiniCard";
 import { AuthCard } from "./AuthCard";
@@ -734,7 +735,7 @@ function safeHttpHref(rawHref: string): string | null {
 }
 
 function safeImageHref(rawHref: string): string | null {
-  if (rawHref.startsWith("/api/v1/files/")) return rawHref;
+  if (rawHref.startsWith("/api/v1/files/")) return desktopDataUrl(rawHref);
   return safeHttpHref(rawHref);
 }
 

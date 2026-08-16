@@ -200,6 +200,9 @@ export const ATTACH_ROUTE_POLICY = [
   route("GET", "/api/v1/settings/model/balance"),
   route("GET", "/api/v1/settings/search"),
   route("GET", "/api/v1/settings/search/primary"),
+  route("GET", "/api/v1/usage/summary"),
+  route("GET", "/api/v1/usage/docstats"),
+  route("POST", "/api/v1/clientlog", { bodyLimit: 256 * 1024 }),
 ] as const satisfies readonly AttachRoutePolicyEntry[];
 
 export interface AttachCommandOperationPolicyEntry {

@@ -1,5 +1,9 @@
 import { afterAll, describe, expect, it } from "vitest";
-import type { AttachCapabilities, AttachIdentity } from "@qingagent/contract-ts";
+import {
+  ATTACH_DATA_ROUTE_TEMPLATES,
+  type AttachCapabilities,
+  type AttachIdentity,
+} from "@qingagent/contract-ts";
 import { COMMAND_KINDS } from "@qingagent/contract-ts/schemas";
 import { app } from "../app";
 import {
@@ -12,7 +16,7 @@ import { createAttachSession, revokeAllAttachSessions } from "../lib/attachSessi
 import type { RequestPrincipal } from "../lib/principal";
 
 const capabilities = Object.fromEntries([
-  "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport",
+  "folderSelection", "confirmGrant", "diagnosticsExport", "documentExport", "sessionDeletion",
   "credentialProvider", "modelKeys", "skillMutation", "connectors", "updates",
   "templateMutation", "derivativeMutation", "lexiconMutation", "deepLink",
   "docEditing", "review", "assets",
@@ -174,6 +178,9 @@ const EXPECTED_ATTACH_ROUTE_KEYS = new Set([
   "GET /api/v1/settings/model/balance",
   "GET /api/v1/settings/search",
   "GET /api/v1/settings/search/primary",
+  "GET /api/v1/usage/summary",
+  "GET /api/v1/usage/docstats",
+  "POST /api/v1/clientlog",
 ]);
 
 function matchesExpectedTemplate(pathname: string, template: string): boolean {
@@ -207,6 +214,8 @@ describe("AttachRoutePolicy 防漂移契约", () => {
     const keys = ATTACH_ROUTE_POLICY.map((entry) => routeKey(entry.method, entry.honoPathTemplate));
     expect(new Set(keys).size).toBe(keys.length);
     expect(new Set(keys)).toEqual(EXPECTED_ATTACH_ROUTE_KEYS);
+    expect(new Set(ATTACH_DATA_ROUTE_TEMPLATES.map(([method, template]) =>
+      routeKey(method, template)))).toEqual(EXPECTED_ATTACH_ROUTE_KEYS);
     for (const entry of ATTACH_ROUTE_POLICY) {
       expect(entry.headerLimit).toBeGreaterThan(0);
       expect(entry.bodyLimit).toBeGreaterThanOrEqual(0);

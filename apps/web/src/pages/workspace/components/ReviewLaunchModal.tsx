@@ -3,6 +3,7 @@ import { appendReviewIgnoreLines, assembleReviewQuery, splitReviewSupplement } f
 import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconEntrySummary, LexiconResourceSummary, ReviewContext, ReviewTemplateItem, ReviewType as ContractReviewType } from "@qingagent/contract-ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirm } from "../../../system";
+import { attachCapabilityEnabled } from "../../../system/backendConnectionStore";
 import { CaretIcon } from "./icons";
 import { buildTemplateSummary, LaunchModalShell, REVIEW_STARTER_PRESETS, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "./launchModal";
 import { rankRoleReviewTemplates, roleAvatarKind, rolePosition } from "./roleReview";
@@ -142,6 +143,8 @@ type ReviewEditor = { source: ReviewTemplateItem | null; name: string; prompt: s
 
 export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const confirm = useConfirm();
+  const templateMutationEnabled = attachCapabilityEnabled("templateMutation");
+  const lexiconMutationEnabled = attachCapabilityEnabled("lexiconMutation");
   const meta = REVIEW_META[props.type];
   const [templates, setTemplates] = useState<ReviewTemplateItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -216,11 +219,13 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
   const sourceBlocked = props.type === "source" && props.sourceMaterialAvailable === false;
 
   const openTemplate = (template: ReviewTemplateItem) => {
+    if (!templateMutationEnabled) return;
     setEditor({ source: template, name: template.name, prompt: template.prompt });
     setPage("template");
     setError(null);
   };
   const openNewTemplate = () => {
+    if (!templateMutationEnabled) return;
     setEditor({ source: null, name: "", prompt: "" });
     setPage("template");
     setError(null);
@@ -258,7 +263,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
       });
   };
   const storeTemplate = (id?: string) => {
-    if (!editor) return;
+    if (!editor || !templateMutationEnabled) return;
     setSaving(true);
     setError(null);
     void props.saveTemplate({ ...(id ? { id } : {}), type: props.type, name: editor.name.trim(), prompt: editor.prompt.trim() }).then(async (saved) => {
@@ -290,7 +295,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     }).catch(() => setError(id ? "模板保存失败，请重试" : "模板另存失败，请重试")).finally(() => setSaving(false));
   };
   const removeTemplate = async () => {
-    if (!editor?.source) return;
+    if (!editor?.source || !templateMutationEnabled) return;
     const template = editor.source;
     const confirmed = await confirm({
       title: "删除这个审查模板?",
@@ -344,7 +349,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
     });
   };
   const saveLexiconSelection = () => {
-    if (!props.saveLexiconSelection) {
+    if (!props.saveLexiconSelection || !lexiconMutationEnabled) {
       setError("词库设置保存失败，请重试");
       return;
     }
@@ -403,6 +408,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
             }))}
             selectedId={selectedId}
             disabled={loading}
+            mutationDisabled={!templateMutationEnabled}
             onSelect={chooseTemplate}
             onEdit={(item) => {
               const template = templates.find((candidate) => candidate.id === item.id);
@@ -455,6 +461,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
           placeholders={REVIEW_EDITOR_PLACEHOLDERS}
           starters={REVIEW_STARTER_PRESETS[props.type]}
           saving={saving}
+          mutationDisabled={!templateMutationEnabled}
           deleteDisabled={templates.length <= 1}
           onNameChange={(name) => setEditor((current) => current ? { ...current, name } : current)}
           onPromptChange={(prompt) => setEditor((current) => current ? { ...current, prompt } : current)}
@@ -471,7 +478,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
             {lexicons.map((lexicon) => (
               <div className="ws-lexicon-option" key={lexicon.id}>
                 <label className="ws-lexicon-check" aria-label={`启用${lexicon.name}`}>
-                  <input className="wf-checkbox" type="checkbox" disabled={saving} checked={selectedLexicons.has(lexicon.id)} onChange={(event) => {
+                  <input className="wf-checkbox" type="checkbox" disabled={saving || !lexiconMutationEnabled} checked={selectedLexicons.has(lexicon.id)} onChange={(event) => {
                     const checked = event.currentTarget.checked;
                     setSelectedLexicons((current) => {
                       const next = new Set(current);
@@ -488,7 +495,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
               </div>
             ))}
           </div>
-          <div className="ws-launch-actions"><Button type="button" variant="primary" disabled={saving} onClick={saveLexiconSelection}>{saving ? "正在保存…" : "完成"}</Button></div>
+          <div className="ws-launch-actions"><Button type="button" variant="primary" disabled={saving || !lexiconMutationEnabled} title={lexiconMutationEnabled ? undefined : "连接外部后台时暂不支持修改词库"} onClick={saveLexiconSelection}>{saving ? "正在保存…" : "完成"}</Button></div>
         </>
       ) : null}
       {page === "entries" ? (

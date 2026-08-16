@@ -5,6 +5,7 @@ import path from "node:path";
 import { listenWithDesktopPortFallback, resolveDesktopPort } from "./desktopPort.js";
 import { telemetry } from "./telemetry/index.js";
 import { createSingleFlightStarter } from "./serverSingleton.js";
+import type { StartingLease } from "@qingagent/server/externalInstance";
 const reportedServerStartupErrors = new WeakSet<object>();
 
 export function isReportedServerStartupError(error: unknown): boolean {
@@ -20,6 +21,7 @@ function markServerStartupErrorReported(error: unknown): Error {
 export interface StartServerOptions {
   desktopLogDir: string;
   shutdownRecoveryMarkerPath?: string;
+  startingLease?: StartingLease;
 }
 
 export interface EmbeddedServerInfo {
@@ -27,9 +29,25 @@ export interface EmbeddedServerInfo {
   commandAuthToken: string;
   /** external 子树专用:恒为本实例 instance token(不随 QINGAGENT_AUTH_TOKEN 变),深链探测等同应用请求靠它过 external 鉴权。 */
   externalAuthToken: string;
+  schemaVersion: 2;
+  pid: number;
+  version: string;
+  attachProtocolVersion: 1;
+  instanceId: string;
+  libraryId: string;
+  startedAt: string;
 }
 
 async function startServerOnce(options: StartServerOptions): Promise<EmbeddedServerInfo> {
+  try {
+    return await startClaimedServerOnce(options);
+  } catch (error) {
+    await options.startingLease?.release().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function startClaimedServerOnce(options: StartServerOptions): Promise<EmbeddedServerInfo> {
   // ⚠️ 迁移必须先于 @qingagent/core barrel / @qingagent/server/app 求值。
   // barrel 会连带 eval core/mastra.ts 的 new Mastra,其 LibSQLStore 可能抢同库写锁。
   const { runMigrations } = await import("@qingagent/db/migrations");
@@ -127,11 +145,22 @@ async function startServerOnce(options: StartServerOptions): Promise<EmbeddedSer
   const { issueDesktopGlobalToken } = await import("@qingagent/server/authCredentials");
   const { getOrCreateLibraryId } = await import("@qingagent/server/libraryIdentity");
   const libraryId = await getOrCreateLibraryId();
-  const instance = await startExternalInstance({ port: result.port, libraryId });
+  const instance = await startExternalInstance({
+    port: result.port,
+    libraryId,
+    lease: options.startingLease,
+  });
   return {
     port: result.port,
     commandAuthToken: process.env.QINGAGENT_AUTH_TOKEN || issueDesktopGlobalToken(),
     externalAuthToken: instance.token,
+    schemaVersion: instance.schemaVersion,
+    pid: instance.pid,
+    version: instance.version,
+    attachProtocolVersion: instance.attachProtocolVersion,
+    instanceId: instance.instanceId,
+    libraryId: instance.libraryId,
+    startedAt: instance.startedAt,
   };
 }
 

@@ -71,20 +71,7 @@
 
 .coach-mark__body { min-width: 0; }
 .coach-mark__footer { display: flex; justify-content: flex-end; margin-top: 6px; }
-.coach-mark__footer button {
-  padding: 0;
-  border: 0;
-  border-bottom: 1px dotted var(--mark);
-  border-radius: 0;
-  background: transparent;
-  color: var(--mark);
-  font: 11.5px/1.5 var(--font-zh-serif);
-  cursor: pointer;
-}
-.coach-mark__footer button:hover,
-.coach-mark__footer button:focus-visible {
-  border-color: var(--ink-1);
-  color: var(--ink-1);
+.coach-mark__footer .wf-btn:focus-visible {
   outline: 2px solid var(--mark);
   outline-offset: 2px;
 }

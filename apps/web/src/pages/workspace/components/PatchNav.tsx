@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowDownIcon, ArrowUpIcon } from "./icons";
 
 export interface PatchNavProps {
   remainingCount: number;
@@ -116,7 +117,7 @@ export function PatchNav({
                 onClick={onJumpPrev}
                 disabled={activePatchIndex <= 0}
               >
-                <span>↑</span>上一处
+                <span><ArrowUpIcon size={12} /></span>上一处
               </button>
               <button
                 type="button"
@@ -125,7 +126,7 @@ export function PatchNav({
                 title="快捷键：J"
                 disabled={activePatchIndex >= totalCount - 1}
               >
-                <span>↓</span>下一处
+                <span><ArrowDownIcon size={12} /></span>下一处
               </button>
             </>
           )}

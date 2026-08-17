@@ -1142,9 +1142,7 @@
   outline: none;
   transition: border-color 0.2s, background 0.2s;
 }
-.qj-sheet-body .vd-chip::after {
-  content: "▾";
-  font-size: 9px;
+.qj-sheet-body .vd-chip svg {
   color: var(--qj-header-sub);
 }
 .qj-sheet-body .vd-chip:hover:not(:disabled),

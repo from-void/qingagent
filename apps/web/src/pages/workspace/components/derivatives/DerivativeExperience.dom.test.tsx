@@ -631,7 +631,8 @@ describe("公众号稿生成体验", () => {
     const tutorialCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((button) => button.textContent?.includes("干货教程文"))!;
     expect(tutorialCard.querySelector(".ws-launch-template-summary")?.textContent).toBe("教程提示");
     expect(host.querySelectorAll(".ws-launch-template-new")).toHaveLength(2);
-    expect(Array.from(host.querySelectorAll(".ws-launch-template-new")).every((node) => node.textContent === "＋ 新建")).toBe(true);
+    expect(Array.from(host.querySelectorAll(".ws-launch-template-new")).every((node) => node.textContent === "新建")).toBe(true);
+    expect(host.querySelectorAll(".ws-launch-template-new svg")).toHaveLength(2);
     expect(host.querySelector(".ws-launch-template-grid .ws-launch-template-new")).toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-template-new")!.click());
     expect(host.querySelector(".ws-launch-subtitle")).toBeNull();
@@ -644,7 +645,8 @@ describe("公众号稿生成体验", () => {
     expect(editorPrompt.placeholder).toBe("描述排版规则：小标题、段落长度、加粗和分隔的用法");
     // AI 起草已移到提示词输入框右上角(字段级动作),不再混在快速开始行里
     expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：重点高亮卡片式");
-    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft")?.textContent).toBe("✦ AI 起草");
+    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft")?.textContent).toBe("AI 起草");
+    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft svg")).not.toBeNull();
     expect(host.querySelector(".ws-launch-actions > .ws-launch-starters")).not.toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-starters button")!.click());
     expect(editorInputs[0]?.value).toBe("重点高亮卡片式");
@@ -656,7 +658,8 @@ describe("公众号稿生成体验", () => {
     const writingPrompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
     expect(writingPrompt.placeholder).toBe("描述这类稿子怎么写：开头怎么起、正文什么结构、语气什么样、结尾怎么收");
     expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：热点借势评论人物访谈问答体");
-    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft")?.textContent).toBe("✦ AI 起草");
+    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft")?.textContent).toBe("AI 起草");
+    expect(host.querySelector(".ws-launch-field-head .ws-launch-ai-draft svg")).not.toBeNull();
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-starters button")).find((button) => button.textContent === "热点借势评论")!.click());
     expect(host.querySelector<HTMLInputElement>(".ws-launch-editor input")?.value).toBe("热点借势评论");
     expect(writingPrompt.value).toContain("正文用\"现象—本质—主文档的观点/事实\"结构推进");

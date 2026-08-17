@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ReviewOutcome, ReviewOutcomeHunk } from "@qingagent/contract-ts";
+import { ArrowRightIcon } from "./icons";
 
 // 对话流里一轮 diff 审核结果的折叠卡片（以用户名义回流时渲染）。
 // 折叠态只显示卡头;展开态显示全部修改。每处始终横排并单侧截断。
@@ -33,7 +34,7 @@ function CompactHunkRow({ hunk }: { hunk: ReviewOutcomeHunk }) {
         {hunk.verdict === "accepted" ? "已采纳" : "已拒绝"}
       </span>
       <span className="wf-rvo-text wf-rvo-before" title={beforeText}>{beforeText}</span>
-      <span className="wf-rvo-arrow" aria-hidden="true">→</span>
+      <span className="wf-rvo-arrow" aria-hidden="true"><ArrowRightIcon size={12} /></span>
       <span className="wf-rvo-text wf-rvo-after" title={afterText}>{afterText}</span>
     </div>
   );

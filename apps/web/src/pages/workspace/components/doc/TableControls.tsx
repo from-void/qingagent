@@ -31,7 +31,7 @@ import {
 } from "../../data/toolbarUnlock";
 import { floatingAnchorFromElement, useToolbarLinkEditor } from "./ToolbarLinkEditor";
 import { applyTableAxisDrop, inspectTableAxisDrop, type TableDragAxis } from "../../data/tableAxisDrag";
-import { CaretIcon } from "../icons";
+import { CaretIcon, SparkleIcon } from "../icons";
 import {
   resolveTableChromeViewport,
   TABLE_COLUMN_HEADER_SIZE,
@@ -755,7 +755,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
             disabled={!hasAxisSelection}
             onClick={() => { void doAiModify(); }}
           >
-            <span className="dt-ai-ico">✨</span><span>修改选中文字</span>
+            <span className="dt-ai-ico"><SparkleIcon size={13} /></span><span>修改选中文字</span>
           </button>
         </div>
         );

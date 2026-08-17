@@ -161,6 +161,7 @@
 }
 .qj-sheet-close{
   position:absolute;top:6px;right:6px;z-index:3;
+  display:flex;align-items:center;justify-content:center;
   width:28px;height:28px;border-radius:0;cursor:pointer;
   /* 原来底/边框/字色都过淡=幽灵按钮,暗底上几乎看不见。提亮:字用较亮的 switch-text、
      底与边框加重,× 加大加粗;hover 仍变金。 */

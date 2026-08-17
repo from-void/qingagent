@@ -16,7 +16,7 @@
 .u-scope .u-source-main { flex: 1 1 auto; min-width: 0; }
 .u-scope .u-source-tag { display: inline-block; font-size: 10px; color: var(--u-ink-faint); border: var(--u-border); padding: 0 4px; margin-right: 6px; }
 .u-scope .u-source-title { color: var(--u-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.u-scope .u-source-host { color: var(--u-ink-faint); font-size: 11px; }
+.u-scope .u-source-host { display: flex; align-items: center; gap: 3px; color: var(--u-ink-faint); font-size: 11px; }
 
 /* 引用 chip */
 .u-scope .u-cite {

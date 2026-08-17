@@ -548,7 +548,7 @@ flowchart TD
     const editableEditor = await waitForSelector(".graph-diagram-editor", document.body);
     expect(editableEditor.querySelector("[aria-label='画布视图控件']")).not.toBeNull();
     expect(document.body.querySelector(".graph-diagram-viewer")).toBeNull();
-    await click(findButton("✕", editableEditor));
+    await click(editableEditor.querySelector<HTMLButtonElement>("[aria-label='关闭']")!);
 
     await act(async () => {
       root!.render(<DiagramRenderer source={source} readOnly />);
@@ -697,7 +697,8 @@ flowchart LR
     expect(editor.textContent).not.toContain("点击节点或连线编辑");
     expect(editor.querySelector(".diagram-editor-chrome__title")?.textContent).toBe("Mermaid 编辑");
     const closeButton = editor.querySelector<HTMLButtonElement>(".diagram-editor-chrome__close");
-    expect(closeButton?.textContent?.trim()).toBe("✕");
+    expect(closeButton?.textContent?.trim()).toBe("");
+    expect(closeButton?.querySelector("svg")).not.toBeNull();
     expect(closeButton?.getAttribute("aria-label")).toBe("关闭");
     const bottomToolbar = editor.querySelector<HTMLElement>("[aria-label='图表编辑操作']");
     expect(bottomToolbar).not.toBeNull();

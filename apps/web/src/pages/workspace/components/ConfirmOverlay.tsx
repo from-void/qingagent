@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ConfirmDecision, ConfirmSpec } from "@qingagent/contract-ts";
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
-import { CheckIcon } from "./icons";
+import { CheckIcon, CloseIcon } from "./icons";
 import { useToast } from "../../../system";
 import "./confirm-overlay.css";
 
@@ -231,7 +231,7 @@ export function ConfirmOverlay({
           disabled={busy}
           onClick={() => void decide(false)}
         >
-          ×
+          <CloseIcon size={14} />
         </button>
       </div>
 

@@ -1,5 +1,6 @@
 import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 import { RoleAvatar, type RoleAvatarKind } from "../roleReview";
+import { PlusIcon } from "../icons";
 
 export interface LaunchTemplateItem {
   id: string;
@@ -38,7 +39,7 @@ export function TemplateGroup(props: {
           disabled={props.disabled || props.mutationDisabled}
           title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : undefined}
           onClick={props.onCreate}
-        >＋ 新建</button>
+        ><PlusIcon size={12} />新建</button>
       </div>
       <div className={`ws-launch-template-grid${props.variant === "portrait" ? " is-portrait" : ""}`} role="radiogroup" aria-label={props.ariaLabel} aria-busy={props.disabled || undefined}>
         {props.items.map((item) => (

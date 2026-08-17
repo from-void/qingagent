@@ -16,6 +16,7 @@ import {
   scrollFindMatchIntoView,
   setFindDecorations,
 } from "../data/docFindPm";
+import { ArrowDownIcon, ArrowUpIcon, CloseIcon, SwapHorizontalIcon } from "./icons";
 
 interface DocFindBarProps {
   editor: Editor | null;
@@ -325,7 +326,7 @@ export function DocFindBar({
           title="上一个 (Shift+Enter)"
           onClick={() => moveCursor(-1)}
         >
-          ↑
+          <ArrowUpIcon size={14} />
         </button>
         <button
           type="button"
@@ -333,7 +334,7 @@ export function DocFindBar({
           title="下一个 (Enter)"
           onClick={() => moveCursor(1)}
         >
-          ↓
+          <ArrowDownIcon size={14} />
         </button>
         {mode === "full" && (
           <button
@@ -343,7 +344,7 @@ export function DocFindBar({
             aria-pressed={replaceOpen}
             onClick={() => setReplaceOpen((value) => !value)}
           >
-            ⇄
+            <SwapHorizontalIcon size={14} />
           </button>
         )}
         <button
@@ -352,7 +353,7 @@ export function DocFindBar({
           title="关闭 (Esc)"
           onClick={handleClose}
         >
-          ✕
+          <CloseIcon size={14} />
         </button>
       </div>
       <div className="ws-find-row ws-find-replace-row" hidden={mode !== "full" || !replaceOpen}>

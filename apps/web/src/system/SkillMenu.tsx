@@ -6,6 +6,7 @@ import {
   type CSSProperties,
 } from "react";
 import { normalizeSkillIconKey, SKILL_MENU_ICON_PATHS } from "./skillIcons";
+import { SparkleIcon, SPARKLE_ICON_SVG } from "./icons";
 import "./skill-menu.css";
 
 // 技能菜单的单条动作(展示用)。新建页 / 编辑页共用同一份结构,避免两边各写一套又漂移。
@@ -20,18 +21,13 @@ export interface SkillMenuAction {
   icon: string;
 }
 
-// 魔法双星图标(一大一小 4 角星):用于「技能」按钮 + 输入框技能占位 chip,替代旧的五角星 / @。
-const SPARKLE_PATHS =
-  '<path d="M9.5 6.5Q9.5 13.5 16.5 13.5Q9.5 13.5 9.5 20.5Q9.5 13.5 2.5 13.5Q9.5 13.5 9.5 6.5Z"/>' +
-  '<path d="M18 2.5Q18 6 21.5 6Q18 6 18 9.5Q18 6 14.5 6Q18 6 18 2.5Z"/>';
-
 /** DOM 版(给 contenteditable 里手搓的 chip 用)。显式给尺寸,否则无尺寸 inline SVG 会撑成 300×150。 */
-export const SPARKLE_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true" style="display:inline-block;vertical-align:-1px">${SPARKLE_PATHS}</svg>`;
+export const SPARKLE_SVG = SPARKLE_ICON_SVG;
 
 // 文件占位 chip 的线性文件图标(替代 📎 emoji)。DOM 版给 contenteditable 里手搓的 chip 用。
 const FILE_CHIP_PATHS =
   '<path d="M13.5 3.5H6.5A1.5 1.5 0 0 0 5 5v14a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V9z"/><path d="M13.5 3.5V9H19"/>';
-export const FILE_CHIP_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:inline-block;vertical-align:-1px">${FILE_CHIP_PATHS}</svg>`;
+export const FILE_CHIP_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true" style="display:inline-block;vertical-align:-1px">${FILE_CHIP_PATHS}</svg>`;
 
 /** React 版文件图标(给气泡里的 chip badge 用)。 */
 export function FileChipIcon({ size = 12 }: { size?: number }) {
@@ -43,8 +39,8 @@ export function FileChipIcon({ size = 12 }: { size?: number }) {
       fill="none"
       stroke="currentColor"
       strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      strokeLinecap="square"
+      strokeLinejoin="miter"
       aria-hidden="true"
     >
       <path d="M13.5 3.5H6.5A1.5 1.5 0 0 0 5 5v14a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V9z" />
@@ -53,22 +49,7 @@ export function FileChipIcon({ size = 12 }: { size?: number }) {
   );
 }
 
-/** React 版(给按钮等 JSX 用)。 */
-export function SparkleIcon({ className, size = 14 }: { className?: string; size?: number }) {
-  return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M9.5 6.5Q9.5 13.5 16.5 13.5Q9.5 13.5 9.5 20.5Q9.5 13.5 2.5 13.5Q9.5 13.5 9.5 6.5Z" />
-      <path d="M18 2.5Q18 6 21.5 6Q18 6 18 9.5Q18 6 14.5 6Q18 6 18 2.5Z" />
-    </svg>
-  );
-}
+export { SparkleIcon };
 
 export function SkillMenuIcon({ icon }: { icon: string }) {
   const iconKey = normalizeSkillIconKey(icon);

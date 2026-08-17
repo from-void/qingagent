@@ -1479,7 +1479,8 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const doneButton = document.body.querySelector<HTMLButtonElement>(
         ".graph-diagram-editor .diagram-editor-chrome__close",
       );
-      expect(doneButton?.textContent?.trim()).toBe("✕");
+      expect(doneButton?.textContent?.trim()).toBe("");
+      expect(doneButton?.querySelector("svg")).not.toBeNull();
       await act(async () => {
         doneButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });

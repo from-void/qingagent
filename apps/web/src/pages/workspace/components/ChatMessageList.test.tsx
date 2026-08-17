@@ -1054,7 +1054,8 @@ describe("ChatMessageList", () => {
     const card = host?.querySelector<HTMLElement>('[data-wf="ActionCard"]');
     expect(card?.dataset.status).toBe("aborted");
     expect(card?.textContent).toContain("审查已中止");
-    expect(card?.querySelector(".askuser-card-check svg")).toBeNull();
+    expect(card?.querySelector(".askuser-card-check svg rect")).not.toBeNull();
+    expect(card?.querySelector('.askuser-card-check path[d="M4.5 12.8l4.6 4.7L19.5 6.6"]')).toBeNull();
   });
 
   it("用户回流的问卷答案卡复用已提交答案结构且不套用户气泡", async () => {

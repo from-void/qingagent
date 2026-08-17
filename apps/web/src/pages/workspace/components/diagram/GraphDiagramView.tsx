@@ -49,6 +49,7 @@ import {
   useReactFlow,
   useStore,
 } from "@xyflow/react";
+import { CloseIcon, PlusIcon } from "../icons";
 import "@xyflow/react/dist/style.css";
 import {
   applyEdit,
@@ -3742,7 +3743,7 @@ export function GraphDiagramView({
               title="关闭"
               onClick={closeEditor}
             >
-              ✕
+              <CloseIcon size={17} />
             </button>
           </div>
           <div className="graph-diagram-editor__bottom-toolbar diagram-editor-chrome__toolbar" role="toolbar" aria-label="图表编辑操作">
@@ -4506,7 +4507,7 @@ function SwatchPalette({
           ))}
           {rowIndex === rows.length - 1 ? (
             <label className="dt-swatch graph-diagram-swatch-custom" title="自定义颜色">
-              <span className="dt-swatch-chip" aria-hidden="true">+</span>
+              <span className="dt-swatch-chip" aria-hidden="true"><PlusIcon size={10} /></span>
               <input
                 type="color"
                 aria-label={label}

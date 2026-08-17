@@ -20,14 +20,29 @@ import { MediaBlockToolbar } from "../workspace/components/MediaBlockToolbar";
 // —— 本页真实引用的生产组件(mock props 驱动,零重写)——
 import { BigPlanPanel } from "../workspace/components/BigPlanPanel";
 import { AskUserOverlay } from "../workspace/components/AskUserOverlay";
-import { AlignIcon, ArrowRightIcon, CaretIcon, CheckIcon } from "../workspace/components/icons";
+import {
+  AlignIcon,
+  ArrowRightIcon,
+  CaretIcon,
+  CheckIcon,
+  CloseIcon,
+  DeleteColumnIcon,
+  FolderIcon,
+  FullscreenIcon,
+  PlusIcon,
+  MergeCellsIcon,
+  QuoteIcon,
+  SearchIcon,
+  SettingsIcon,
+  SparkleIcon,
+} from "../workspace/components/icons";
 import { HeadingLevelPicker } from "../workspace/components/HeadingLevelPicker";
 import { BlockHandleIcon } from "../workspace/components/doc/BlockHandleIcons";
 import { PatchNav } from "../workspace/components/PatchNav";
 import { WholeDocReviewNav } from "../workspace/components/WholeDocReviewNav";
 import { LinkedFilesPanel } from "../workspace/components/LinkedFilesPanel";
 import type { MaterialParseRow } from "../workspace/data/useMaterialParseTracker";
-import { SkillMenu } from "../../system/SkillMenu";
+import { FileChipIcon, SkillMenu } from "../../system/SkillMenu";
 import type { SkillMenuAction } from "../../system/SkillMenu";
 // 现役唯一模态:AuthTokenGate(真组件收录,ToastProvider 供其 useToast;
 // forceOpen 走 demo 隔离,不监听全局 401 事件;.wf-modal 是 absolute 定位,uk-portal 即可圈住)
@@ -824,7 +839,7 @@ export function UIKitPage() {
               </Cell>
               <Cell cap=".icon">
                 <button className="wf-btn icon" aria-label="图标">
-                  ⛶
+                  <FullscreenIcon size={15} />
                 </button>
               </Cell>
               <Cell cap=".square">
@@ -917,12 +932,12 @@ export function UIKitPage() {
               <div className="qj-topctrl">
                 <div className="qj-settings-wrap">
                   <button className="qj-settings-btn" type="button" aria-label="设置">
-                    ⚙
+                    <SettingsIcon size={21} />
                   </button>
                 </div>
                 <div className="qj-settings-wrap">
                   <button className="qj-settings-btn qj-on" type="button" aria-label="设置已打开">
-                    ⚙
+                    <SettingsIcon size={21} />
                   </button>
                 </div>
               </div>
@@ -939,7 +954,7 @@ export function UIKitPage() {
                 </div>
               </div>
               <button className="qj-new-fab qj-show" type="button" aria-label="新建文档">
-                +
+                <PlusIcon size={20} />
               </button>
               <div className="qj-dock qj-show">
                 <div className="qj-dock-preview qj-show" style={{ left: "42%" }}>
@@ -961,7 +976,7 @@ export function UIKitPage() {
                     </div>
                   </div>
                   <button className="qj-dock-search-btn qj-on" type="button" aria-label="搜索文章">
-                    ⌕
+                    <SearchIcon />
                   </button>
                   <div className="qj-dock-search-wrap qj-open">
                     <input className="qj-dock-search-input" defaultValue="春日" aria-label="搜索关键词" readOnly />
@@ -988,7 +1003,7 @@ export function UIKitPage() {
           <Group title="设置内容控件" code=".qj-sheet token scope · qj-sheet-tab / sm-* / md-* / sk-* / sc-*">
             <div className="qj-sheet uk-sheet-stage">
               <button className="qj-sheet-close" type="button" aria-label="关闭">
-                ×
+                <CloseIcon size={16} />
               </button>
               <div className="qj-sheet-nav uk-sheet-nav-demo">
                 <div className="qj-sheet-title">设置</div>
@@ -1576,8 +1591,8 @@ export function UIKitPage() {
                   </button>
                   <div className="dt-menu" role="menu">
                     <HeadingLevelPicker activeLevel={2} onPick={() => {}} />
-                    <button className="dt-mi disabled" role="menuitem" type="button" disabled><span className="dt-mi-k">¶</span>正文</button>
-                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">•</span>无序列表</button>
+                    <button className="dt-mi disabled" role="menuitem" type="button" disabled><span className="dt-mi-k"><BlockHandleIcon name="paragraph" /></span>正文</button>
+                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k"><BlockHandleIcon name="bulletList" /></span>无序列表</button>
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k"><CheckIcon size={12} /></span>待办清单</button>
                   </div>
                 </div>
@@ -1597,7 +1612,7 @@ export function UIKitPage() {
                   </span>
                 </button>
                 <span className="dt-divider" />
-                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>AI 修改</span></button>
+                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico"><SparkleIcon size={13} /></span><span>AI 修改</span></button>
               </div>
             </div>
             <p className="uk-cap uk-lead">
@@ -1611,7 +1626,7 @@ export function UIKitPage() {
             <div id="view-workspace" className="uk-portal uk-doctoolbar-demo" style={{ height: 88 }}>
               <div className="doc-toolbar on is-block" role="toolbar" aria-label="块操作工具栏">
                 <button className="dt-btn dt-ai dt-block-ai" type="button">
-                  <span className="dt-ai-ico">✨</span>
+                  <span className="dt-ai-ico"><SparkleIcon size={13} /></span>
                   <span>让 AI 修改这个图表</span>
                 </button>
               </div>
@@ -1632,7 +1647,7 @@ export function UIKitPage() {
               <div className="block-handle-wrap">
                 <button className="block-handle-btn is-chip" type="button" aria-label="块操作菜单">
                   <span className="bh-chip-inner">
-                    <span className="bh-type">¶</span>
+                    <span className="bh-type"><BlockHandleIcon name="paragraph" /></span>
                     <svg className="bh-grip" width="7" height="13" viewBox="0 0 7 13" aria-hidden="true">
                       <circle cx="1.6" cy="2.5" r="1.05" fill="currentColor" />
                       <circle cx="5.4" cy="2.5" r="1.05" fill="currentColor" />
@@ -1655,9 +1670,18 @@ export function UIKitPage() {
                   {["H1", "H2", "H3", "H4", "H5"].map((g) => (
                     <button key={g} className={`bh-grid-btn bh-heading-btn${g === "H1" ? " is-active" : ""}`} role="menuitem" type="button" aria-label={`转换 ${g}`}>{g}</button>
                   ))}
-                  {["正文", "H6", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g) => (
-                    <button key={g} className={`bh-grid-btn${g === "H6" ? " bh-heading-btn" : ""}`} role="menuitem" type="button" aria-label={`转换 ${g}`}>
-                      {g === "task" ? <CheckIcon size={12} /> : <span dangerouslySetInnerHTML={{ __html: g }} />}
+                  {[
+                    { label: "正文", icon: <BlockHandleIcon name="paragraph" /> },
+                    { label: "H6", icon: "H6" },
+                    { label: "无序列表", icon: <BlockHandleIcon name="bulletList" /> },
+                    { label: "有序列表", icon: "1." },
+                    { label: "引用", icon: <BlockHandleIcon name="quote" /> },
+                    { label: "代码", icon: <BlockHandleIcon name="code" /> },
+                    { label: "待办", icon: <BlockHandleIcon name="task" /> },
+                    { label: "高亮块", icon: <BlockHandleIcon name="callout" /> },
+                  ].map((item) => (
+                    <button key={item.label} className={`bh-grid-btn${item.label === "H6" ? " bh-heading-btn" : ""}`} role="menuitem" type="button" aria-label={`转换 ${item.label}`}>
+                      {item.icon}
                     </button>
                   ))}
                 </div>
@@ -1818,13 +1842,13 @@ export function UIKitPage() {
                   </button>
                 </div>
                 <div className="dt-divider" />
-                <button className="dt-btn" type="button" title="合并单元格" aria-label="合并单元格">⇥▦⇤</button>
-                <button className="dt-btn" type="button" title="删除列" aria-label="删除列" style={{ color: "var(--mark)" }}>⌫</button>
+                <button className="dt-btn" type="button" title="合并单元格" aria-label="合并单元格"><MergeCellsIcon size={15} /></button>
+                <button className="dt-btn" type="button" title="删除列" aria-label="删除列" style={{ color: "var(--mark)" }}><DeleteColumnIcon size={15} /></button>
                 <div className="dt-group dt-dropdown">
                   <button className="dt-btn" type="button" title="对齐方式：左对齐"><span className="dt-lbl dt-lbl-icon"><AlignIcon align="justify" size={15} /></span><span className="dt-caret"><CaretIcon size={11} /></span></button>
                 </div>
                 <div className="dt-divider" />
-                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>修改选中文字</span></button>
+                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico"><SparkleIcon size={13} /></span><span>修改选中文字</span></button>
               </div>
             </div>
             <p className="uk-cap uk-lead">
@@ -2221,12 +2245,12 @@ export function UIKitPage() {
               <div className="qa-toast sticky error" role="alert">
                 <span className="qa-toast-msg">导出失败,请检查网络后重试</span>
                 <button className="qa-toast-act" type="button">重试</button>
-                <button className="qa-toast-x" type="button" aria-label="关闭">×</button>
+                <button className="qa-toast-x" type="button" aria-label="关闭"><CloseIcon size={14} /></button>
               </div>
               <div className="qa-toast sticky" role="status">
                 <span className="qa-toast-msg">配图已生成并插入文档</span>
                 <button className="qa-toast-act" type="button">查看</button>
-                <button className="qa-toast-x" type="button" aria-label="关闭">×</button>
+                <button className="qa-toast-x" type="button" aria-label="关闭"><CloseIcon size={14} /></button>
               </div>
             </div>
           </Group>
@@ -2345,27 +2369,27 @@ export function UIKitPage() {
                   <div className="chat-edit" style={{ minHeight: 0, padding: 0 }}>
                     帮我把
                     <span className="chat-chip" data-kind="sel">
-                      <span className="c-ico">❝</span>
+                      <span className="c-ico"><QuoteIcon size={12} /></span>
                       <span className="c-label">选中的这段</span>
-                      <span className="c-x">×</span>
+                      <span className="c-x"><CloseIcon size={12} /></span>
                     </span>
                     结合
                     <span className="chat-chip" data-kind="attach">
-                      <span className="c-ico">📎</span>
+                      <span className="c-ico"><FileChipIcon size={12} /></span>
                       <span className="c-label">赛事手册.pdf</span>
-                      <span className="c-x">×</span>
+                      <span className="c-x"><CloseIcon size={12} /></span>
                     </span>
                     与
                     <span className="chat-chip" data-kind="mention">
-                      <span className="c-ico">@</span>
+                      <span className="c-ico"><SparkleIcon size={12} /></span>
                       <span className="c-label">第 3 章</span>
-                      <span className="c-x">×</span>
+                      <span className="c-x"><CloseIcon size={12} /></span>
                     </span>
                     补背景;另附
                     <span className="chat-chip chat-chip-longtext" data-kind="longtext">
-                      <span className="c-ico">¶</span>
+                      <span className="c-ico"><FileChipIcon size={12} /></span>
                       <span className="c-label">长文本 · 1.2k 字</span>
-                      <span className="c-x">×</span>
+                      <span className="c-x"><CloseIcon size={12} /></span>
                     </span>
                     。
                   </div>
@@ -2386,7 +2410,7 @@ export function UIKitPage() {
                       <div className="chat-edit" style={{ minHeight: 28 }}>写点什么…</div>
                       <div className="ws-input-tools">
                         <button className="wf-btn small ghost ws-pill" type="button">
-                          <span className="ws-tool-ico">＋</span>素材
+                          <span className="ws-tool-ico"><PlusIcon size={12} /></span>素材
                         </button>
                         <button className="wf-btn small ghost ws-pill is-active" type="button">技能</button>
                         <span className="ws-export-anchor">
@@ -2431,7 +2455,7 @@ export function UIKitPage() {
             <div id="view-workspace" className="uk-portal uk-folder-demo" style={{ height: 320 }}>
               <div className="ws-folder-modal-overlay" style={{ position: "absolute" }}>
                 <div className="ws-folder-intro-modal">
-                  <div className="ws-folder-modal-icon" aria-hidden="true">🗀</div>
+                  <div className="ws-folder-modal-icon" aria-hidden="true"><FolderIcon size={22} /></div>
                   <h3>连接一个本地文件夹</h3>
                   <div className="ws-folder-intro-point"><span>·</span><p>文件<b>始终留在你的电脑上</b>,不会被上传或保存副本。</p></div>
                   <div className="ws-folder-intro-point"><span>·</span><p>只有助手实际读到的文件才会被即时解析。</p></div>
@@ -2527,7 +2551,7 @@ export function UIKitPage() {
                 <div className="qj-sheet-panel">
                   <div className="qj-sheet-nav">
                     <div className="qj-sheet-title">设置</div>
-                    <button className="qj-sheet-close" aria-label="关闭">×</button>
+                    <button className="qj-sheet-close" aria-label="关闭"><CloseIcon size={16} /></button>
                   </div>
                   <div className="qj-sheet-tabs">
                     <button className="qj-sheet-tab qj-active">模型</button>
@@ -2615,7 +2639,7 @@ export function UIKitPage() {
                 <div className="wf-drawer open">
                   <div className="head">
                     <span className="title">设置(存档)</span>
-                    <span aria-hidden="true">×</span>
+                    <span aria-hidden="true"><CloseIcon size={14} /></span>
                   </div>
                   <div className="body">此为 CSS 快照存档:生产设置面板走 overlays/settings 自有实现。</div>
                 </div>

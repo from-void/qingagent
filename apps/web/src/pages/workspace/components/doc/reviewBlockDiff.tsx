@@ -25,6 +25,7 @@ import {
 } from "./PmStaticView";
 import { placePatchPopupByAnchorRect } from "./patchHover";
 import { viewBlockToPmNode } from "../../data/viewDocHtml";
+import { ArrowRightIcon } from "../icons";
 
 const ROW_POPUP_HIDE_DELAY_MS = 160;
 const ReviewLocalPopupSuppressedContext = createContext(false);
@@ -382,7 +383,7 @@ function renderChangeFragments(spans: readonly ViewDocSpan[] | undefined): React
       {pairs.map((p, i) => (
         <div key={i} className="patch-frag">
           {p.del.length ? <span className="patch-frag-old">{seq(p.del)}</span> : null}
-          {p.del.length && p.ins.length ? <span className="patch-frag-arrow">→</span> : null}
+          {p.del.length && p.ins.length ? <span className="patch-frag-arrow" style={{ display: "inline-flex", alignItems: "center" }}><ArrowRightIcon size={11} /></span> : null}
           {p.ins.length ? <span className="patch-frag-new">{seq(p.ins)}</span> : null}
         </div>
       ))}

@@ -24,6 +24,7 @@ import {
 import { IMPROVED_LABELS, UToolBar, URevampPart, UTurnFold } from "./revampUi";
 import type { StreamError } from "../workspace/data/protocol";
 import { useConfirm, useToast } from "../../system";
+import { CloseIcon, SparkleIcon, StatusDotIcon, WarningIcon } from "../../system/icons";
 import "../workspace/workspace.css";
 import "../workspace/workspace-ink-skin.css";
 import "./gallery.css";
@@ -198,7 +199,7 @@ interface Row {
   /** 占位符 / 文案样例(中文原文)。 */
   copy: ReactNode;
   /** 样式来源 file:line / className。 */
-  src: string;
+  src: ReactNode;
   /** 现状渲染(真实生产组件)。 */
   render: ReactNode;
   /** 改进后 demo(真实拼);undefined = 暂无改进(留白)。 */
@@ -837,10 +838,10 @@ function buildGroups(): Group[] {
         copy: (
           <>
             <span className={t.param.startsWith("仅标题") || t.param.startsWith("无") ? "gx-copy-empty" : undefined}>{t.param}</span>
-            {t.dead && <div style={{ color: "#e0866a", marginTop: 3, fontSize: 11 }}>⚠ {t.dead}</div>}
+            {t.dead && <div style={{ color: "var(--ink-3)", marginTop: 3, fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}><WarningIcon size={12} />{t.dead}</div>}
           </>
         ),
-        src: t.dead ? `⚠ ${t.dead}` : "wf-tool-row",
+        src: t.dead ? <><WarningIcon size={12} />{t.dead}</> : "wf-tool-row",
         render: <ToolStates name={t.name} mode="live" />,
         improved: <ToolStates name={t.name} mode="improved" />,
       })),
@@ -1047,7 +1048,7 @@ function StreamErrorToastCell({ error }: { error: StreamError }) {
           <button className="qa-toast-act" type="button">{actionLabel}</button>
         ) : null}
         {sticky ? (
-          <button className="qa-toast-x" type="button" aria-label="关闭">×</button>
+          <button className="qa-toast-x" type="button" aria-label="关闭"><CloseIcon size={14} /></button>
         ) : null}
       </div>
     </div>
@@ -1340,7 +1341,7 @@ export function GalleryPage() {
         <div className="gx-3col">
         <div className="gx-col-table">
           <div className="gx-copybar">
-            <span className="gx-savehint">● 实时存档(localStorage)·刷新不丢</span>
+            <span className="gx-savehint"><StatusDotIcon size={7} />实时存档(localStorage)·刷新不丢</span>
             <button type="button" className="gx-clearbtn" onClick={() => void clearAllNotes(confirm)}>清空</button>
             <button type="button" className="gx-copybtn" onClick={() => copyAllNotes(toast)}>⧉ 复制全部备注</button>
           </div>
@@ -1502,9 +1503,9 @@ function GroupBody({ group, indexFn }: { group: Group; indexFn: () => number }) 
             <td className="gx-render">{r.render}</td>
             <td className="gx-render">
               {group.deprecated
-                ? <span className="gx-dead-note">✗ 废弃 · {group.deprecated}</span>
+                ? <span className="gx-dead-note"><CloseIcon size={11} />废弃 · {group.deprecated}</span>
                 : group.customNote
-                  ? <span className="gx-custom-note">⌁ 用户定制 · {group.customNote}</span>
+                  ? <span className="gx-custom-note"><SparkleIcon size={11} />用户定制 · {group.customNote}</span>
                   : settled
                     ? <span className="gx-settled">不用改（已确认）</span>
                     : (r.improved ?? <span className="gx-copy-empty">—</span>)}
@@ -1523,7 +1524,7 @@ function GroupBody({ group, indexFn }: { group: Group; indexFn: () => number }) 
                   <button key={q} type="button" className="gx-qtag" onClick={pickQuick}>{q}</button>
                 ))}
               </div>
-              <div className="gx-srcline" title={r.src}>{r.src}</div>
+              <div className="gx-srcline" title={typeof r.src === "string" ? r.src : undefined}>{r.src}</div>
             </td>
           </tr>
         );

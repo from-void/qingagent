@@ -4,7 +4,7 @@ import type { ActionCardData, DraftTemplateIntent, DraftTemplateResult, LexiconE
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConfirm } from "../../../system";
 import { attachCapabilityEnabled } from "../../../system/backendConnectionStore";
-import { CaretIcon } from "./icons";
+import { ArrowRightIcon, CaretIcon } from "./icons";
 import { buildTemplateSummary, LaunchModalShell, REVIEW_STARTER_PRESETS, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "./launchModal";
 import { rankRoleReviewTemplates, roleAvatarKind, rolePosition } from "./roleReview";
 
@@ -503,7 +503,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
           {loading ? <p className="ws-lexicon-empty">正在读取词条…</p> : entries.map((entry, index) => (
             <div className="ws-lexicon-entry" key={`${entry.word}-${index}`} title={entry.note ?? undefined}>
               <span className="ws-lexicon-word">{entry.word}</span>
-              {entry.replacement ? <span className="ws-lexicon-replacement">→ {entry.replacement}</span> : <span className="ws-lexicon-mark-only">仅标记</span>}
+              {entry.replacement ? <span className="ws-lexicon-replacement"><ArrowRightIcon size={11} />{entry.replacement}</span> : <span className="ws-lexicon-mark-only">仅标记</span>}
             </div>
           ))}
         </div>

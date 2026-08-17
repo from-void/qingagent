@@ -3622,7 +3622,8 @@ describe("WorkspacePage review controls", () => {
     expect(row).not.toBeNull();
     expect(row!.querySelector(".wf-rvo-verdict")?.textContent).toBe("已拒绝");
     expect(row!.querySelector(".wf-rvo-before")?.textContent).toBe("人");
-    expect(row!.querySelector(".wf-rvo-arrow")?.textContent).toBe("→");
+    expect(row!.querySelector(".wf-rvo-arrow svg")).not.toBeNull();
+    expect(row!.querySelector(".wf-rvo-arrow")?.textContent).toBe("");
     expect(row!.querySelector(".wf-rvo-after")?.textContent).toBe("司机");
     expect(row!.querySelector(".wf-rvo-before")?.getAttribute("title")).toBe("人");
     expect(row!.querySelector(".wf-rvo-after")?.getAttribute("title")).toBe("司机");
@@ -3651,8 +3652,9 @@ describe("WorkspacePage review controls", () => {
 
     const rows = [...host!.querySelectorAll<HTMLElement>(".wf-rvo-row")];
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.textContent).toBe("已采纳（新增）→司机");
-    expect(rows[1]!.textContent).toBe("已拒绝先生→（删除）");
+    expect(rows[0]!.textContent).toBe("已采纳（新增）司机");
+    expect(rows[1]!.textContent).toBe("已拒绝先生（删除）");
+    expect(rows.every((row) => row.querySelector(".wf-rvo-arrow svg"))).toBe(true);
   });
 
   it("ReviewOutcomeCard 仅保留标题折叠与全量展开两态", async () => {
@@ -3687,12 +3689,13 @@ describe("WorkspacePage review controls", () => {
     const rows = [...host!.querySelectorAll<HTMLElement>(".wf-rvo-row")];
     expect(rows).toHaveLength(5);
     expect(rows.map((row) => row.textContent)).toEqual([
-      "已拒绝原文 1→新文 1",
-      "已拒绝原文 2→新文 2",
-      "已拒绝原文 3→新文 3",
-      "已拒绝原文 4→新文 4",
-      "已拒绝原文 5→新文 5",
+      "已拒绝原文 1新文 1",
+      "已拒绝原文 2新文 2",
+      "已拒绝原文 3新文 3",
+      "已拒绝原文 4新文 4",
+      "已拒绝原文 5新文 5",
     ]);
+    expect(rows.every((row) => row.querySelector(".wf-rvo-arrow svg"))).toBe(true);
     expect(host!.querySelector(".wf-rvo-more")).toBeNull();
     expect(host!.textContent).not.toMatch(/另\s*\d+\s*处/);
   });

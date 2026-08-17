@@ -17,7 +17,7 @@ import {
   type SkillRef,
   type TableSelection,
 } from "@qingagent/contract-ts";
-import { ArrowRightIcon } from "../../../system/icons";
+import { ArrowRightIcon, CLOSE_ICON_SVG, QUOTE_ICON_SVG } from "../../../system/icons";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources/hooks";
 import { invocableSkillActionsFromApi } from "../../../system/skillDisplay";
@@ -1355,14 +1355,6 @@ function resourceToReadyRow(resource: Resource): MaterialParseRow {
   };
 }
 
-const CHIP_KIND_ICONS: Record<ChatChipSpec["kind"], string> = {
-  sel: "❝",
-  attach: "📎",
-  mention: "@",
-  longtext: "❝",
-  annotation: "※",
-};
-
 function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   // 长文本小条:统一走共享 builder(单行小条 + hover 预览 + data-text),与气泡一致。
   if (spec.kind === "longtext") return buildLongTextChip(spec.text ?? "");
@@ -1404,13 +1396,13 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   // 低对比小字渲染(图片/附件 chip 在暖纸面上几乎看不清)。
   const ico = document.createElement("span");
   ico.className = "c-ico";
-  // 技能(mention)用魔法双星、文件(attach)用线性文件图标,其余沿用文字符号(去掉 📎 emoji)。
+  // 技能(mention)用魔法双星、文件(attach)用线性文件图标,其余统一用线性引用图标。
   if (spec.kind === "mention") {
     ico.innerHTML = SPARKLE_SVG;
   } else if (spec.kind === "attach") {
     ico.innerHTML = FILE_CHIP_SVG;
   } else {
-    ico.textContent = CHIP_KIND_ICONS[spec.kind] ?? "❝";
+    ico.innerHTML = QUOTE_ICON_SVG;
   }
   chip.appendChild(ico);
 
@@ -1464,8 +1456,11 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
 
   const x = document.createElement("span");
   x.className = "c-x";
+  x.style.display = "inline-flex";
+  x.style.alignItems = "center";
+  x.style.justifyContent = "center";
   x.title = "移除";
-  x.textContent = "×";
+  x.innerHTML = CLOSE_ICON_SVG;
   chip.appendChild(x);
   return chip;
 }

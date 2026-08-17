@@ -16,6 +16,7 @@ import {
 } from "./drawioEmbedProtocol";
 import { renderDrawio } from "./drawioRender";
 import { useConfirm } from "../../../system/ConfirmProvider";
+import { CloseIcon } from "./icons";
 import "./DrawioEditorOverlay.css";
 import "./diagramEditorChrome.css";
 
@@ -484,7 +485,7 @@ export function DrawioEditorOverlay({
           title="关闭"
           onClick={() => requestCloseRef.current()}
         >
-          ✕
+          <CloseIcon size={17} />
         </button>
       </header>
       <div className="drawio-editor-overlay__stage">

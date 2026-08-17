@@ -62,7 +62,8 @@ describe("LexiconPickerModal", () => {
     expect(loadLexiconEntries).toHaveBeenCalledWith("lex-1");
     expect(host.querySelector(".ws-lexicon-head h2")?.textContent).toBe("通用敏感词");
     expect(host.querySelector(".ws-lexicon-head-count")?.textContent).toBe("2 词");
-    expect(host.querySelector(".ws-lexicon-replacement")?.textContent).toBe("→ 新称");
+    expect(host.querySelector(".ws-lexicon-replacement")?.textContent).toBe("新称");
+    expect(host.querySelector(".ws-lexicon-replacement svg")).not.toBeNull();
     expect(host.querySelector(".ws-lexicon-mark-only")?.textContent).toBe("仅标记");
     expect(host.querySelector(".ws-lexicon-entry")?.getAttribute("title")).toBe("品牌已升级");
 

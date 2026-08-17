@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "../../system/useAnchoredPopover";
 import { useOverlayDismiss } from "../../system/overlayDismissStack";
+import { CaretIcon } from "../../system/icons";
 import { MODEL_TIERS, VENDOR_META, providerWfKey } from "./modelVendorMeta";
 import type { ModelProvider, ModelTier } from "./visitorKeyStore";
 
@@ -134,6 +135,7 @@ export function ModelTierChip({ provider, tier, disabled = false, onChange }: Mo
         onKeyDown={handleKeyDown}
       >
         {meta.tiers[tier].name}
+        <CaretIcon size={10} />
       </button>
       {menu ? createPortal(menu, document.body) : null}
     </span>

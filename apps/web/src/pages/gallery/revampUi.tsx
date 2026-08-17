@@ -11,6 +11,7 @@ import { ChatMessageList, renderSimpleMarkdown } from "../workspace/components/C
 import { DraftMiniCard } from "../workspace/components/DraftMiniCard";
 import { QrCard } from "../workspace/components/QrCard";
 import { BrowserViewPart } from "../workspace/components/BrowserViewPart";
+import { ExternalLinkIcon } from "../../system/icons";
 // 范围内的工具卡(检索/配图/识图/命令/通用工具条)直接复用生产统一组件,
 // 不再在画廊里重复实现一套——彻底消除 demo 与生产漂移(单一真源)。
 import {
@@ -74,7 +75,7 @@ export function USource({ label, srcUrl, thumb }: { label: string; srcUrl: strin
       {thumb && <img className="u-source-thumb" src={thumb} alt={label} />}
       <div className="u-source-main">
         <div className="u-source-title"><span className="u-source-tag">链接</span>{label}</div>
-        {srcUrl && <div className="u-source-host">{host(srcUrl)} ↗</div>}
+        {srcUrl && <div className="u-source-host">{host(srcUrl)} <ExternalLinkIcon size={11} /></div>}
       </div>
     </a>
   );

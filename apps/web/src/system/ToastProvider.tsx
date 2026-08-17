@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { CloseIcon } from "./icons";
 
 export type ToastTone = "info" | "success" | "warn" | "error";
 
@@ -214,7 +215,7 @@ function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: (id: strin
       ) : null}
       {item.sticky ? (
         <button className="qa-toast-x" type="button" aria-label="关闭" onClick={() => onDismiss(item.id)}>
-          ×
+          <CloseIcon size={14} />
         </button>
       ) : null}
     </div>

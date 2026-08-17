@@ -8,6 +8,7 @@ import {
 import type { NodeViewRendererProps } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { CalloutNode } from "@qingagent/pm-schema/tiptap";
+import { PlusIcon } from "./icons";
 
 /* ───────────── 主题(贴合奶白纸 + 暖墨美学)─────────────
  * tone 枚举值(PM_CALLOUT_TONES)即「主题槽」——序列化/契约/AI-IR 全链路靠它,稳定可扩。
@@ -155,7 +156,7 @@ function CalloutComponent(props: CalloutNodeViewProps) {
           aria-label="选择图标"
           title="选择图标"
         >
-          {emoji ?? <span className="pm-callout-emoji-empty">＋</span>}
+          {emoji ?? <span className="pm-callout-emoji-empty" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}><PlusIcon size={15} /></span>}
         </button>
         {emojiOpen && (
           <div className="pm-callout-emoji-pop" contentEditable={false}>

@@ -645,6 +645,8 @@ describe("ChatInput", () => {
 
     const removeButton = edit.querySelector<HTMLElement>(".chat-chip .c-x");
     if (!removeButton) throw new Error("chip remove button not found");
+    expect(removeButton.querySelector("svg")).not.toBeNull();
+    expect(removeButton.textContent).toBe("");
     clickElement(removeButton);
 
     expect(ref.current?.snapshot().files).toEqual([second]);

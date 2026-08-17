@@ -12,6 +12,7 @@ import { useToast } from "../../system";
 import { useBackendConnection } from "../../system/backendConnectionStore";
 import { FirstRunGate } from "../../system/onboarding/FirstRunGate";
 import { OnboardingLoadingPage, OnboardingPage } from "../onboarding/OnboardingPage";
+import { CloseIcon } from "../../system/icons";
 
 const BOOK_SOURCES = [
   {
@@ -432,7 +433,7 @@ function HomeExperience() {
                 <p>文档源与技能入口</p>
               </div>
               <button type="button" className="qj-shelf-close" aria-label="关闭书阁" onClick={() => setShelfOpen(false)}>
-                ×
+                <CloseIcon size={18} />
               </button>
             </header>
             <BookCurlShelf books={BOOK_SOURCES} />

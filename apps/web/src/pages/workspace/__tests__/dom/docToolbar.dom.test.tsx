@@ -811,6 +811,8 @@ describe("DocToolbar 块节点选中(原子块走 AI 引用,不出文本工具�
 
     const aiButton = document.querySelector<HTMLButtonElement>(".dt-block-ai");
     expect(aiButton?.textContent).toContain("让 AI 修改这个图表");
+    expect(aiButton?.querySelector(".dt-ai-ico svg")).not.toBeNull();
+    expect(aiButton?.textContent).not.toContain("✨");
     expect(aiButton?.hasAttribute("title")).toBe(false);
     expect(aiButton?.getAttribute("aria-label")).toBe("让 AI 修改这个图表");
   });

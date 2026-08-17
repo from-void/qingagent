@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { CoachMarkId } from "@qingagent/contract-ts";
+import { Button } from "@qingagent/ui-kit";
 import { useOnboardingSettings } from "./OnboardingSettingsContext";
 import "./coachMark.css";
 
@@ -155,7 +156,9 @@ export function CoachMark({
       </div>
       <div className="coach-mark__body">{children}</div>
       <div className="coach-mark__footer">
-        <button type="button" onClick={() => void dismiss()}>知道了</button>
+        <Button type="button" variant="ghost" size="small" onClick={() => void dismiss()}>
+          知道了
+        </Button>
       </div>
     </div>,
     document.body,

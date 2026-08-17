@@ -36,7 +36,15 @@ import {
   getThinkingSummaryLabel,
 } from "./chatMessageThinking";
 import { ThinkingMarquee } from "./ThinkingMarquee";
-import { CaretIcon, CheckIcon } from "./icons";
+import {
+  CaretIcon,
+  CheckIcon,
+  CloseIcon,
+  ExternalLinkIcon,
+  QuoteIcon,
+  StatusDotIcon,
+  StatusSquareIcon,
+} from "./icons";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources";
 
@@ -1140,7 +1148,7 @@ export function renderSimpleMarkdown(text: string) {
         els.push(
           <a key={`${key}-l${i}`} className="chat-link" href={p.href} target="_blank" rel="noreferrer noopener">
             {p.text}
-            <span className="ws-link-arrow"> ↗</span>
+            <span className="ws-link-arrow"><ExternalLinkIcon size={11} /></span>
           </a>,
         );
       } else if (p.kind === "image") {
@@ -1352,7 +1360,7 @@ function ChatLinkCard({ title, url }: { title: string; url: string }) {
         </div>
         <div className="ws-link-card-host">
           {toolHost(url)}
-          <span className="ws-link-arrow"> ↗</span>
+          <span className="ws-link-arrow"><ExternalLinkIcon size={11} /></span>
         </div>
       </div>
     </a>
@@ -1418,12 +1426,12 @@ function ActionCard({ data }: { data: ActionCardData }) {
           ? "审查未完成"
           : null;
   const statusIcon = status === "done"
-    ? (data.icon ?? <CheckIcon size={13} />)
+    ? <CheckIcon size={13} />
     : status === "running"
-      ? "…"
+      ? <span className="chat-loading-dots"><span /><span /><span /></span>
       : status === "aborted"
-        ? "—"
-        : "!";
+        ? <StatusSquareIcon size={8} />
+        : <CloseIcon size={10} />;
   return (
     <div
       className="askuser-card askuser-card--answers"
@@ -1459,8 +1467,6 @@ function ActionCard({ data }: { data: ActionCardData }) {
  * markers in the body and replaces them with styled chip badges,
  * preserving the interleaved order of text and chips.
  */
-const CHIP_KIND_ICONS: Record<string, string> = { sel: "❝", attach: "📎", mention: "@" };
-
 /** 长文本小条在气泡里的展示:与输入框一致(单行小条 + hover 预览),点击全屏看原文。 */
 function LongTextChipCard({ chip }: { chip: ChatChip }) {
   const [open, setOpen] = useState(false);
@@ -1507,7 +1513,7 @@ function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
         data-kind="annotation"
         style={inline ? { display: "inline-flex", verticalAlign: "baseline" } : undefined}
       >
-        <span className="c-ico">※</span>
+        <span className="c-ico"><QuoteIcon size={12} /></span>
         <span className="c-label">{chip.label}</span>
       </span>
     );
@@ -1530,7 +1536,7 @@ function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
         ) : chip.kind.kind === "attach" ? (
           <FileChipIcon size={12} />
         ) : (
-          CHIP_KIND_ICONS[chip.kind.kind] ?? "❝"
+          <QuoteIcon size={12} />
         )}
       </span>
       <span className="c-label">{truncateLabel(chip.label)}</span>
@@ -1789,7 +1795,7 @@ function StreamingInlineLine({
               rel="noreferrer noopener"
             >
               {inner}
-              <span className="ws-link-arrow"> ↗</span>
+              <span className="ws-link-arrow"><ExternalLinkIcon size={11} /></span>
             </a>
           );
         return <span key={`p${run.start}`}>{inner}</span>;
@@ -1907,10 +1913,10 @@ function ToolCallRow({
       >
         {isRunning && <span className="chat-loading-dots"><span /><span /><span /></span>}
         {patchDone && <span style={{ color: "var(--ink-2)", display: "inline-flex" }}><CheckIcon size={12} /></span>}
-        {isRejected && <span style={{ color: "var(--ink-3)" }}>{"✗"}</span>}
-        {isReviewing && <span style={{ color: "var(--mark)" }}>{"●"}</span>}
-        {(isFailed || isAborted) && <span style={{ color: "var(--ink-3)" }}>{"■"}</span>}
-        {!isRunning && !patchDone && !isRejected && !isReviewing && !isFailed && !isAborted && <span style={{ color: "var(--ink-3)" }}>{"·"}</span>}
+        {isRejected && <span style={{ color: "var(--ink-3)", display: "inline-flex" }}><CloseIcon size={10} /></span>}
+        {isReviewing && <span style={{ color: "var(--mark)", display: "inline-flex" }}><StatusDotIcon size={8} /></span>}
+        {(isFailed || isAborted) && <span style={{ color: "var(--ink-3)", display: "inline-flex" }}><StatusSquareIcon size={8} /></span>}
+        {!isRunning && !patchDone && !isRejected && !isReviewing && !isFailed && !isAborted && <span style={{ color: "var(--ink-3)", display: "inline-flex" }}><StatusDotIcon size={5} /></span>}
         {patchLabel}
       </div>
     );
@@ -1975,7 +1981,7 @@ function ToolCallRow({
           data-wf="AskUserRestoreInterrupted"
           role="status"
         >
-          <span style={{ color: "var(--ink-3)" }} aria-hidden="true">{"·"}</span>
+          <span style={{ color: "var(--ink-3)", display: "inline-flex" }} aria-hidden="true"><StatusDotIcon size={5} /></span>
           <span>{ASK_USER_RESTORE_INTERRUPTED_MESSAGE}</span>
         </div>
       );
@@ -1992,8 +1998,8 @@ function ToolCallRow({
     return (
       <div className="wf-msg tool" style={{ color: "var(--ink-3)", fontSize: 13, cursor: "default", display: "flex", alignItems: "center", gap: 6 }} data-wf="ToolCall">
         {isRunning && <span className="chat-loading-dots"><span /><span /><span /></span>}
-        {isPending && <span style={{ color: "var(--mark)", animation: "au-pulse 1.4s infinite" }}>●</span>}
-        {!isRunning && !isPending && <span style={{ color: "var(--ink-3)" }}>{"·"}</span>}
+        {isPending && <span style={{ color: "var(--mark)", animation: "au-pulse 1.4s infinite", display: "inline-flex" }}><StatusDotIcon size={8} /></span>}
+        {!isRunning && !isPending && <span style={{ color: "var(--ink-3)", display: "inline-flex" }}><StatusDotIcon size={5} /></span>}
         {fullpageLabel}
       </div>
     );

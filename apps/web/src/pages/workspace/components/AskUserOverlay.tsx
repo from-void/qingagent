@@ -10,7 +10,7 @@ import type {
 } from "../data/protocol";
 import { AskUserPreview } from "./AskUserPreview";
 import { SliderQuestionInput, defaultSliderValue } from "./SliderQuestionInput";
-import { CheckIcon } from "./icons";
+import { CheckIcon, CloseIcon } from "./icons";
 
 export interface AskUserOverlayProps {
   spec: AskUserSpec;
@@ -522,7 +522,7 @@ export function AskUserOverlay({
           <span className="au-dot" />
           {isLoading ? "正在准备问题" : "有问题待确认"}
         </span>
-        <button type="button" className="au-x" aria-label="关闭" onClick={onClose}>×</button>
+        <button type="button" className="au-x" aria-label="关闭" onClick={onClose}><CloseIcon size={14} /></button>
       </div>
 
       {!isLoading && spec.questions.length > 1 && (

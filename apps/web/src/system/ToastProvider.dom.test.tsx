@@ -36,6 +36,9 @@ describe("ToastProvider", () => {
     const toasts = Array.from(host!.querySelectorAll<HTMLElement>(".qa-toast"));
     expect(toasts).toHaveLength(3);
     expect(toasts.some((toast) => toast.textContent?.includes("常驻错误"))).toBe(true);
+    const closeButton = host!.querySelector<HTMLButtonElement>(".qa-toast-x");
+    expect(closeButton?.querySelector("svg")).not.toBeNull();
+    expect(closeButton?.textContent).toBe("");
     expect(host!.textContent).not.toContain("普通 A");
     expect(onDismiss).not.toHaveBeenCalled();
   });

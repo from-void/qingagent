@@ -1,7 +1,7 @@
 import { Button } from "@qingagent/ui-kit";
 import type { LexiconEntrySummary, LexiconResourceSummary } from "@qingagent/contract-ts";
 import { useEffect, useRef, useState } from "react";
-import { CaretIcon } from "./icons";
+import { ArrowRightIcon, CaretIcon, CloseIcon } from "./icons";
 
 interface LexiconPickerModalProps {
   open: boolean;
@@ -80,7 +80,7 @@ export function LexiconPickerModal({ open, loadLexicons, loadLexiconEntries, loa
           ) : <span className="ws-lexicon-head-spacer" />}
           <h2 id="ws-lexicon-title">{activeLexicon ? activeLexicon.name : "选择敏感词词库"}</h2>
           <span className="ws-lexicon-head-count">{activeLexicon ? `${entriesLoading ? activeLexicon.entryCount : entries.length} 词` : ""}</span>
-          <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}>×</button>
+          <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}><CloseIcon size={16} /></button>
         </header>
         <div className="ws-lexicon-picker">
           {!activeLexicon ? <>
@@ -145,7 +145,7 @@ export function LexiconPickerModal({ open, loadLexicons, loadLexiconEntries, loa
               {entries.map((entry, index) => (
                 <div className="ws-lexicon-entry" key={`${entry.word}-${index}`} title={entry.note || undefined}>
                   <span className="ws-lexicon-word">{entry.word}</span>
-                  {entry.replacement ? <span className="ws-lexicon-replacement">→ {entry.replacement}</span> : <span className="ws-lexicon-mark-only">仅标记</span>}
+                  {entry.replacement ? <span className="ws-lexicon-replacement"><ArrowRightIcon size={11} />{entry.replacement}</span> : <span className="ws-lexicon-mark-only">仅标记</span>}
                 </div>
               ))}
             </div>

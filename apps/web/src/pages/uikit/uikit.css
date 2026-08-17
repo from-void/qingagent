@@ -968,6 +968,9 @@
   border-color: rgba(184, 169, 140, 0.6);
 }
 .qa-toast .qa-toast-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
   border: 0;
   background: transparent;

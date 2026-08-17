@@ -13,6 +13,7 @@ import { useOverlayDismiss } from "../../../system/overlayDismissStack";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
+import { CloseIcon } from "../../../system/icons";
 
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
 // tab:模型(看板) · 技能 · 连接 · 记忆 · 安全 · 快捷键 · 反馈 · 关于。
@@ -180,7 +181,7 @@ export function HomeSettingsSheet<AnimId extends string, Font extends string>({
         </div>
         {/* 关闭叉锚定到 .qj-sheet 外层右上角(而非内缩的 .qj-sheet-content),避免压住内容卡片 */}
         <button type="button" className="qj-sheet-close" aria-label="关闭" onClick={handleClose}>
-          ✕
+          <CloseIcon size={16} />
         </button>
         <div className="qj-sheet-content">
           <div className="qj-sheet-nav">

@@ -1,7 +1,7 @@
 import { Button } from "@qingagent/ui-kit";
 import type { StyleTemplateItem } from "@qingagent/contract-ts";
 import { useEffect, useRef, useState } from "react";
-import { CaretIcon } from "./icons";
+import { CaretIcon, CloseIcon } from "./icons";
 
 interface DeaiReviewModalProps {
   open: boolean;
@@ -75,7 +75,7 @@ export function DeaiReviewModal({ open, loadTemplates, loadTemplate, saveTemplat
           {activeTemplate ? <button type="button" className="ws-lexicon-back" onClick={() => { requestRef.current += 1; setActiveTemplate(null); }}><CaretIcon size={13} direction="left" />返回</button> : <span className="ws-lexicon-head-spacer" />}
           <h2 id="ws-deai-title">{activeTemplate ? activeTemplate.name : "去AI味"}</h2>
           <span className="ws-lexicon-head-count">{activeTemplate ? "模板详情" : ""}</span>
-          <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}>×</button>
+          <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}><CloseIcon size={16} /></button>
         </header>
         <div className="ws-lexicon-picker">
           {!activeTemplate ? <>

@@ -1,6 +1,7 @@
 import { countGraphemes, truncateGraphemes } from "@qingagent/contract-ts";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { CLOSE_ICON_SVG, CloseIcon } from "./icons";
 import "./longText.css";
 
 // 粘贴文本超过此长度或行数即折叠成"长文本小条"(类 ChatGPT 长文本附件)。
@@ -80,7 +81,7 @@ export function buildLongTextChip(text: string): HTMLSpanElement {
   const x = document.createElement("span");
   x.className = "c-x";
   x.title = "移除";
-  x.textContent = "×";
+  x.innerHTML = CLOSE_ICON_SVG;
   chip.appendChild(x);
   return chip;
 }
@@ -157,7 +158,7 @@ export function LongTextFullscreen({ text, onClose }: { text: string; onClose: (
         <div className="lt-full-head">
           <span className="lt-full-title">粘贴的长文本 · {countChars(text)} 字</span>
           <button type="button" className="lt-full-close" onClick={onClose} aria-label="关闭">
-            ×
+            <CloseIcon size={16} />
           </button>
         </div>
         <div className="lt-full-body">{text}</div>

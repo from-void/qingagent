@@ -5,6 +5,7 @@ import { HumanCursorTuningPanel } from "./HumanCursorTuningPanel";
 import { MorphDebugPanel } from "./MorphDebugPanel";
 import { RevealTuningPanel } from "./RevealTuningPanel";
 import { WorkspaceTooltip } from "./WorkspaceTooltip";
+import { ArrowDownIcon, ArrowUpIcon } from "./icons";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 
 export function WorkspaceOverlays({
@@ -97,10 +98,10 @@ export function WorkspaceOverlays({
             修改 · <b>5</b> 处
           </span>
           <button type="button" className="pn-jump">
-            <span>↑</span>上一处
+            <span><ArrowUpIcon size={12} /></span>上一处
           </button>
           <button type="button" className="pn-jump">
-            <span>↓</span>下一处
+            <span><ArrowDownIcon size={12} /></span>下一处
           </button>
           <span style={{ flex: "1 1 auto" }} />
           <button type="button" className="pn-ghost">

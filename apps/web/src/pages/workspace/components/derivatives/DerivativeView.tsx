@@ -17,6 +17,7 @@ import {
 } from "./exportElementAsPng";
 import type { XhsCoverTemplate } from "./XhsCover";
 import type { DerivativeDocument, DerivativeItem } from "./types";
+import { CloseIcon } from "../icons";
 
 function textOf(node: unknown): string {
   if (!node || typeof node !== "object") return "";
@@ -296,7 +297,7 @@ export function DerivativeView(props: {
   const toolbar = <div className="ws-deriv-toolbar">
     <div className="ws-deriv-actions">
       {!generationUnconfirmed ? <div className="ws-deriv-regen-anchor">
-        {item.stale && !props.isStaleDismissed?.(item) ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => props.onDismissStale?.(item)}>×</button></div> : null}
+        {item.stale && !props.isStaleDismissed?.(item) ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => props.onDismissStale?.(item)}><CloseIcon size={12} /></button></div> : null}
         <button className="ws-docfn-btn" title={derivativeMutationEnabled ? "重新生成" : "连接外部后台时暂不支持重新生成"} aria-label="重新生成" disabled={!derivativeMutationEnabled} onClick={() => setModalOpen(true)}><RegenIcon/></button>
       </div> : null}
       {pmDoc ? <div className="ws-export-anchor" ref={exportRef}><button className="ws-docfn-btn" title="导出" aria-label="导出" onClick={() => { setMoreOpen(false); setExportOpen((value) => !value); }}><ExportIcon/></button>

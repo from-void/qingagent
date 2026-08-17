@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { morphTuning } from "../data/barMorph";
+import { CloseIcon, DiagonalArrowIcon } from "./icons";
 
 // 临时调试面板(Ctrl+Shift+H 唤起):实时调「输入框→操作条」平移形变的时长/缓动,
 // 选条类型(问卷确认条 / 审批条),分别重播进场 / 返回。调好把数值告诉作者固化即可。
@@ -32,7 +33,7 @@ export function MorphDebugPanel({ kind, shown, onKind, onEnter, onReturn, onClos
       <div className="mdp-head">
         <span>输入框 → 操作条 · 形变调试</span>
         <button className="mdp-x" onClick={onClose} title="关闭(Ctrl+Shift+H)">
-          ×
+          <CloseIcon size={15} />
         </button>
       </div>
 
@@ -87,10 +88,10 @@ export function MorphDebugPanel({ kind, shown, onKind, onEnter, onReturn, onClos
 
       <div className="mdp-actions">
         <button className="mdp-enter" onClick={onEnter}>
-          进场 ↘
+          进场 <DiagonalArrowIcon direction="down-right" />
         </button>
         <button className="mdp-return" onClick={onReturn} disabled={!shown}>
-          返回 ↙
+          返回 <DiagonalArrowIcon direction="down-left" />
         </button>
       </div>
     </div>

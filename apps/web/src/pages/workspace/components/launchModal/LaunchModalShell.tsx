@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from "react";
 import { useOverlayDismiss } from "../../../../system/overlayDismissStack";
-import { CaretIcon } from "../icons";
+import { CaretIcon, CloseIcon } from "../icons";
 
 export function LaunchModalShell(props: {
   title: ReactNode;
@@ -40,7 +40,7 @@ export function LaunchModalShell(props: {
           ) : null}
           <h2 id={titleId}>{props.title}</h2>
           {props.subtitle ? <span className="ws-launch-subtitle">{props.subtitle}</span> : null}
-          <button type="button" className="ws-launch-close" aria-label="关闭" disabled={props.closeDisabled} onClick={props.onClose}>×</button>
+          <button type="button" className="ws-launch-close" aria-label="关闭" disabled={props.closeDisabled} onClick={props.onClose}><CloseIcon size={16} /></button>
         </header>
         <div className="ws-launch-body">{props.children}</div>
       </section>

@@ -101,6 +101,9 @@ describe("QingjianScroll 去首页配置", () => {
       );
     });
 
+    const settingsButton = host.querySelector<HTMLButtonElement>(".qj-settings-btn");
+    expect(settingsButton?.querySelector("svg")).not.toBeNull();
+    expect(settingsButton?.textContent).not.toContain("⚙");
     expect(host.querySelector('[data-wf="HomeSettingsSheet"]')).toBeNull();
     expect(window.sessionStorage.getItem("qj-open-settings")).toBe("model");
 

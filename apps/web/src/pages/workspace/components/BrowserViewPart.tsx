@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ImagePart } from "@qingagent/contract-ts";
+import { ExternalLinkIcon } from "./icons";
 
 interface BrowserViewPartProps {
   data: ImagePart;
@@ -29,7 +30,7 @@ export function BrowserViewPart({ data }: BrowserViewPartProps) {
       {data.sourceUrl && (
         <div className="ws-link-card-host">
           {hostnameOf(data.sourceUrl)}
-          <span className="ws-link-arrow"> ↗</span>
+          <span className="ws-link-arrow"><ExternalLinkIcon size={11} /></span>
         </div>
       )}
     </div>

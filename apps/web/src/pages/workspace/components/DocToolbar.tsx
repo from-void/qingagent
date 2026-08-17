@@ -9,7 +9,8 @@ import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../data/uploadAsset";
-import { AlignIcon, CaretIcon, CheckIcon } from "./icons";
+import { AlignIcon, CaretIcon, CheckIcon, SparkleIcon } from "./icons";
+import { BlockHandleIcon } from "./doc/BlockHandleIcons";
 import { headingLevelLabel, HeadingLevelPicker } from "./HeadingLevelPicker";
 import type { AlignVariant } from "./icons";
 import { openDrawioEditor } from "./drawioEditorLauncher";
@@ -1092,7 +1093,7 @@ export function DocToolbar({
           disabled={!editorEditable}
           onClick={handleAiModify}
         >
-          <span className="dt-ai-ico">✨</span>
+          <span className="dt-ai-ico"><SparkleIcon size={13} /></span>
           <span>让 AI 修改这个{blockSel.label}</span>
         </button>
       ) : (
@@ -1116,10 +1117,10 @@ export function DocToolbar({
             titleOf={(level) => toolbarTitle(headingLevelLabel(level), `heading${level}`)}
             onPick={(level) => runCommand("formatBlock", `H${level}`)}
           />
-          <MenuItem k="¶" onPick={() => runCommand("formatBlock", "P")} disabled={!editorEditable}>
+          <MenuItem k={<BlockHandleIcon name="paragraph" />} onPick={() => runCommand("formatBlock", "P")} disabled={!editorEditable}>
             正文
           </MenuItem>
-          <MenuItem k="•" onPick={() => runCommand("bulletList")} disabled={!editorEditable || !toolbarUnlock.blocks}>
+          <MenuItem k={<BlockHandleIcon name="bulletList" />} onPick={() => runCommand("bulletList")} disabled={!editorEditable || !toolbarUnlock.blocks}>
             无序列表
           </MenuItem>
           <MenuItem k="1." onPick={() => runCommand("orderedList")} disabled={!editorEditable || !toolbarUnlock.blocks}>
@@ -1136,13 +1137,13 @@ export function DocToolbar({
               {item.label}
             </MenuItem>
           ))}
-          <MenuItem k=">" onPick={() => runCommand("blockquote")} disabled={!editorEditable || !toolbarUnlock.blocks}>
+          <MenuItem k={<BlockHandleIcon name="quote" />} onPick={() => runCommand("blockquote")} disabled={!editorEditable || !toolbarUnlock.blocks}>
             引用
           </MenuItem>
           <MenuItem k={<CheckIcon size={12} />} onPick={() => runCommand("taskList")} disabled={!editorEditable || !toolbarUnlock.blocks}>
             待办清单
           </MenuItem>
-          <MenuItem k="💡" onPick={() => runCommand("callout")} disabled={!editorEditable || !toolbarUnlock.blocks}>
+          <MenuItem k={<BlockHandleIcon name="callout" />} onPick={() => runCommand("callout")} disabled={!editorEditable || !toolbarUnlock.blocks}>
             高亮块
           </MenuItem>
         </Menu>
@@ -1291,7 +1292,7 @@ export function DocToolbar({
         disabled={!editorEditable}
         onClick={handleAiModify}
       >
-        <span className="dt-ai-ico">✨</span>
+        <span className="dt-ai-ico"><SparkleIcon size={13} /></span>
         <span>修改选中文字</span>
       </button>
       </>

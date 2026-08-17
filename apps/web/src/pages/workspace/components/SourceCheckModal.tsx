@@ -1,5 +1,6 @@
 import { Button } from "@qingagent/ui-kit";
 import { useEffect, useState } from "react";
+import { CloseIcon } from "./icons";
 
 interface SourceCheckModalProps {
   open: boolean;
@@ -51,7 +52,7 @@ export function SourceCheckModal({ open, loadInstruction, saveInstruction, onClo
           <span className="ws-lexicon-head-spacer" />
           <h2 id="ws-source-check-title">来源核查</h2>
           <span className="ws-lexicon-head-count" />
-          <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}>×</button>
+          <button type="button" className="ws-lexicon-close" aria-label="关闭" onClick={onClose}><CloseIcon size={16} /></button>
         </header>
         <div className="ws-lexicon-picker">
           <p className="ws-lexicon-picker-hint">仅对照当前会话素材，优先核查事实、数字、单位和统计口径；默认不联网。</p>

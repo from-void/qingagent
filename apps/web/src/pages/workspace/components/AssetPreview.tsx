@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AssetSource } from "../data/sources";
 import { FileIcon, fileKind } from "./AssetPanel";
 import { desktopDataUrl } from "../../../system/desktopDataTransport";
+import { CloseIcon } from "./icons";
 
 export interface AssetPreviewProps {
   source: AssetSource;
@@ -71,7 +72,7 @@ export function AssetPreview({
           aria-label="关闭预览"
           onClick={onClose}
         >
-          ×
+          <CloseIcon size={16} />
         </button>
       </div>
       <div className="fd-rp-body">

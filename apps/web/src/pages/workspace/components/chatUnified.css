@@ -111,7 +111,7 @@
 .u-scope .wf-rvo-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .u-scope .wf-rvo-before { color: var(--u-ink-faint); }
 .u-scope .wf-rvo-after { color: var(--u-ink-soft); }
-.u-scope .wf-rvo-arrow { flex: none; color: var(--u-ink-faint); user-select: none; }
+.u-scope .wf-rvo-arrow { display: inline-flex; align-items: center; flex: none; color: var(--u-ink-faint); user-select: none; }
 /* 卡内列表(检索抓取行) */
 .u-scope .u-list { display: flex; flex-direction: column; }
 .u-scope .u-list-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: var(--u-border); }

@@ -3,6 +3,7 @@ import { markdownToPm, type PmBlockNode } from "@qingagent/pm-schema";
 import { MermaidPreview } from "./MermaidPreview";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import { PmBlockView } from "./doc/PmStaticView";
+import { FullscreenIcon } from "./icons";
 
 export const ASK_USER_PREVIEW_MAX_CODE_POINTS = 800;
 
@@ -92,7 +93,7 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
       <button type="button" className="auq-preview-fullscreen" aria-label="全屏查看预览面板" onClick={(event) => {
         lightboxTriggerRef.current = event.currentTarget;
         setFullscreen(true);
-      }}><span aria-hidden="true">⛶</span><span>全屏</span></button>
+      }}><FullscreenIcon size={14} /><span>全屏</span></button>
       {renderContent()}
       <MediaZoomFullscreen open={fullscreen} onClose={() => setFullscreen(false)} ariaLabel="问卷预览全屏查看" contentClassName="media-zoom-content--ask-preview" restoreFocusRef={lightboxTriggerRef}>
         <div className="auq-preview-doc auq-preview-doc--fullscreen wf-doc" data-wf="AskUserPreviewLightbox">

@@ -1126,11 +1126,10 @@ transform 平移内层) */
   position: relative;
 }
 .qj-settings-btn {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   border-radius:0;
   cursor: pointer;
-  font-size: 17px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1634,6 +1633,9 @@ transform 平移内层) */
   letter-spacing: 0.08em;
 }
 .qj-shelf-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 34px;
   height: 34px;
   border-radius:0;

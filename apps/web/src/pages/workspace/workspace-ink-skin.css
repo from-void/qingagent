@@ -1950,6 +1950,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 }
 #view-workspace .ws-lexicon-close {
   position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   top: 15px;
   right: 18px;
   width: 28px;
@@ -2200,6 +2203,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 }
 #view-workspace .ws-launch-close {
   position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   top: 13px;
   right: 16px;
   width: 28px;
@@ -2401,6 +2407,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .ws-launch-template-edit:focus-visible,
 #view-workspace .ws-launch-template-new:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
 #view-workspace .ws-launch-template-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -2474,6 +2483,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   gap: 8px;
 }
 #view-workspace .ws-launch-ai-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 0;
   border: 0;
   border-bottom: 1px dotted var(--mark);
@@ -2553,7 +2565,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   font-size: 13px;
   white-space: nowrap;
 }
-#view-workspace .ws-lexicon-replacement { color: var(--mark); }
+#view-workspace .ws-lexicon-replacement { display: inline-flex; align-items: center; gap: 3px; color: var(--mark); }
 #view-workspace .ws-lexicon-mark-only { color: var(--ink-3); }
 #view-workspace .ws-export-menu {
   position: absolute;
@@ -2827,6 +2839,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   border-bottom-color: rgba(184, 169, 140, 0.55);
 }
 #view-workspace .ws-link-arrow {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 3px;
   color: var(--ink-4);
   font-size: 0.92em;
 }
@@ -3025,6 +3040,9 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
   color: #f0e9da;
 }
 #view-workspace .morph-debug-panel .mdp-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: 0;
   color: #cdbf9f;
@@ -3106,6 +3124,10 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
   gap: 8px;
 }
 #view-workspace .morph-debug-panel .mdp-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   flex: 1;
   padding: 8px;
   font-size: 12px;

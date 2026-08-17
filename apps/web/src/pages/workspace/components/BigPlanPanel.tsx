@@ -14,7 +14,7 @@ import {
 import type { ServerStream } from "../data/serverStream";
 import { askUserPurposeLabel } from "../data/workspacePageView";
 import { SliderQuestionInput, defaultSliderValue, sliderValueLabel } from "./SliderQuestionInput";
-import { CheckIcon } from "./icons";
+import { CheckIcon, StatusDotIcon } from "./icons";
 
 /**
  * Wire-side: BigPlan = AskUser tool-call with mode=fullpage.
@@ -367,7 +367,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
             ))}
             {askingMore && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0", color: "var(--ink-3)", fontSize: 12.5 }}>
-                <span style={{ animation: "au-pulse 1.4s infinite" }}>●</span>
+                <span style={{ animation: "au-pulse 1.4s infinite" }}><StatusDotIcon size={8} /></span>
                 正在生成更多问题…
               </div>
             )}

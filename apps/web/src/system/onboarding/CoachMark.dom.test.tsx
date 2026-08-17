@@ -43,6 +43,9 @@ describe("CoachMark", () => {
     await renderCoach();
     await vi.waitFor(() => expect(document.querySelector('[data-coach-mark="home-new"]')).not.toBeNull());
     const gotIt = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "知道了") as HTMLButtonElement;
+    expect(gotIt.classList.contains("wf-btn")).toBe(true);
+    expect(gotIt.classList.contains("small")).toBe(true);
+    expect(gotIt.classList.contains("ghost")).toBe(true);
     await act(async () => {
       gotIt.click();
       await Promise.resolve();

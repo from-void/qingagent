@@ -131,7 +131,8 @@ describe("ReviewLaunchModal", () => {
     expect(host.querySelector(".ws-launch-template-edit path")?.getAttribute("d")).toBe("M11.1 2.9a1.75 1.75 0 0 1 2.47 2.47L6 12.9l-3.2.77.77-3.2Z");
     expect(host.querySelector(".ws-launch-template-edit")?.textContent).toBe("");
     expect(host.textContent).not.toContain("内置");
-    expect(host.querySelector(".ws-launch-template-new")?.textContent).toBe("＋ 新建");
+    expect(host.querySelector(".ws-launch-template-new")?.textContent).toBe("新建");
+    expect(host.querySelector(".ws-launch-template-new svg")).not.toBeNull();
     expect(host.querySelector(".ws-launch-template-group-head .ws-launch-template-new")).not.toBeNull();
     expect(host.querySelector(".ws-launch-template-grid .ws-launch-template-new")).toBeNull();
     expect(host.textContent).not.toContain("完整提示词会随审查请求发送");

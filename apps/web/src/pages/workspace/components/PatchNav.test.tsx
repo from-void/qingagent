@@ -59,6 +59,9 @@ describe("PatchNav", () => {
     expect(host?.textContent).not.toContain("拒绝此处");
     expect(host?.textContent).toContain("上一处");
     expect(host?.textContent).toContain("下一处");
+    expect(host?.querySelectorAll(".pn-jump svg")).toHaveLength(2);
+    expect(host?.textContent).not.toContain("↑");
+    expect(host?.textContent).not.toContain("↓");
     expect(host?.textContent).toContain("提交 ↵");
     // 「全部应用」已按用户拍板移除:提交本身默认应用未裁决的全部修改
     expect(host?.textContent).not.toContain("全部应用");

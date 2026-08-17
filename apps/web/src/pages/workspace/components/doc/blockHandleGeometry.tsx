@@ -156,6 +156,8 @@ export function glyphForListItem(item: DraggableListItem): string {
 export function HandleTypeIcon({ glyph }: { glyph: string }): JSX.Element {
   if (glyph === "table") return <BlockHandleIcon name="table" />;
   if (glyph === "divider") return <BlockHandleIcon name="divider" />;
+  if (glyph === "❝") return <BlockHandleIcon name="quote" />;
+  if (glyph === "{}") return <BlockHandleIcon name="code" />;
   if (glyph === "•") {
     return (
       <svg className="bh-type-svg" width="13" height="11" viewBox="0 0 13 11" aria-hidden="true" focusable="false">

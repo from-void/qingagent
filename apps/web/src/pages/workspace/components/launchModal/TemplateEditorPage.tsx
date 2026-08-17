@@ -1,4 +1,5 @@
 import { Button } from "@qingagent/ui-kit";
+import { SparkleIcon } from "../../../../system/SkillMenu";
 import type { DraftTemplateIntent, DraftTemplateResult } from "@qingagent/contract-ts";
 import { useEffect, useId, useRef, useState } from "react";
 import type { TemplateStarterPreset } from "./starterPresets";
@@ -76,7 +77,7 @@ export function TemplateEditorPage(props: {
       <div className="ws-launch-field">
         <div className="ws-launch-field-head">
           <label htmlFor={promptFieldId}>提示词</label>
-          {props.onAiDraft ? <button type="button" className="ws-launch-ai-draft" disabled={aiDrafting || props.mutationDisabled} onClick={() => void runAiDraft()}>{aiDrafting ? "起草中…" : "✦ AI 起草"}</button> : null}
+          {props.onAiDraft ? <button type="button" className="ws-launch-ai-draft" disabled={aiDrafting || props.mutationDisabled} onClick={() => void runAiDraft()}>{aiDrafting ? "起草中…" : <><SparkleIcon size={12} />AI 起草</>}</button> : null}
         </div>
         <textarea disabled={props.mutationDisabled} id={promptFieldId} value={props.prompt} placeholder={props.placeholders.prompt} onChange={(event) => props.onPromptChange(event.currentTarget.value)} />
       </div>

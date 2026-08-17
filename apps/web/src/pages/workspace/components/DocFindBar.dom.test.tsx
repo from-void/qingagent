@@ -46,6 +46,9 @@ describe("DocFindBar", () => {
       expect(countText()).toBe("1/2");
       expect(editor.view.dom.querySelectorAll(".ws-find-hit")).toHaveLength(2);
       expect(editor.view.dom.querySelectorAll(".ws-find-hit.is-current")).toHaveLength(1);
+      expect(buttonByTitle("上一个 (Shift+Enter)").querySelector("svg")).not.toBeNull();
+      expect(buttonByTitle("下一个 (Enter)").querySelector("svg")).not.toBeNull();
+      expect(buttonByTitle("替换").querySelector("svg")).not.toBeNull();
 
       await click(buttonByTitle("替换"));
       expect(replaceRow().hidden).toBe(false);
@@ -93,7 +96,7 @@ describe("DocFindBar", () => {
     }
   });
 
-  it("find-only 模式不出替换入口(⇄ 与替换行都不渲染)", async () => {
+  it("find-only 模式不出替换入口(图标与替换行都不渲染)", async () => {
     const editor = editorWithText("alpha");
     try {
       await renderDocFind(<Harness editor={editor} mode="find-only" />);

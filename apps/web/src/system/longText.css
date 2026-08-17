@@ -52,6 +52,9 @@
 }
 #view-workspace .chat-chip.chat-chip-longtext .c-x,
 #view-new .chat-chip.chat-chip-longtext .c-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: 1px;
   color: var(--ink-on-dark);
   font-size: 13px;
@@ -148,6 +151,8 @@
   color: var(--ink-on-dark);
 }
 .lt-full-close {
+  display: inline-grid;
+  place-items: center;
   flex: 0 0 auto;
   width: 28px;
   height: 28px;

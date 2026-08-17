@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CLIENT_PERSIST_CHANGED_EVENT } from "../../overlays/settings/clientPersist";
+import {
+  CLIENT_PERSIST_CHANGED_EVENT,
+  isClientPersistReady,
+} from "../../overlays/settings/clientPersist";
 import { MODEL_VENDORS } from "../../overlays/settings/modelVendorMeta";
 import { anyModelProviderConfigured } from "../../overlays/settings/modelSettingsTypes";
 import {
@@ -14,6 +17,18 @@ type ServerModelStatus = "idle" | "loading" | "configured" | "unconfigured" | "e
 
 interface ModelSettingsResponse {
   providers: Record<ModelProvider, { apiKeyConfigured: boolean }>;
+}
+
+interface LocalPersistState {
+  ready: boolean;
+  snapshot: LocalModelKeySnapshot | null;
+}
+
+function readLocalPersistState(): LocalPersistState {
+  return {
+    ready: isClientPersistReady(),
+    snapshot: readLocalModelKeySnapshot(),
+  };
 }
 
 function localHasConfiguredProvider(snapshot: LocalModelKeySnapshot | null): boolean {
@@ -36,15 +51,14 @@ export function FirstRunGate({
     try { return window.electron?.getBackendConnection?.()?.mode === "attach"; } catch { return false; }
   })();
   const settings = useOnboardingSettings();
-  const [local, setLocal] = useState<LocalModelKeySnapshot | null>(
-    () => readLocalModelKeySnapshot(),
-  );
+  const [localPersist, setLocalPersist] = useState<LocalPersistState>(readLocalPersistState);
+  const local = localPersist.snapshot;
   const [serverStatus, setServerStatus] = useState<ServerModelStatus>("idle");
   const [presentingOnboarding, setPresentingOnboarding] = useState(false);
 
   useEffect(() => {
     if (attachMode) return;
-    const update = () => setLocal(readLocalModelKeySnapshot());
+    const update = () => setLocalPersist(readLocalPersistState());
     const removeReadyListener = window.electron?.onClientConfigReady?.(update);
     window.addEventListener(CLIENT_PERSIST_CHANGED_EVENT, update);
     window.addEventListener("storage", update);
@@ -59,7 +73,7 @@ export function FirstRunGate({
   }, [attachMode]);
 
   const shouldReadServer = !attachMode &&
-    local !== null &&
+    localPersist.ready &&
     !localHasConfiguredProvider(local) &&
     settings.status === "ready" &&
     settings.state === null &&
@@ -103,7 +117,7 @@ export function FirstRunGate({
   if (localHasConfiguredProvider(local)) return <>{children}</>;
   if (serverStatus === "configured") return <>{children}</>;
   if (settings.status === "error" || serverStatus === "error") return <>{children}</>;
-  if (local === null || settings.status === "loading" || serverStatus !== "unconfigured") {
+  if (!localPersist.ready || settings.status === "loading" || serverStatus !== "unconfigured") {
     return <>{loading}</>;
   }
   return <>{onboarding}</>;

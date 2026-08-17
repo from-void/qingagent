@@ -127,6 +127,15 @@ export function isDesktopPersist(): boolean {
   return isDesktopWindow();
 }
 
+/**
+ * 持久层是否已结束启动等待：web 的 localStorage 同步可用，桌面端以 preload ready 信号为准。
+ * ready 后读取仍失败属于 unavailable，不应再被调用方解释为“尚未加载”。
+ */
+export function isClientPersistReady(): boolean {
+  if (typeof window === "undefined") return false;
+  return !isDesktopWindow() || isDesktopConfigReady();
+}
+
 /** 读取一个持久化字符串;缺失/空串都返回 null。 */
 export function readPersistedChecked(key: string): PersistedReadResult {
   if (isDesktopWindow() && !isDesktopConfigReady()) {

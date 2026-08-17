@@ -27,6 +27,7 @@ describe("FirstRunGate", () => {
     act(() => root.unmount());
     host.remove();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     setElectron(undefined);
     window.localStorage.clear();
     __resetClientPersistCacheForTests();
@@ -59,6 +60,43 @@ describe("FirstRunGate", () => {
     vi.stubGlobal("fetch", settingsFetch({ onboardingState: "skipped" }));
     await renderGate();
     await vi.waitFor(() => expect(host.querySelector("[data-home]")).not.toBeNull());
+  });
+
+  it("桌面持久层已就绪但密钥 getter 均不可用时继续服务端判定并显示首启页", async () => {
+    setElectron(unavailableDesktopPersist());
+    vi.stubGlobal("fetch", settingsFetch({ onboardingState: null }));
+
+    await renderGate();
+
+    await vi.waitFor(() => expect(host.querySelector("[data-onboarding]")).not.toBeNull());
+    expect(host.querySelector("[data-loading]")).toBeNull();
+    expect(host.querySelector("[data-home]")).toBeNull();
+  });
+
+  it("桌面持久层已就绪但不可用且服务端判定失败时 fail-open 进入首页", async () => {
+    setElectron(unavailableDesktopPersist());
+    vi.stubGlobal("fetch", settingsFetch({
+      onboardingState: null,
+      modelSettingsError: true,
+    }));
+
+    await renderGate();
+
+    await vi.waitFor(() => expect(host.querySelector("[data-home]")).not.toBeNull());
+    expect(host.querySelector("[data-loading]")).toBeNull();
+    expect(host.querySelector("[data-onboarding]")).toBeNull();
+  });
+
+  it("web localStorage 不可读时按 unavailable 继续服务端判定", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("localStorage unavailable");
+    });
+    vi.stubGlobal("fetch", settingsFetch({ onboardingState: null }));
+
+    await renderGate();
+
+    await vi.waitFor(() => expect(host.querySelector("[data-onboarding]")).not.toBeNull());
+    expect(host.querySelector("[data-loading]")).toBeNull();
   });
 
   it("attach 模式绝不触发首启页且不请求设置", async () => {
@@ -100,6 +138,7 @@ function settingsFetch(input: {
   onboardingState: "done" | "skipped" | null;
   deepseekConfigured?: boolean;
   kimiConfigured?: boolean;
+  modelSettingsError?: boolean;
 }) {
   return vi.fn<typeof fetch>(async (request) => {
     const url = String(request);
@@ -112,6 +151,7 @@ function settingsFetch(input: {
       });
     }
     if (url.endsWith("/settings/model")) {
+      if (input.modelSettingsError) throw new Error("model settings unavailable");
       return Response.json({
         provider: "deepseek",
         providers: {
@@ -122,6 +162,28 @@ function settingsFetch(input: {
     }
     throw new Error(`unexpected request: ${url}`);
   });
+}
+
+function unavailableDesktopPersist(): NonNullable<Window["electron"]> {
+  const unavailable = () => {
+    throw new Error("desktop client config read failed");
+  };
+  const rejectWrite = async () => false;
+  return {
+    isDesktop: true,
+    platform: "linux",
+    isClientConfigReady: () => true,
+    getModelProvider: unavailable,
+    setModelProvider: rejectWrite,
+    getDeepseekApiKey: unavailable,
+    setDeepseekApiKey: rejectWrite,
+    getCustomProvider: unavailable,
+    setCustomProvider: rejectWrite,
+    getKimiApiKey: unavailable,
+    setKimiApiKey: rejectWrite,
+    getKimiCustomProvider: unavailable,
+    setKimiCustomProvider: rejectWrite,
+  };
 }
 
 function setElectron(value: Window["electron"] | undefined) {

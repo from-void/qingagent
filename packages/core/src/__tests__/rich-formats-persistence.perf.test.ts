@@ -302,8 +302,12 @@ describe("rich formats persistence and scale pressure", () => {
     expect(hunks).toHaveLength(1);
     expect(hunks[0]).toMatchObject({
       op: "replace",
-      blockPath: [75],
-      anchor: { blockId: "large-task-25" },
+      blockPath: [75, 2],
+      anchor: { blockId: "large-task-25-item-3" },
+      before: [{ type: "taskItem", attrs: { blockId: "large-task-25-item-3" } }],
+      after: [{ type: "taskItem", attrs: { blockId: "large-task-25-item-3" } }],
+      beforeBlock: { type: "taskList" },
+      afterBlock: { type: "taskList" },
     });
     expect(hunks[0]?.beforeText).toContain("任务 25-2");
     expect(hunks[0]?.afterText).toContain("任务 25-2 已调整");

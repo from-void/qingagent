@@ -7,6 +7,7 @@ import type {
   DiscoveryObservation,
   DiscoveryReport,
 } from "./attachDiscoveryTypes.js";
+import { discoverLocalObservations } from "./attachDiscoveryWorker.js";
 
 export const DISCOVERY_TOTAL_DEADLINE_MS = 8_000;
 const MAX_DISCOVERY_OUTPUT_BYTES = 1024 * 1024;
@@ -19,6 +20,8 @@ export interface AttachDiscoveryOptions {
   execPath?: string;
   deadlineMs?: number;
   spawnWorker?: typeof spawn;
+  /** 仅用于覆盖进程内发现的超时与意外异常护栏。 */
+  discoverLocalObservationsImpl?: typeof discoverLocalObservations;
 }
 
 function failedReport(errorCode: "READ_TIMEOUT" | "ENUM_FAILED"): DiscoveryReport {
@@ -119,11 +122,37 @@ export function isDiscoveryReport(value: unknown): value is DiscoveryReport {
     && observations.every(isDiscoveryObservation);
 }
 
+function discoverLocalInProcess(options: AttachDiscoveryOptions): Promise<DiscoveryReport> {
+  const discover = options.discoverLocalObservationsImpl ?? discoverLocalObservations;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (report: DiscoveryReport): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(report);
+    };
+    const deadline = setTimeout(() => {
+      finish(failedReport("READ_TIMEOUT"));
+    }, options.deadlineMs ?? DISCOVERY_TOTAL_DEADLINE_MS);
+
+    void Promise.resolve()
+      .then(() => discover(path.resolve(options.home)))
+      .then(
+        (observations) => finish({ observations }),
+        () => finish(failedReport("ENUM_FAILED")),
+      );
+  });
+}
+
 /**
- * discovery 文件与 WSL 枚举只在该子进程执行。父进程以 8s 总预算收口，超时会杀整棵进程树。
+ * 非 Windows 的本地文件发现在主进程内执行；Windows 仍由可整树击杀的 worker
+ * 隔离 WSL 枚举与 UNC 读取，并由父进程以 8s 总预算收口。
  */
 export function discoverAttachInstances(options: AttachDiscoveryOptions): Promise<DiscoveryReport> {
   const platform = options.platform ?? process.platform;
+  if (platform !== "win32") return discoverLocalInProcess(options);
+
   const developmentWorker = options.developmentWorker === true;
   const args = developmentWorker
     ? ["--import", "tsx", options.workerPath]

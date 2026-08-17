@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { discoverAttachInstances, isDiscoveryReport } from "./attachDiscovery.js";
 import {
   decodeWslOutput,
+  discoverLocalObservations,
   discoverWsl,
   inspectCandidate,
   inspectWslCandidate,
   wslUncHomes,
 } from "./attachDiscoveryWorker.js";
+import type { DiscoveryObservation, DiscoveryReport } from "./attachDiscoveryTypes.js";
 import { decideAttachMode } from "./attachModeDecision.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +35,26 @@ function discover(home: string) {
     workerPath: path.join(__dirname, "attachDiscoveryWorker.ts"),
     developmentWorker: true,
     execPath: process.execPath,
+    spawnWorker: (() => {
+      throw new Error("非 win32 发现不应拉起 worker");
+    }) as typeof spawn,
   });
+}
+
+function resolvedWorkerSpawn(report: DiscoveryReport): typeof spawn {
+  return ((_command: string, _args: readonly string[]) => {
+    const stdout = new PassThrough();
+    const child = Object.assign(new EventEmitter(), {
+      pid: 43_210,
+      stdout,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+    queueMicrotask(() => {
+      stdout.end(JSON.stringify(report));
+      child.emit("close", 0, null);
+    });
+    return child;
+  }) as typeof spawn;
 }
 
 async function writeInstance(home: string, pid: number): Promise<void> {
@@ -71,6 +95,161 @@ after(async () => {
 test("本机发现确认无文件时返回 absent", async () => {
   const result = await discover(await tempHome());
   assert.deepEqual(result, { observations: [{ source: "local", state: "absent" }] });
+});
+
+test("darwin/linux 进程内发现不 spawn，并原样返回 absent/valid/lease", async () => {
+  const observations: DiscoveryObservation[] = [
+    { source: "local", state: "absent" },
+    {
+      source: "local",
+      state: "valid",
+      instance: {
+        schemaVersion: 2,
+        port: 43_123,
+        pid: 123,
+        version: "0.1.6",
+        attachProtocolVersion: 1,
+        instanceId: "00000000-0000-4000-8000-000000000001",
+        libraryId: "00000000-0000-4000-8000-000000000002",
+        token: `qa_instance_${"a".repeat(64)}`,
+        startedAt: "2026-08-17T00:00:00.000Z",
+        endpoint: "http://127.0.0.1:43123",
+        source: "local",
+      },
+    },
+    { source: "local", state: "indeterminate", errorCode: "STARTING_LEASE" },
+  ];
+
+  for (const platform of ["darwin", "linux"] as const) {
+    for (const observation of observations) {
+      let spawnCalls = 0;
+      const home = await tempHome();
+      const result = await discoverAttachInstances({
+        home,
+        platform,
+        workerPath: "/tmp/must-not-spawn-attach-discovery-worker.js",
+        spawnWorker: (() => {
+          spawnCalls += 1;
+          throw new Error("非 win32 发现不应拉起 worker");
+        }) as typeof spawn,
+        discoverLocalObservationsImpl: async (resolvedHome) => {
+          assert.equal(resolvedHome, path.resolve(home));
+          return [observation];
+        },
+      });
+      assert.deepEqual(result, { observations: [observation] });
+      assert.equal(spawnCalls, 0);
+    }
+  }
+});
+
+test("win32 仍走原有 worker spawn 路径", async () => {
+  const expected: DiscoveryReport = {
+    observations: [
+      { source: "local", state: "absent" },
+      { source: "wsl", state: "absent", errorCode: "WSL_STOPPED" },
+    ],
+  };
+  let spawnCalls = 0;
+  const spawnWorker = resolvedWorkerSpawn(expected);
+  const result = await discoverAttachInstances({
+    home: await tempHome(),
+    platform: "win32",
+    workerPath: "C:\\app\\attach-discovery-worker.js",
+    execPath: "C:\\app\\qingagent.exe",
+    spawnWorker: ((...args: Parameters<typeof spawn>) => {
+      spawnCalls += 1;
+      return spawnWorker(...args);
+    }) as typeof spawn,
+  });
+  assert.deepEqual(result, expected);
+  assert.equal(spawnCalls, 1);
+});
+
+test("discoverLocalObservations 与 worker 原本地分支等价，缺 home 时收敛 ENUM_FAILED", async () => {
+  const home = await tempHome();
+  const expected = await inspectCandidate("local", home, { sameProcessNamespace: true });
+  assert.deepEqual(await discoverLocalObservations(home), [expected]);
+  assert.deepEqual(await discoverLocalObservations(""), [
+    { source: "local", state: "indeterminate", errorCode: "ENUM_FAILED" },
+  ]);
+});
+
+test("进程内发现超过总预算时返回 worker/READ_TIMEOUT", async () => {
+  const result = await discoverAttachInstances({
+    home: await tempHome(),
+    platform: "darwin",
+    workerPath: "/tmp/must-not-spawn-attach-discovery-worker.js",
+    deadlineMs: 10,
+    spawnWorker: (() => {
+      throw new Error("非 win32 发现不应拉起 worker");
+    }) as typeof spawn,
+    discoverLocalObservationsImpl: async () => await new Promise<never>(() => undefined),
+  });
+  assert.deepEqual(result, {
+    observations: [{ source: "worker", state: "indeterminate", errorCode: "READ_TIMEOUT" }],
+  });
+});
+
+test("进程内挂起读按路径单飞，settle 后清位并允许重读", async () => {
+  const home = await tempHome();
+  const calls = new Map<string, number>();
+  const resolvers = new Map<string, (value: string | null) => void>();
+  let readsSettled = false;
+  const readDiscoveryFileImpl = (filePath: string): Promise<string | null> => {
+    calls.set(filePath, (calls.get(filePath) ?? 0) + 1);
+    if (readsSettled) return Promise.resolve(null);
+    return new Promise((resolve) => resolvers.set(filePath, resolve));
+  };
+  const discoverLocalObservationsImpl = (candidateHome: string) => discoverLocalObservations(
+    candidateHome,
+    (source, resolvedHome, options) => inspectCandidate(source, resolvedHome, {
+      ...options,
+      readDiscoveryFileImpl,
+    }),
+  );
+  const run = () => discoverAttachInstances({
+    home,
+    platform: "linux",
+    workerPath: "/tmp/must-not-spawn-attach-discovery-worker.js",
+    deadlineMs: 10,
+    spawnWorker: (() => {
+      throw new Error("非 win32 发现不应拉起 worker");
+    }) as typeof spawn,
+    discoverLocalObservationsImpl,
+  });
+  const timeoutReport = {
+    observations: [{ source: "worker", state: "indeterminate", errorCode: "READ_TIMEOUT" }],
+  };
+
+  assert.deepEqual(await run(), timeoutReport);
+  assert.deepEqual(await run(), timeoutReport);
+  assert.equal(calls.size, 2);
+  assert.deepEqual([...calls.values()], [1, 1]);
+
+  readsSettled = true;
+  for (const resolve of resolvers.values()) resolve(null);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(await run(), {
+    observations: [{ source: "local", state: "absent" }],
+  });
+  assert.deepEqual([...calls.values()], [2, 2]);
+});
+
+test("进程内发现编码级意外由护栏收敛为 worker/ENUM_FAILED", async () => {
+  // discoverLocalObservations 的正常读失败已收敛为 observation；此处只覆盖外层编码护栏。
+  const result = await discoverAttachInstances({
+    home: await tempHome(),
+    platform: "linux",
+    workerPath: "/tmp/must-not-spawn-attach-discovery-worker.js",
+    discoverLocalObservationsImpl: async () => {
+      throw new Error("unexpected implementation failure");
+    },
+  });
+  assert.deepEqual(result, {
+    observations: [{ source: "worker", state: "indeterminate", errorCode: "ENUM_FAILED" }],
+  });
 });
 
 test("instance.json 的 pid 已死且端口拒连时视为 absent 并启动嵌入式", async () => {

@@ -1,0 +1,91 @@
+{
+ "piece": "p13-deepseek-key",
+ "sessionId": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+ "threads": [
+  {
+   "id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resourceId": "qingagent-user",
+   "title": "示例13 · 接入 DeepSeek:三分钟拿到你的 API Key",
+   "metadata": {},
+   "createdAt": "2026-08-17T14:04:28.891Z",
+   "updatedAt": "2026-08-17T14:30:12.261Z"
+  },
+  {
+   "id": "om-sidecar:3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resourceId": "qingagent-user:om-sidecar",
+   "title": "",
+   "metadata": {},
+   "createdAt": "2026-08-17T14:06:09.388Z",
+   "updatedAt": "2026-08-17T14:30:02.753Z"
+  }
+ ],
+ "documents": [
+  {
+   "id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "thread_id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resource_id": "qingagent-user",
+   "title": "示例13 · 接入 DeepSeek:三分钟拿到你的 API Key",
+   "doc_state": "editing",
+   "doc_version": 4,
+   "last_synced_version": 0,
+   "doc_pm": "{\"attrs\":{\"schemaVersion\":1},\"content\":[{\"attrs\":{\"blockId\":\"block-0ab22a46b63fa632\",\"level\":1},\"content\":[{\"text\":\"接入 DeepSeek：三分钟拿到你的 API Key\",\"type\":\"text\"}],\"type\":\"heading\"},{\"attrs\":{\"blockId\":\"block-35bde49a56567856\"},\"content\":[{\"text\":\"青简自己不收 AI 使用费——写作、审查、衍生稿消耗的模型额度,走的都是你自己的 DeepSeek 账户,用多少付多少,账单透明。所以第一次使用前,需要花两三分钟把自己的 API Key 接进来。跟着下面的截图走,全程不会超过五分钟。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-dd018da89294f624\",\"level\":2},\"content\":[{\"text\":\"一、登录 DeepSeek 开放平台\",\"type\":\"text\"}],\"type\":\"heading\"},{\"attrs\":{\"blockId\":\"block-06739449509e3c15\"},\"content\":[{\"text\":\"打开 platform.deepseek.com,用手机号验证码或微信扫码即可登录——没注册过也不用单独注册,未注册的手机号会自动完成注册。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"align\":\"center\",\"alt\":\"DeepSeek 开放平台登录页\",\"blockId\":\"block-eeb148c6d790f512\",\"src\":\"/api/v1/files/8c22c7ba-79a0-4f0b-a1b5-c2ba8463611b/ds-signin.webp\"},\"type\":\"image\"},{\"attrs\":{\"blockId\":\"block-1f7325442df20cb8\"},\"content\":[{\"text\":\"图注:DeepSeek 开放平台登录页:手机号验证码或微信扫码,未注册自动注册\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-edddbf37ed6491a3\",\"level\":2},\"content\":[{\"text\":\"二、创建一把 API Key\",\"type\":\"text\"}],\"type\":\"heading\"},{\"attrs\":{\"blockId\":\"block-8054bfffac104f5b\"},\"content\":[{\"text\":\"登录后看左侧菜单,点「API keys」进入密钥管理页,再点右上角的「创建 API key」。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"align\":\"center\",\"alt\":\"API keys 密钥管理页\",\"blockId\":\"block-90468cbafa81a6f6\",\"src\":\"/api/v1/files/272119de-5179-45c9-b17f-a06640f12265/ds-apikeys.webp\"},\"type\":\"image\"},{\"attrs\":{\"blockId\":\"block-d8e6da0b896ee337\"},\"content\":[{\"text\":\"图注:左侧菜单进「API keys」,右上角就是「创建 API key」按钮\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-227772d9cd34cded\"},\"content\":[{\"text\":\"给这把 Key 起个名字,比如 qingjian,点「创建」。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"align\":\"center\",\"alt\":\"创建 API key 命名\",\"blockId\":\"block-d9bd4df7cde681eb\",\"src\":\"/api/v1/files/f2a9257a-e486-46d3-a237-e9256cd4cd30/ds-create-name.webp\"},\"type\":\"image\"},{\"attrs\":{\"blockId\":\"block-059803ab401d62a7\"},\"content\":[{\"text\":\"图注:起个好认的名字,方便日后在列表里对账\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-001735e8ce887fb4\",\"level\":2},\"content\":[{\"text\":\"三、立刻复制,妥善保存\",\"type\":\"text\"}],\"type\":\"heading\"},{\"attrs\":{\"blockId\":\"block-2a3e6ed5b5afec61\"},\"content\":[{\"text\":\"创建成功后会弹出完整的 Key(一串 sk- 开头的字符)。这是它唯一一次完整显示——点「复制」马上存好,关掉弹窗后就再也看不到了。如果忘了复制也不要紧,删掉这把重新创建一把即可。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"align\":\"center\",\"alt\":\"创建成功显示完整 Key\",\"blockId\":\"block-213db71a7783450e\",\"src\":\"/api/v1/files/81222af9-8543-4aa3-a72c-8c4ebcb179c1/ds-created-copy.webp\"},\"type\":\"image\"},{\"attrs\":{\"blockId\":\"block-336f330b947d0daf\"},\"content\":[{\"text\":\"图注:Key 只在创建时完整显示一次,点「复制」立刻保存\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-ec9d53725472b5a6\"},\"content\":[{\"text\":\"另外记住平台的忠告:不要把 Key 分享给别人,也不要贴到公开的网页或代码仓库里——DeepSeek 发现泄露的 Key 会自动禁用。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-01a16aa9ffdd3105\",\"level\":2},\"content\":[{\"text\":\"四、充一点余额\",\"type\":\"text\"}],\"type\":\"heading\"},{\"attrs\":{\"blockId\":\"block-91e39979509b72ed\"},\"content\":[{\"text\":\"左侧菜单进「充值」。不用多,10 元就足够写很久——青简的常规一轮生成加审查通常只花几分钱。支付宝、微信都行。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"align\":\"center\",\"alt\":\"充值页面\",\"blockId\":\"block-1a74ed7805cff90c\",\"src\":\"/api/v1/files/45895bdb-1d4b-4db6-8767-5292259b750c/ds-topup.webp\"},\"type\":\"image\"},{\"attrs\":{\"blockId\":\"block-4af7cc386a5f19cc\"},\"content\":[{\"text\":\"图注:充值页:10 元起充,支付宝 / 微信支付\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-243f0300b6ce2684\"},\"content\":[{\"text\":\"一个省钱小知识:DeepSeek 自 2026 年 8 月 17 日起执行峰谷定价,北京时间 9:00–12:00、14:00–18:00 为高峰时段,其余时间价格减半。早起或夜里写稿,同样的字数只花一半的钱。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-ce3b23c9ac51e625\",\"level\":2},\"content\":[{\"text\":\"五、填回青简\",\"type\":\"text\"}],\"type\":\"heading\"},{\"attrs\":{\"blockId\":\"block-b8dbae22986d3986\"},\"content\":[{\"text\":\"拿着刚复制的 Key 回到青简:如果是第一次启动,青简会直接展示「模型 API 配置」页——把 Key 粘进输入框,自动验证通过、看到「✓ 密钥可用」和余额后点「开始使用」即可。如果当时点了「先跳过」,从首页右上角的齿轮进设置,在「模型」面板的 DeepSeek 卡片里点「配置」,粘贴 Key、测试连接、保存。\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"attrs\":{\"blockId\":\"block-937c807d563780a1\"},\"content\":[{\"text\":\"一件值得放心的事:Key 只保存在你本机,青简用它直接向 DeepSeek 发起请求,不会上传到任何第三方服务器。\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+   "doc_schema_version": 1,
+   "content_hash": "pmv1-455a35f6e135043abb1ddbc0d4a34a86",
+   "doc_format": "pm",
+   "version": 4,
+   "created_at": "2026-08-17T14:06:07.869Z",
+   "updated_at": "2026-08-17T14:30:12.219Z",
+   "role": "main"
+  }
+ ],
+ "derivatives": [],
+ "sessionResources": [
+  {
+   "session_id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resource_id": "272119de-5179-45c9-b17f-a06640f12265",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-17T14:04:29.262Z",
+   "updated_at": "2026-08-17T14:04:29.262Z"
+  },
+  {
+   "session_id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resource_id": "45895bdb-1d4b-4db6-8767-5292259b750c",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-17T14:04:29.396Z",
+   "updated_at": "2026-08-17T14:04:29.396Z"
+  },
+  {
+   "session_id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resource_id": "81222af9-8543-4aa3-a72c-8c4ebcb179c1",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-17T14:04:29.358Z",
+   "updated_at": "2026-08-17T14:04:29.358Z"
+  },
+  {
+   "session_id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resource_id": "8c22c7ba-79a0-4f0b-a1b5-c2ba8463611b",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-17T14:04:29.208Z",
+   "updated_at": "2026-08-17T14:04:29.208Z"
+  },
+  {
+   "session_id": "3b191c60-20ff-4899-8406-16e7bf5ea300",
+   "resource_id": "f2a9257a-e486-46d3-a237-e9256cd4cd30",
+   "kind": "upload",
+   "ref_count": 1,
+   "created_at": "2026-08-17T14:29:49.933Z",
+   "updated_at": "2026-08-17T14:29:49.933Z"
+  }
+ ],
+ "assetFileIds": [
+  "272119de-5179-45c9-b17f-a06640f12265",
+  "45895bdb-1d4b-4db6-8767-5292259b750c",
+  "81222af9-8543-4aa3-a72c-8c4ebcb179c1",
+  "8c22c7ba-79a0-4f0b-a1b5-c2ba8463611b",
+  "f2a9257a-e486-46d3-a237-e9256cd4cd30"
+ ]
+}

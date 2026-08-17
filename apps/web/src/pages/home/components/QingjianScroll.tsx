@@ -38,6 +38,8 @@ import {
   peekHomeArrive,
   setWorkspaceArrive,
 } from "../../../system/transition/origin";
+import { CoachMark } from "../../../system/onboarding/CoachMark";
+import { useOnboardingSettings } from "../../../system/onboarding/OnboardingSettingsContext";
 import {
   createHomeTransitionStage,
   type HomeTransitionStage,
@@ -1032,6 +1034,7 @@ export function QingjianScroll({
   cleanMode = false,
   openApiRef,
 }: QingjianScrollProps) {
+  const onboarding = useOnboardingSettings();
   // —— 持久化设置(进场 / 减少动效)——
   const [anim, setAnim] = useState<AnimId>(() => {
     try {
@@ -1147,6 +1150,45 @@ export function QingjianScroll({
   const dockFillRef = useRef<HTMLDivElement>(null);
   const dockCursorRef = useRef<HTMLDivElement>(null);
   const newFabRef = useRef<HTMLButtonElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const newCardSlotRef = useRef<HTMLDivElement>(null);
+  const [newCardInView, setNewCardInView] = useState(true);
+  const [newFabVisible, setNewFabVisible] = useState(false);
+  const [coachReady, setCoachReady] = useState(false);
+
+  useEffect(() => {
+    if (openingScroll) {
+      setCoachReady(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setCoachReady(true), 360);
+    return () => window.clearTimeout(timer);
+  }, [openingScroll]);
+
+  useEffect(() => {
+    const newCard = newCardSlotRef.current;
+    const fab = newFabRef.current;
+    if (!newCard || !fab) return;
+    const updateFab = () => setNewFabVisible(fab.classList.contains("qj-show"));
+    updateFab();
+    const mutationObserver = new MutationObserver(updateFab);
+    mutationObserver.observe(fab, { attributes: true, attributeFilter: ["class"] });
+
+    let intersectionObserver: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver === "function") {
+      intersectionObserver = new IntersectionObserver(
+        ([entry]) => setNewCardInView(Boolean(entry?.isIntersecting)),
+        { root: scrollRef.current, threshold: .18 },
+      );
+      intersectionObserver.observe(newCard);
+    } else {
+      setNewCardInView(true);
+    }
+    return () => {
+      mutationObserver.disconnect();
+      intersectionObserver?.disconnect();
+    };
+  }, []);
 
   // 方案4:首页核心动效舞台(墨水 + 卡飞 + 背景变深)。整页生命周期内复用一份。
   const txStageRef = useRef<HomeTransitionStage | null>(null);
@@ -2228,6 +2270,7 @@ export function QingjianScroll({
       <div className="qj-topctrl">
         <div className="qj-settings-wrap">
           <button
+            ref={settingsButtonRef}
             type="button"
             className={`qj-settings-btn${settingsSheetOpen ? " qj-on" : ""}`}
             title="设置"
@@ -2330,6 +2373,7 @@ export function QingjianScroll({
                 return (
                 <div
                   key={slot.entry.id}
+                  ref={slot.entry.kind === "new" ? newCardSlotRef : undefined}
                   className={`qj-card-slot${session?.isDeleting ? " qj-deleting" : ""}${session?.generating ? " qj-generating" : ""}`}
                   data-idx={slot.globalIdx}
                   data-kind={slot.entry.kind}
@@ -2479,6 +2523,37 @@ export function QingjianScroll({
       >
         <PlusIcon />
       </button>
+
+      <CoachMark
+        id="home-settings"
+        anchor={() => settingsButtonRef.current}
+        visible={coachReady && !settingsSheetOpen}
+        placement="bottom-end"
+        title={onboarding.state?.status === "skipped" ? "还没配置密钥" : "密钥已就绪"}
+      >
+        {onboarding.state?.status === "skipped"
+          ? "示例可随意翻看;想开始写作时,到这里的设置·模型贴上 Key 即可。"
+          : "以后想换 Key、调模型档位,都在这里的设置·模型。"}
+      </CoachMark>
+      <CoachMark
+        id="home-new"
+        anchor={() => newCardSlotRef.current}
+        visible={coachReady && !settingsSheetOpen && onboarding.coachSeen.has("home-settings") && newCardInView && !newFabVisible}
+        placement="right"
+        title="从这里开始"
+      >
+        点开新建文档,告诉青简你想写什么——右边几篇示例也值得先翻翻。
+      </CoachMark>
+      <CoachMark
+        id="home-fab"
+        anchor={() => newFabRef.current}
+        visible={coachReady && !settingsSheetOpen && onboarding.coachSeen.has("home-settings") && !newCardInView && newFabVisible && !onboarding.coachSeen.has("home-new")}
+        placement="top-start"
+        title="新建随时都在"
+        onSeen={() => onboarding.markCoachSeen("home-new").then(() => undefined)}
+      >
+        卷轴滚远了也不用回头——这个 + 号随时新建文档。
+      </CoachMark>
     </div>
   );
 }

@@ -25,6 +25,7 @@ async function loadApp() {
   const { exportRoutes } = await import("../routes/export");
   const { askMoreRoutes } = await import("../routes/askMore");
   const { modelSettingsRoutes } = await import("../routes/modelSettings");
+  const { onboardingSettingsRoutes } = await import("../routes/onboardingSettings");
   const { searchSettingsRoutes } = await import("../routes/searchSettings");
   const { clientLogRoutes } = await import("../routes/clientlog");
   const { csrfMutationGuard } = await import("../lib/trustedOrigin");
@@ -37,6 +38,7 @@ async function loadApp() {
   app.route("/api/v1", exportRoutes);
   app.route("/api/v1", askMoreRoutes);
   app.route("/api/v1", modelSettingsRoutes);
+  app.route("/api/v1", onboardingSettingsRoutes);
   app.route("/api/v1", searchSettingsRoutes);
   app.route("/api/v1", clientLogRoutes);
   return app;
@@ -140,6 +142,22 @@ const protectedWriteEndpoints: Array<{
     path: "/api/v1/settings/model/balance",
     init: { method: "GET" },
     allowedStatus: 400,
+  },
+  {
+    name: "PUT /settings/onboarding",
+    path: "/api/v1/settings/onboarding",
+    init: {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "skipped" }),
+    },
+    allowedStatus: 200,
+  },
+  {
+    name: "PUT /settings/onboarding/coach/:id",
+    path: "/api/v1/settings/onboarding/coach/home-new",
+    init: { method: "PUT" },
+    allowedStatus: 200,
   },
   {
     name: "POST /settings/model/test-custom",

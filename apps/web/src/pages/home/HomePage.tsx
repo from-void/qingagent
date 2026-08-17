@@ -10,6 +10,8 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { FolderPromptDialog, type FolderPromptDialogControls } from "../../system/FolderSourceControl";
 import { useToast } from "../../system";
 import { useBackendConnection } from "../../system/backendConnectionStore";
+import { FirstRunGate } from "../../system/onboarding/FirstRunGate";
+import { OnboardingLoadingPage, OnboardingPage } from "../onboarding/OnboardingPage";
 
 const BOOK_SOURCES = [
   {
@@ -71,6 +73,17 @@ function setDeleteConfirmSkipFor24h() {
 }
 
 export function HomePage() {
+  return (
+    <FirstRunGate
+      onboarding={<OnboardingPage />}
+      loading={<OnboardingLoadingPage />}
+    >
+      <HomeExperience />
+    </FirstRunGate>
+  );
+}
+
+function HomeExperience() {
   const toast = useToast();
   const backendConnection = useBackendConnection();
   const sessionDeletionEnabled = backendConnection?.mode !== "attach"

@@ -1,0 +1,99 @@
+.coach-mark {
+  position: fixed;
+  z-index: 9400;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(242px, calc(100vw - 24px));
+  padding: 11px 13px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: var(--bg-paper-deep);
+  color: var(--line-ink);
+  box-shadow: var(--shadow-3);
+  font-family: var(--font-zh-serif);
+  font-size: 12.5px;
+  line-height: 1.8;
+  animation: coach-mark-in 320ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.coach-mark::before {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-paper-deep);
+  transform: rotate(45deg);
+}
+
+.coach-mark[data-placement="bottom-end"]::before {
+  top: -6px;
+  right: 18px;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.coach-mark[data-placement="right"]::before {
+  left: -6px;
+  bottom: 18px;
+  border-top: 0;
+  border-right: 0;
+}
+
+.coach-mark[data-placement="top-start"]::before {
+  bottom: -6px;
+  left: 18px;
+  border-top: 0;
+  border-left: 0;
+}
+
+.coach-mark[data-placement="top-end"]::before {
+  right: 18px;
+  bottom: -6px;
+  border-top: 0;
+  border-left: 0;
+}
+
+.coach-mark__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  font-weight: 700;
+}
+
+.coach-mark__title-dot {
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 0;
+}
+
+.coach-mark__body { min-width: 0; }
+.coach-mark__footer { display: flex; justify-content: flex-end; margin-top: 6px; }
+.coach-mark__footer button {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted var(--mark);
+  border-radius: 0;
+  background: transparent;
+  color: var(--mark);
+  font: 11.5px/1.5 var(--font-zh-serif);
+  cursor: pointer;
+}
+.coach-mark__footer button:hover,
+.coach-mark__footer button:focus-visible {
+  border-color: var(--ink-1);
+  color: var(--ink-1);
+  outline: 2px solid var(--mark);
+  outline-offset: 2px;
+}
+
+@keyframes coach-mark-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach-mark { animation: none; }
+}

@@ -27,26 +27,28 @@
 .onboarding-column {
   box-sizing: border-box;
   flex: 0 0 auto;
-  width: min(480px, calc(100vw - 48px));
+  width: min(440px, calc(100vw - 48px));
   min-width: 0;
   margin: auto;
   padding: 32px 0;
 }
 
 .onboarding-column h1 {
-  margin: 0 0 28px;
+  margin: 0 0 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-2);
   color: var(--ink-1);
-  font: 700 26px/1.3 var(--font-zh-serif);
-  letter-spacing: .06em;
+  font: 700 19px/1.35 var(--font-zh-serif);
+  letter-spacing: .08em;
 }
 
 .onboarding-provider-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  margin-bottom: 30px;
+  margin-bottom: 24px;
 }
 
 .onboarding-provider-card {
@@ -58,9 +60,9 @@
   align-content: start;
   column-gap: 12px;
   row-gap: 2px;
-  min-height: 78px;
+  min-height: 76px;
   min-width: 0;
-  padding: 17px 16px;
+  padding: 15px 14px;
   border: 1px solid var(--line-2);
   border-radius: 0;
   background: var(--bg-canvas);
@@ -80,6 +82,7 @@
 
 .onboarding-provider-card:focus-visible,
 .onboarding-mode-switch:focus-visible,
+.onboarding-help-link:focus-visible,
 .onboarding-help summary:focus-visible,
 .onboarding-page .wf-btn:focus-visible,
 .onboarding-page input:focus-visible {
@@ -90,7 +93,7 @@
 .onboarding-provider-card.is-selected {
   border-color: var(--mark);
   background: var(--mark-soft);
-  box-shadow: inset 3px 0 var(--mark);
+  box-shadow: inset 0 0 0 1px var(--mark);
 }
 
 .onboarding-provider-recommended {
@@ -98,13 +101,13 @@
   grid-row: 1;
   align-self: start;
   justify-self: end;
-  padding: 1px 6px;
-  border: 1px solid var(--line-2);
+  padding: 2px 7px;
+  border: 0;
   border-radius: 0;
   background: var(--mark-soft);
   color: var(--mark);
   font: 10px/1.5 var(--font-zh-serif);
-  letter-spacing: .04em;
+  letter-spacing: .1em;
   white-space: nowrap;
 }
 
@@ -118,25 +121,26 @@
   box-sizing: border-box;
   width: 40px;
   height: 40px;
-  border: 0;
+  border: 1px solid var(--line-1);
   border-radius: 0;
   overflow: hidden;
 }
 
 .onboarding-provider-logo svg {
   display: block;
-  width: 40px;
-  height: 40px;
+  width: 31px;
+  height: 31px;
 }
 
 .onboarding-provider-logo--kimi {
-  padding: 2px;
-  background: var(--ink-surface);
+  padding: 0;
+  background: transparent;
 }
 
 .onboarding-provider-logo--kimi svg {
-  width: 36px;
-  height: 36px;
+  width: 27px;
+  height: 27px;
+  background: var(--ink-surface);
 }
 
 .onboarding-provider-card strong {
@@ -156,7 +160,7 @@
   grid-row: 2;
   min-width: 0;
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 1.6;
   overflow-wrap: anywhere;
   white-space: normal;
@@ -170,7 +174,7 @@
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
-  margin-bottom: 7px;
+  margin-bottom: 8px;
 }
 
 .onboarding-field-title,
@@ -206,11 +210,11 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  height: 38px;
+  height: 36px;
   padding: 0 11px;
   border: 1px solid var(--line-2);
   border-radius: 0;
-  background: color-mix(in srgb, var(--bg-canvas) 82%, transparent);
+  background: var(--bg-canvas);
   color: var(--ink-1);
   font: 12.5px/1.4 var(--font-zh-serif);
   outline: none;
@@ -268,8 +272,8 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 22px;
-  margin-top: 7px;
+  min-height: 20px;
+  margin-top: 6px;
   color: var(--ink-3);
   font-size: 12px;
   line-height: 1.5;
@@ -290,7 +294,7 @@
 
 @keyframes onboarding-spin { to { transform: rotate(360deg); } }
 
-.onboarding-help { margin-top: 6px; }
+.onboarding-help { margin-top: 2px; }
 .onboarding-help summary {
   display: inline;
   border-bottom: 1px dotted var(--mark);
@@ -300,6 +304,15 @@
   list-style: none;
 }
 .onboarding-help summary::-webkit-details-marker { display: none; }
+.onboarding-help-link {
+  display: block;
+  width: fit-content;
+  margin-top: 2px;
+  border-bottom: 1px dotted var(--mark);
+  color: var(--mark);
+  font-size: 12px;
+  text-decoration: none;
+}
 .onboarding-help ol {
   margin: 8px 0 0;
   padding-left: 20px;
@@ -310,20 +323,39 @@
 .onboarding-help a { color: var(--mark); text-decoration: none; border-bottom: 1px dotted var(--mark); }
 
 .onboarding-custom-fields {
-  --qj-switch-bg: var(--ink-surface);
-  --qj-switch-active-bg: var(--ink-surface-2);
+  /* 自定义字段复用设置页深墨 sheet 的 sm-*/skin-select 组件,此处把它们的
+     --qj-* 变量重映射到暖纸 token,让同一套组件落在浅纸页面上 */
+  --qj-switch-bg: var(--bg-canvas);
+  --qj-switch-active-bg: var(--bg-hover);
   --qj-switch-border: var(--line-2);
   --qj-cinnabar: var(--mark);
-  --qj-switch-text: var(--ink-on-dark);
-  --qj-header-sub: var(--ink-4);
+  --qj-switch-text: var(--ink-1);
+  --qj-header-sub: var(--ink-3);
   min-width: 0;
+}
+
+/* 协议下拉触发器与同页输入框同形同高 */
+.onboarding-page .skin-select__trigger {
+  height: 36px;
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+/* 下拉菜单 portal 在 body 下、且是深墨变体;本页挂载期间换成暖纸菜单 */
+body:has(> #root .onboarding-page) .skin-select__menu--ink {
+  --skin-menu-bg: var(--bg-canvas);
+  --skin-menu-border: var(--line-2);
+  --skin-menu-text: var(--ink-2);
+  --skin-menu-muted: var(--ink-4);
+  --skin-menu-hover: var(--mark-soft);
+  --skin-menu-accent: var(--mark);
 }
 
 .onboarding-page .sm-field {
   display: grid;
   gap: 6px;
   min-width: 0;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .onboarding-page .sm-field-select { width: 100%; }
 .onboarding-page .sm-field-err {
@@ -339,7 +371,7 @@
 }
 
 .onboarding-submit-message {
-  margin: 16px 0 -10px;
+  margin: 14px 0 -6px;
   color: var(--diff-del-ink);
   font-size: 12px;
   line-height: 1.6;
@@ -349,9 +381,19 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 32px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-1);
 }
 .onboarding-actions .wf-btn { min-height: 34px; padding-inline: 20px; }
+
+/* 主按钮禁用态:墨块压 40% 透明度的"灰块"太笨重,改空心线框待启态 */
+.onboarding-page .wf-btn.primary:disabled {
+  border-color: var(--line-2);
+  background: transparent;
+  color: var(--ink-4);
+  opacity: 1;
+}
 
 .onboarding-sr-only {
   position: absolute;
@@ -366,7 +408,7 @@
 }
 
 @media (max-width: 560px) {
-  .onboarding-column { width: min(100% - 30px, 480px); padding: 28px 0; }
+  .onboarding-column { width: min(100% - 30px, 440px); padding: 28px 0; }
   .onboarding-provider-cards { grid-template-columns: 1fr; }
 }
 

@@ -17,6 +17,7 @@ import {
   type ModelProvider,
 } from "../../overlays/settings/visitorKeyStore";
 import { useOnboardingSettings } from "../../system/onboarding/OnboardingSettingsContext";
+import { CheckIcon } from "../../system/icons";
 import { DeepSeekColorIcon, KimiColorIcon } from "./ProviderBrandIcons";
 import "./onboarding.css";
 
@@ -126,8 +127,8 @@ function deepseekSuccessMessage(body: BalanceState): string {
   const balance = body.balances?.find((item) => item.currency.toUpperCase() === "CNY")
     ?? body.balances?.[0];
   return balance?.total
-    ? `✓ 密钥可用 · 余额 ¥${balance.total}`
-    : "✓ 密钥可用";
+    ? `密钥可用 · 余额 ¥${balance.total}`
+    : "密钥可用";
 }
 
 export function OnboardingPage() {
@@ -241,7 +242,7 @@ export function OnboardingPage() {
             status: "ok",
             message: provider === "deepseek"
               ? deepseekSuccessMessage(body)
-              : "✓ 密钥可用 · K3 权限已开通",
+              : "密钥可用 · K3 权限已开通",
             fingerprint,
           });
         } else {
@@ -276,7 +277,7 @@ export function OnboardingPage() {
         setValidation(provider, mode, body.ok
           ? {
               status: "ok",
-              message: "✓ 连接成功 · 模型可用",
+              message: "连接成功 · 模型可用",
               fingerprint,
               normalizedBaseUrl: body.normalizedBaseUrl?.trim() || custom.baseUrl.trim(),
             }
@@ -471,26 +472,35 @@ export function OnboardingPage() {
                 />
               </label>
               <ValidationLine validation={activeValidation} />
-              <details className="onboarding-help">
-                <summary>如何获取?</summary>
-                <ol>
-                  <li>
-                    前往{" "}
-                    <a
-                      href={selectedProvider === "deepseek"
-                        ? "https://platform.deepseek.com/"
-                        : "https://platform.moonshot.cn/"}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {selectedProvider === "deepseek" ? "platform.deepseek.com" : "platform.moonshot.cn"}
-                    </a>
-                    {" "}并登录
-                  </li>
-                  <li>{selectedProvider === "deepseek" ? "进入 API keys，创建并复制密钥" : "进入 API Key 管理，新建并复制密钥"}</li>
-                  <li>{selectedProvider === "deepseek" ? "按量计费，小额充值即可开始使用" : "确认套餐已开通 K3 / K2.7 Code 权限"}</li>
-                </ol>
-              </details>
+              {selectedProvider === "deepseek" ? (
+                <a
+                  className="onboarding-help-link"
+                  href="https://qingagent.com/blog/setup-deepseek"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  如何获取?
+                </a>
+              ) : (
+                <details className="onboarding-help">
+                  <summary>如何获取?</summary>
+                  <ol>
+                    <li>
+                      前往{" "}
+                      <a
+                        href="https://platform.moonshot.cn/"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        platform.moonshot.cn
+                      </a>
+                      {" "}并登录
+                    </li>
+                    <li>进入 API Key 管理，新建并复制密钥</li>
+                    <li>确认套餐已开通 K3 / K2.7 Code 权限</li>
+                  </ol>
+                </details>
+              )}
             </>
           ) : (
             <div className="onboarding-custom-fields">
@@ -543,6 +553,7 @@ function ValidationLine({ validation }: { validation: ValidationState }) {
       aria-live="polite"
     >
       {validation.status === "checking" ? <span className="onboarding-spinner" aria-hidden="true" /> : null}
+      {validation.status === "ok" ? <CheckIcon size={13} /> : null}
       <span>{validation.status === "checking" ? "正在检测密钥…" : validation.message}</span>
     </div>
   );

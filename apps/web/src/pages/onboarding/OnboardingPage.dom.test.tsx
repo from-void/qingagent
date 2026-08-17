@@ -49,6 +49,30 @@ describe("OnboardingPage", () => {
     expect(recommended?.closest(".onboarding-provider-card")?.textContent).toContain("DeepSeek");
   });
 
+  it("DeepSeek 如何获取直达图文教程，Kimi 仍保留原折叠说明", async () => {
+    vi.stubGlobal("fetch", onboardingFetch());
+    await renderPage();
+
+    const deepseekHelp = Array.from(host.querySelectorAll<HTMLAnchorElement>("a")).find((item) =>
+      item.textContent?.trim() === "如何获取?",
+    );
+    expect(deepseekHelp?.href).toBe("https://qingagent.com/blog/setup-deepseek");
+    expect(deepseekHelp?.target).toBe("_blank");
+    expect(deepseekHelp?.rel).toBe("noopener noreferrer");
+    expect(deepseekHelp?.closest("details")).toBeNull();
+    expect(host.textContent).not.toContain("进入 API keys，创建并复制密钥");
+    expect(host.textContent).not.toContain("按量计费，小额充值即可开始使用");
+
+    clickButton("Kimi");
+    const kimiHelp = Array.from(host.querySelectorAll("summary")).find((item) =>
+      item.textContent?.trim() === "如何获取?",
+    );
+    expect(kimiHelp?.closest("details")).not.toBeNull();
+    expect(kimiHelp?.closest("details")?.querySelector("a")?.href).toBe("https://platform.moonshot.cn/");
+    expect(host.textContent).toContain("进入 API Key 管理，新建并复制密钥");
+    expect(host.textContent).toContain("确认套餐已开通 K3 / K2.7 Code 权限");
+  });
+
   it("厂商与官方/自定义切换分别保留已填内容", async () => {
     vi.stubGlobal("fetch", onboardingFetch());
     await renderPage();
@@ -75,6 +99,8 @@ describe("OnboardingPage", () => {
       await vi.advanceTimersByTimeAsync(700);
     });
     expect(host.textContent).toContain("密钥可用");
+    expect(host.querySelector(".onboarding-validation.is-ok svg")).not.toBeNull();
+    expect(host.textContent).not.toContain("✓");
     expect(start.disabled).toBe(false);
 
     await act(async () => {

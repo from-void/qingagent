@@ -13,6 +13,7 @@ import { ImageCM } from "../../components/ImageView";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
 
 const IMAGE_SRC = "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png";
+const DESKTOP_DATA_ORIGIN = "http://127.0.0.1:43123";
 
 function polyfillDom() {
   const rect = (width = 0, height = 0) => ({
@@ -134,6 +135,47 @@ describe("ImageView", () => {
     document.body.innerHTML = "";
     mounted = null;
     vi.unstubAllGlobals();
+  });
+
+  it("桌面端改写 live NodeView 与静态文档图片的 /api src", async () => {
+    vi.stubGlobal("electron", {
+      platform: "linux",
+      isDesktop: true,
+      dataOrigin: DESKTOP_DATA_ORIGIN,
+    } satisfies Pick<NonNullable<Window["electron"]>, "platform" | "isDesktop" | "dataOrigin">);
+
+    const editor = await mountEditor(imageDoc());
+    try {
+      const liveImage = editor.view.dom.querySelector<HTMLImageElement>(".pm-image-media > img");
+      expect(liveImage?.src).toBe(`${DESKTOP_DATA_ORIGIN}${IMAGE_SRC}`);
+    } finally {
+      await unmount(editor);
+    }
+
+    const snap = pmDocToViewDocumentSnapshot(imageDoc(), 1);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(createElement(DocumentSnapshotView, {
+          doc: snap,
+          editable: false,
+          showPatches: false,
+          acceptedPatches: new Set<string>(),
+          rejectedPatches: new Set<string>(),
+        }));
+      });
+      await flush();
+
+      const staticImage = container.querySelector<HTMLImageElement>(".pm-image-readonly .pm-image-media > img");
+      expect(staticImage?.src).toBe(`${DESKTOP_DATA_ORIGIN}${IMAGE_SRC}`);
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
   });
 
   it("按 align 渲染,对齐按钮会写回 attrs", async () => {

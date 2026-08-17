@@ -72,7 +72,7 @@ vi.mock("three", async (importOriginal) => {
   };
 });
 
-import { InkBubble } from "../../InkBubble";
+import { InkBubble, inkBubbleUniformsForCanvas } from "../../InkBubble";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -141,6 +141,25 @@ describe("InkBubble WebGL snapshot settling", () => {
     vi.restoreAllMocks();
   });
 
+  it("以单行气泡的像素效果换算短/高画布 uniforms", () => {
+    const short = inkBubbleUniformsForCanvas(156, 68);
+    const tall = inkBubbleUniformsForCanvas(636, 424);
+
+    expect(short).toMatchObject({
+      uPadFracH: 0.08,
+      uPadFracV: 0.085,
+      uNoiseAmp: 0.15,
+      uBorderRadius: 0.2,
+    });
+    expect(tall.uPadFracH * 636).toBeCloseTo(short.uPadFracH * 156, 8);
+    expect(tall.uPadFracV * 424).toBeCloseTo(short.uPadFracV * 68, 8);
+    expect(tall.uNoiseAmp * 424).toBeCloseTo(short.uNoiseAmp * 68, 8);
+    expect(tall.uBorderRadius * 424).toBeCloseTo(short.uBorderRadius * 68, 8);
+    expect(tall.uBorderRadius).toBeLessThan(
+      Math.min(0.5 - tall.uPadFracV, (636 / 424) * (0.5 - tall.uPadFracH)),
+    );
+  });
+
   it("非动画气泡首帧自带深色预绘兜底且不触发正文浮现动画", () => {
     const initialMarkup = renderToStaticMarkup(
       <InkBubble animate={false}>静止气泡</InkBubble>,
@@ -155,8 +174,9 @@ describe("InkBubble WebGL snapshot settling", () => {
 
     const compactCss = inkBubbleCss.replace(/\s+/g, "");
     expect(compactCss).toContain(
-      ".ink-bubble--prepaint{background:var(--ink-1);border-radius:6px;}",
+      ".ink-bubble--prepaint,.ink-bubble--static-fallback{border-radius:6px;}",
     );
+    expect(compactCss).toContain(".ink-bubble--prepaint{background:var(--ink-1);}");
     expect(compactCss).toContain(
       "#view-workspace.ink-bubble.wf-msg.user.ink-bubble--prepaint{background:var(--ink-1);}",
     );

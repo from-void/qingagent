@@ -128,15 +128,16 @@ const FRAGMENT_SHADER = /* glsl */ `
     // Right edge gets extra displacement (trailing brush edge = more ragged)
     float rightBias = smoothstep(0.3, 1.0, normPos.x) * 1.5 + 1.0;
 
-    // Displacement magnitudes — scaled by uNoiseAmp (default ~0.07 gives original look)
+    // Displacement magnitudes — uNoiseAmp is converted from a fixed pixel design value.
     float nAmp = uNoiseAmp / 0.07; // normalize so 0.07 = original multiplier
+    float pixelNoiseScale = uNoiseAmp / 0.150; // 1.0 at the 68px single-line reference canvas
     float lrDisp = ((edgeNoiseH1 - 0.5) * 0.07 + (edgeNoiseH2 - 0.5) * 0.035) * lateralness * rightBias * nAmp;
     float tbDisp = ((edgeNoiseV1 - 0.5) * 0.04 + (edgeNoiseV2 - 0.5) * 0.02) * (1.0 - lateralness) * nAmp;
     float displacement = abs(lrDisp) + abs(tbDisp);
 
     // Add extra ragged displacement using angle-based noise.
     float angle = atan(centered.y, centered.x);
-    float angularNoise = fbm(vec2(angle * 3.0, 7.77)) * 0.025;
+    float angularNoise = fbm(vec2(angle * 3.0, 7.77)) * 0.025 * pixelNoiseScale;
     displacement += angularNoise;
 
     // Expand outward (subtract from SDF)
@@ -144,11 +145,12 @@ const FRAGMENT_SHADER = /* glsl */ `
 
     // --- Ink alpha from field ---
     // Narrow transition band for sharp-ish but slightly bleedy edges
-    float inkAlpha = 1.0 - smoothstep(-0.006, 0.003, field);
+    float inkAlpha = 1.0 - smoothstep(-0.006 * pixelNoiseScale, 0.003 * pixelNoiseScale, field);
 
     // Edge transparency variation (uneven ink bleed)
     float edgeNoise = fbm(centered * 25.0 + 42.0);
-    float edgeBand = smoothstep(-0.01, 0.003, field) * smoothstep(0.01, -0.003, field);
+    float edgeBand = smoothstep(-0.01 * pixelNoiseScale, 0.003 * pixelNoiseScale, field)
+      * smoothstep(0.01 * pixelNoiseScale, -0.003 * pixelNoiseScale, field);
     inkAlpha -= edgeBand * edgeNoise * 0.25;
 
     // Density variation within ink (organic texture)
@@ -166,9 +168,9 @@ const FRAGMENT_SHADER = /* glsl */ `
         cos(a2) * halfExtent.x * dist,
         sin(a2) * halfExtent.y * dist
       );
-      float r = 0.004 + hash1(fi * 19.3 + 3.0) * 0.006;
+      float r = (0.004 + hash1(fi * 19.3 + 3.0) * 0.006) * pixelNoiseScale;
       float d = splatDot(centered, pos, r);
-      float dotAlpha = 1.0 - smoothstep(-0.002, 0.001, d);
+      float dotAlpha = 1.0 - smoothstep(-0.002 * pixelNoiseScale, 0.001 * pixelNoiseScale, d);
       splatAlpha = max(splatAlpha, dotAlpha * 0.8);
     }
 
@@ -185,9 +187,15 @@ const FRAGMENT_SHADER = /* glsl */ `
       // Noisy leading edge (organic brush front)
       float frontNoise = fbm(vec2(centered.y * 7.0 + 3.0, uTime * 0.5 + 11.0));
       float frontNoise2 = fbm2(vec2(centered.y * 14.0 - 2.0, uTime * 0.3 + 5.0));
-      float sweepEdge = sweepX + (frontNoise - 0.5) * 0.12 + (frontNoise2 - 0.5) * 0.06;
+      float sweepEdge = sweepX
+        + (frontNoise - 0.5) * 0.12 * pixelNoiseScale
+        + (frontNoise2 - 0.5) * 0.06 * pixelNoiseScale;
       // Soft transition at the wipe front
-      sweepMask = smoothstep(sweepEdge + 0.03, sweepEdge - 0.02, centered.x);
+      sweepMask = smoothstep(
+        sweepEdge + 0.03 * pixelNoiseScale,
+        sweepEdge - 0.02 * pixelNoiseScale,
+        centered.x
+      );
     }
 
     float finalAlpha = inkAlpha * sweepMask;
@@ -229,10 +237,44 @@ const DURATION = 0.5; // seconds
 // Content padding is set in ink-bubble.css: 6px 25px
 const PAD_V = 12;            // px — canvas overflow vertical
 const PAD_H = 18;            // px — canvas overflow horizontal
-const SDF_PAD_V = 0.085;    // shader SDF vertical pad fraction
-const SDF_PAD_H = 0.080;    // shader SDF horizontal pad fraction
-const NOISE_AMP = 0.150;    // edge noise amplitude
-const BORDER_RADIUS = 0.200; // SDF rounded rect corner radius
+// 现有单行基线约为 120×44px；连同 canvas overflow 后为 156×68px。
+const SINGLE_LINE_CANVAS_W = 120 + PAD_H * 2;
+const SINGLE_LINE_CANVAS_H = 44 + PAD_V * 2;
+const SDF_PAD_H_PX = 0.080 * SINGLE_LINE_CANVAS_W;
+const SDF_PAD_V_PX = 0.085 * SINGLE_LINE_CANVAS_H;
+const NOISE_AMP_PX = 0.150 * SINGLE_LINE_CANVAS_H;
+const BORDER_RADIUS_PX = 0.200 * SINGLE_LINE_CANVAS_H;
+const BORDER_RADIUS_SAFE_RATIO = 0.9;
+
+export interface InkBubbleSpatialUniforms {
+  uPadFracH: number;
+  uPadFracV: number;
+  uNoiseAmp: number;
+  uBorderRadius: number;
+}
+
+/** 把单行气泡的墨形换算为固定像素，再投影到当前 SDF 归一化坐标。 */
+export function inkBubbleUniformsForCanvas(
+  canvasWidth: number,
+  canvasHeight: number,
+): InkBubbleSpatialUniforms {
+  const safeWidth = Math.max(1, canvasWidth);
+  const safeHeight = Math.max(1, canvasHeight);
+  const padHPx = Math.min(SDF_PAD_H_PX, safeWidth * 0.49);
+  const padVPx = Math.min(SDF_PAD_V_PX, safeHeight * 0.49);
+  const halfWidthPx = Math.max(0, safeWidth / 2 - padHPx);
+  const halfHeightPx = Math.max(0, safeHeight / 2 - padVPx);
+  const radiusPx = Math.min(
+    BORDER_RADIUS_PX,
+    Math.min(halfWidthPx, halfHeightPx) * BORDER_RADIUS_SAFE_RATIO,
+  );
+  return {
+    uPadFracH: padHPx / safeWidth,
+    uPadFracV: padVPx / safeHeight,
+    uNoiseAmp: NOISE_AMP_PX / safeHeight,
+    uBorderRadius: radiusPx / safeHeight,
+  };
+}
 
 /**
  * InkBubble — a chat bubble with an ink brush-stroke background that sweeps
@@ -267,6 +309,7 @@ export function InkBubble({
     const canvasW = contentW + PAD_H * 2;
     const canvasH = contentH + PAD_V * 2;
     const aspect = canvasW / canvasH;
+    const spatialUniforms = inkBubbleUniformsForCanvas(canvasW, canvasH);
 
     const ignoreResourceError = (action: () => void) => {
       try {
@@ -324,10 +367,10 @@ export function InkBubble({
       uProgress: { value: animate ? 0.0 : 1.0 },
       uAspect: { value: aspect },
       uColor: { value: new THREE.Vector3(...INK_COLOR) },
-      uPadFracH: { value: SDF_PAD_H },
-      uPadFracV: { value: SDF_PAD_V },
-      uNoiseAmp: { value: NOISE_AMP },
-      uBorderRadius: { value: BORDER_RADIUS },
+      uPadFracH: { value: spatialUniforms.uPadFracH },
+      uPadFracV: { value: spatialUniforms.uPadFracV },
+      uNoiseAmp: { value: spatialUniforms.uNoiseAmp },
+      uBorderRadius: { value: spatialUniforms.uBorderRadius },
     };
 
     const material = new THREE.ShaderMaterial({

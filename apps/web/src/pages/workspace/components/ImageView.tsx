@@ -6,6 +6,8 @@ import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import { MediaBlockToolbar } from "./MediaBlockToolbar";
 import { isSvgSrc, svgFallbackWidth } from "./imageSizing";
 import { normalizeImageAlign, type ImageAlign } from "../data/imageAlign";
+import { FullscreenIcon } from "./icons";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 export { normalizeImageAlign, type ImageAlign } from "../data/imageAlign";
 import "./ImageView.css";
 
@@ -26,6 +28,7 @@ type ImageCommandOptions = {
 
 function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewProps) {
   const src = String(node.attrs.src ?? "");
+  const renderedSrc = desktopDataUrl(src);
   const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
   const caption = typeof node.attrs.caption === "string" ? node.attrs.caption : null;
   const width = positiveSize(node.attrs.width);
@@ -63,7 +66,7 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
         <div className="pm-image-media">
           <img
             ref={imgRef}
-            src={src}
+            src={renderedSrc}
             alt={alt}
             width={shownWidth ?? undefined}
             height={height ?? undefined}
@@ -157,7 +160,7 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
         ariaLabel="图片全屏查看"
         contentClassName="media-zoom-content--image"
       >
-        <img src={src} alt={alt} style={fullscreenImgStyle(src)} />
+        <img src={renderedSrc} alt={alt} style={fullscreenImgStyle(src)} />
       </MediaZoomFullscreen>
     </NodeViewWrapper>
   );
@@ -206,7 +209,8 @@ export function ReadonlyImageFigure({
             setFullscreen(true);
           }}
         >
-          ⛶ 全屏
+          <FullscreenIcon size={14} />
+          全屏
         </button>
       </div>
       {caption ? <figcaption className="pm-image-caption">{caption}</figcaption> : null}

@@ -153,7 +153,7 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
 	    case "image":
 	      return (
 	        <ReadonlyImageFigure
-	          src={node.attrs.src}
+	          src={desktopDataUrl(node.attrs.src)}
 	          alt={node.attrs.alt ?? ""}
 	          caption={node.attrs.caption}
 	          width={node.attrs.width}

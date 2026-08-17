@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import { goConfigureModel } from "../../../system/modelKeyGate";
+import { CoachMark } from "../../../system/onboarding/CoachMark";
+import { useOnboardingSettings } from "../../../system/onboarding/OnboardingSettingsContext";
 import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AskUserOverlay } from "./AskUserOverlay";
 import { ChatInput } from "./ChatInput";
@@ -15,6 +18,7 @@ export function WorkspaceChatPane({
 }: {
   controller: WorkspacePageController;
 }) {
+  const onboarding = useOnboardingSettings();
   const {
     state,
     effectivePatchRevealing,
@@ -64,6 +68,15 @@ export function WorkspaceChatPane({
     stream: controller.streamRef.current,
   });
   const inputHidden = inputHandedOff || Boolean(inlineConfirm);
+  const [coachReady, setCoachReady] = useState(false);
+  useEffect(() => {
+    if (inputHidden || controller.hydration.phase === "waiting" || !onboarding.state) {
+      setCoachReady(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setCoachReady(true), 420);
+    return () => window.clearTimeout(timer);
+  }, [controller.hydration.phase, inputHidden, onboarding.state]);
 
   return (
     <div className={WORKSPACE_PAPER_DOM.chatColumnClass}>
@@ -150,6 +163,15 @@ export function WorkspaceChatPane({
             waitForResolution={isLiveConfirm}
           />
         )}
+        <CoachMark
+          id="editor-input"
+          anchor={() => inputMorphRef.current}
+          visible={coachReady}
+          placement="top-start"
+          title="告诉青简写什么"
+        >
+          比如:写一篇 2000 字的公众号文章,主题是慢生活。素材、要求都可以直接说。
+        </CoachMark>
       </div>
     </div>
   );

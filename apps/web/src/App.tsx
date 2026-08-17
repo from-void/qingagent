@@ -9,6 +9,7 @@ import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { onceAsync } from "./system/onceAsync";
 import { WORKSPACE_PAPER_CSS_VARIABLES } from "./system/workspacePaperGeometry";
 import { useBackendConnection } from "./system/backendConnectionStore";
+import { OnboardingSettingsProvider } from "./system/onboarding/OnboardingSettingsContext";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 // 路由页面懒加载:首页只下载 home chunk,workspace 的 tiptap 编辑器等不再进首屏 bundle。
@@ -59,13 +60,15 @@ export default function App() {
   return (
     <ToastProvider>
       <ConfirmProvider>
-        <AppShell />
-        <BackendConnectionBanner />
-        <AppUpdateWatcher />
-        <DesktopDialogHost />
-        <AuthTokenGate />
-        {/* 可编辑区域的自绘右键菜单(宋体、水墨皮肤);非编辑区域不接管。 */}
-        <EditContextMenu />
+        <OnboardingSettingsProvider>
+          <AppShell />
+          <BackendConnectionBanner />
+          <AppUpdateWatcher />
+          <DesktopDialogHost />
+          <AuthTokenGate />
+          {/* 可编辑区域的自绘右键菜单(宋体、水墨皮肤);非编辑区域不接管。 */}
+          <EditContextMenu />
+        </OnboardingSettingsProvider>
       </ConfirmProvider>
     </ToastProvider>
   );

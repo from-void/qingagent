@@ -1,5 +1,24 @@
 import type { ModelProvider } from "./visitorKeyStore";
 
+export interface ModelProviderConfigurationSources {
+  localConfigured?: boolean;
+  serverConfigured?: boolean;
+}
+
+/** 设置页与首启门共用：合并 visitor/custom 本机配置和 DB/env 服务端配置。 */
+export function isModelProviderConfigured(
+  sources: ModelProviderConfigurationSources,
+): boolean {
+  return Boolean(sources.localConfigured || sources.serverConfigured);
+}
+
+export function anyModelProviderConfigured(
+  providers: readonly ModelProvider[],
+  sourcesOf: (provider: ModelProvider) => ModelProviderConfigurationSources,
+): boolean {
+  return providers.some((provider) => isModelProviderConfigured(sourcesOf(provider)));
+}
+
 export const MODEL_DEFAULTS: Record<ModelProvider, { flash: string; pro: string }> = {
   deepseek: { flash: "deepseek-v4-flash", pro: "deepseek-v4-pro" },
   kimi: { flash: "kimi-for-coding", pro: "k3" },

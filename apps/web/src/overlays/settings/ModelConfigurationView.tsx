@@ -1,6 +1,5 @@
 import { ArrowLeftIcon } from "../../system/icons";
-import { SkinSelect } from "../../system/SkinSelect";
-import { MODEL_DEFAULTS } from "./modelSettingsTypes";
+import { ModelCustomFields } from "./ModelCustomFields";
 import { vendorName } from "./modelVendorMeta";
 import { SecretInput } from "./SecretInput";
 import { maskKey } from "./visitorKeyStore";
@@ -200,96 +199,26 @@ export function ModelConfigurationView({
           <p className="sm-other-note">
             接入任意兼容 OpenAI 协议的云厂商或自部署模型。<strong>进阶操作</strong>,不熟悉请用官方 API。
           </p>
-          <div className="sm-field">
-            <span className="sm-field-label">API 协议类型</span>
-            <SkinSelect
-              className="sm-field-select"
-              value={configProvider === "kimi" ? "openai" : customProtocol}
-              disabled={persisting || configProvider === "kimi"}
-              ariaLabel="API 协议类型"
-              skin="ink"
-              options={[
-                { value: "openai", label: "OpenAI 兼容" },
-                ...(configProvider === "deepseek"
-                  ? [{ value: "anthropic", label: "Anthropic 兼容" }]
-                  : []),
-              ]}
-              onChange={(value) => {
-                invalidateCustomTest();
-                setCustomProtocol(value);
-              }}
-            />
-          </div>
-          <div className="sm-field">
-            <span className="sm-field-label">API 地址(Base URL)</span>
-            <input
-              className={`sm-field-input${customBaseUrlValid === false ? " sm-field-input--invalid" : ""}`}
-              placeholder="https://your-endpoint/v1"
-              value={customBaseUrl}
-              disabled={persisting}
-              aria-invalid={customBaseUrlValid === false}
-              aria-describedby={customBaseUrlValid === false ? "model-custom-base-url-error" : undefined}
-              onChange={(e) => {
-                invalidateCustomTest();
-                setCustomBaseUrl(e.target.value);
-              }}
-            />
-            {customBaseUrlValid === false && (
-              <p className="sm-field-err" id="model-custom-base-url-error">
-                请输入完整地址,需以 http(s):// 开头,如 https://your-endpoint/v1
-              </p>
-            )}
-          </div>
-          <div className="sm-field">
-            <span className="sm-field-label">API key</span>
-            <SecretInput
-              autoComplete="off"
-              spellCheck={false}
-              className="sm-field-input"
-              placeholder="sk-…"
-              value={customKey}
-              disabled={persisting}
-              onChange={(e) => {
-                invalidateCustomTest();
-                setCustomKey(e.target.value);
-              }}
-            />
-          </div>
-          <div className="sm-field">
-            <span className="sm-field-label">
-              {configProvider === "kimi" ? "K2.7 Code（Flash）模型别名" : "V4 Flash 模型别名(可选)"}
-            </span>
-            <input
-              className="sm-field-input"
-              placeholder={MODEL_DEFAULTS[configProvider].flash}
-              value={customModelFlash}
-              disabled={persisting}
-              onChange={(e) => {
-                invalidateCustomTest();
-                setCustomModelFlash(e.target.value);
-              }}
-            />
-          </div>
-          <div className="sm-field">
-            <span className="sm-field-label">
-              {configProvider === "kimi" ? "K3（Pro）模型别名" : "V4 PRO 模型别名(可选)"}
-            </span>
-            <input
-              className="sm-field-input"
-              placeholder={MODEL_DEFAULTS[configProvider].pro}
-              value={customModelPro}
-              disabled={persisting}
-              onChange={(e) => {
-                invalidateCustomTest();
-                setCustomModelPro(e.target.value);
-              }}
-            />
-          </div>
-          <p className="sm-other-note">
-            {configProvider === "kimi"
-              ? "档位固定映射 Flash → kimi-for-coding、Pro → k3；第三方中转别名不同时可在上方修改。"
-              : "默认适配 DeepSeek 模型。其他模型可在上面改成对应别名自行尝试(效果不保证);两者留空则默认用 deepseek-v4-flash。"}
-          </p>
+          <ModelCustomFields
+            provider={configProvider}
+            values={{
+              protocol: customProtocol,
+              baseUrl: customBaseUrl,
+              apiKey: customKey,
+              modelFlash: customModelFlash,
+              modelPro: customModelPro,
+            }}
+            disabled={persisting}
+            baseUrlValid={customBaseUrlValid}
+            onChange={(key, value) => {
+              invalidateCustomTest();
+              if (key === "protocol") setCustomProtocol(value);
+              else if (key === "baseUrl") setCustomBaseUrl(value);
+              else if (key === "apiKey") setCustomKey(value);
+              else if (key === "modelFlash") setCustomModelFlash(value);
+              else setCustomModelPro(value);
+            }}
+          />
           <button
             type="button"
             className="sm-btn"

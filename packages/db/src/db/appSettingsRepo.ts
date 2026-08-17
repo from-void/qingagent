@@ -95,6 +95,7 @@ export const SETTING_DEEPSEEK_GLOBAL_KEY = "deepseek_global_api_key";
 export const SETTING_KIMI_GLOBAL_KEY = "kimi_global_api_key";
 export const SETTING_MODEL_PROVIDER = "model_provider";
 export const SETTING_MODEL_PARAMS = "model_param_overrides";
+export const SETTING_ONBOARDING_STATE = "onboarding_state";
 export const SETTING_SEARCH_PROVIDER_CONFIG = "search_provider_config";
 export const SETTING_SEARCH_PRIMARY = "search_primary";
 

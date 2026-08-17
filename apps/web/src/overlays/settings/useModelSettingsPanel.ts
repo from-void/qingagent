@@ -18,6 +18,8 @@ import {
 } from "./modelUsage";
 import {
   MODEL_DEFAULTS,
+  anyModelProviderConfigured,
+  isModelProviderConfigured,
   type BalanceState,
   type ServerModelSettings,
 } from "./modelSettingsTypes";
@@ -42,6 +44,10 @@ import {
 } from "./visitorKeyStore";
 import { repairBaseUrlScheme } from "./visionProviderStore";
 import { useModelConfigurationState, useModelUsageState } from "./useModelSettingsState";
+import {
+  testCustomModelConnection,
+  testOfficialModelKey,
+} from "./modelConnectionClient";
 
 // 余额/连通检测始终按 DeepSeek 自己的配置发,不跟随"使用中"的厂商——
 // 两张卡并列时,即使当前用的是 Kimi,DeepSeek 卡照样要显示余额。
@@ -400,14 +406,11 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const res = await fetch("/api/v1/settings/model/balance", {
-            headers: {
-              "x-model-provider": configProvider,
-              "x-model-key": trimmed,
-            },
+          const body = await testOfficialModelKey({
+            provider: configProvider,
+            apiKey: trimmed,
             signal: ctrl.signal,
           });
-          const body = (await res.json()) as BalanceState;
           if (ctrl.signal.aborted) return;
           if (body.ok) {
             setVerifyStatus("ok");
@@ -439,10 +442,12 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
   // —— 每厂商各自的配置状态(visitor / 站点全局 / env / 自定义模型 四源合一)——
   const serverStateOf = (provider: ModelProvider) =>
     server?.providers[provider];
+  const configurationSourcesOf = (provider: ModelProvider) => ({
+    localConfigured: Boolean(visitorKeys[provider]) || Boolean(customProviders[provider]),
+    serverConfigured: serverStateOf(provider)?.apiKeyConfigured,
+  });
   const vendorConfigured = (provider: ModelProvider) =>
-    Boolean(visitorKeys[provider]) ||
-    Boolean(serverStateOf(provider)?.apiKeyConfigured) ||
-    Boolean(customProviders[provider]);
+    isModelProviderConfigured(configurationSourcesOf(provider));
   // 本机就能确定"已配置"的那部分(不依赖 server 首拉),用于首拉在途时先渲染确定为真的卡面
   const locallyConfigured = (provider: ModelProvider) =>
     Boolean(visitorKeys[provider]) || Boolean(customProviders[provider]);
@@ -455,7 +460,7 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
   const serverProviderState = serverStateOf(configProvider);
   const configProviderConfigured = vendorConfigured(configProvider);
   const configuredVendors = MODEL_VENDORS.filter((provider) => vendorConfigured(provider));
-  const anyConfigured = configuredVendors.length > 0;
+  const anyConfigured = anyModelProviderConfigured(MODEL_VENDORS, configurationSourcesOf);
   // 「使用中」不变式:只要存在已配置的厂商,就必须恰好有一家在使用中。
   // 当前 active 那家没有有效配置时(清掉了该家 key / 旧数据残留 / server 默认指向未配置家),
   // 渲染立刻回落到有配置的那家(MODEL_VENDORS 顺序 = DeepSeek 优先),落盘由下方 effect 补。
@@ -513,15 +518,12 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
     setVerifyStatus("verifying");
     setVerifyMsg("");
     try {
-      const res = await fetch("/api/v1/settings/model/balance", {
-        headers: {
-          "x-model-provider": "kimi",
-          "x-model-key": trimmed,
-          "x-model-tier": tiers.kimi,
-        },
+      const body = await testOfficialModelKey({
+        provider: "kimi",
+        apiKey: trimmed,
+        tier: tiers.kimi,
         signal: controller.signal,
       });
-      const body = (await res.json()) as BalanceState;
       if (!canCommit()) return;
       if (body.ok) {
         setVerifyStatus("ok");
@@ -729,26 +731,13 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       persistRevisionRef.current === persistRevision;
     let phase: "testing" | "saving" = "testing";
     try {
-      const res = await fetch("/api/v1/settings/model/test-custom", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: target,
-          baseUrl,
-          apiKey,
-          model: modelFlash,
-          protocol: target === "kimi" ? "openai" : customProtocol,
-        }),
-        signal: testCtrl.signal,
-      });
-      const body = (await res.json()) as {
-        ok: boolean;
-        keyInvalid?: boolean;
-        permissionDenied?: boolean;
-        error?: string;
-        // 服务端归一化后的 canonical 地址(补 /v1、剥多填的 endpoint 段、去 query/hash)
-        normalizedBaseUrl?: string;
-      };
+      const body = await testCustomModelConnection({
+        provider: target,
+        baseUrl,
+        apiKey,
+        model: modelFlash,
+        protocol: target === "kimi" ? "openai" : customProtocol,
+      }, testCtrl.signal);
       if (!canCommit()) return;
       if (!body.ok) {
         setMessage(

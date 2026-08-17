@@ -20,6 +20,18 @@ const WSL_COMMAND_DEADLINE_MS = 1_500;
 const HEALTH_DEADLINE_MS = 1_200;
 const execFileAsync = promisify(execFile);
 
+type DiscoveryFileReadImpl = (filePath: string) => Promise<string | null>;
+
+/**
+ * 非 win32 改为主进程内发现后，libuv 文件读一旦挂起便无法随总预算超时取消。
+ * 因此按绝对文件路径复用未决读：local 每轮固定只读 instance.json / starting.json，
+ * 无论重试多少次，泄漏上界都是 2 个线程池槽；settle 后立即清位，允许后续重试。
+ * 这个 2 槽前提依赖 local 不设置 requireReachableHome；若未来增加该选项，额外的
+ * HOME lstat 可能把上界推到 4 槽并耗尽默认线程池，届时必须同步重估这里的隔离策略。
+ * win32 仍在可整树击杀的 worker 中执行，不依赖这项进程内风险收敛。
+ */
+const pendingDiscoveryFileReads = new Map<string, Promise<string | null>>();
+
 interface InstanceFile extends AttachIdentity {
   token: string;
 }
@@ -54,30 +66,47 @@ async function withDeadline<T>(work: Promise<T>, deadlineMs = FILE_IO_DEADLINE_M
   }
 }
 
-async function readDiscoveryFile(filePath: string): Promise<string | null> {
+async function readDiscoveryFileUnshared(filePath: string): Promise<string | null> {
   try {
-    return await withDeadline((async () => {
-      const before = await lstat(filePath);
-      if (!before.isFile() || before.isSymbolicLink()) throw new Error("not regular");
-      if (before.size > DISCOVERY_FILE_LIMIT_BYTES) throw new Error("too large");
-      const handle = await open(filePath, "r");
-      try {
-        const after = await handle.stat();
-        if (
-          !after.isFile()
-          || after.size > DISCOVERY_FILE_LIMIT_BYTES
-          || after.dev !== before.dev
-          || after.ino !== before.ino
-        ) throw new Error("discovery file changed during read");
-        return await handle.readFile("utf8");
-      } finally {
-        await handle.close();
-      }
-    })());
+    const before = await lstat(filePath);
+    if (!before.isFile() || before.isSymbolicLink()) throw new Error("not regular");
+    if (before.size > DISCOVERY_FILE_LIMIT_BYTES) throw new Error("too large");
+    const handle = await open(filePath, "r");
+    try {
+      const after = await handle.stat();
+      if (
+        !after.isFile()
+        || after.size > DISCOVERY_FILE_LIMIT_BYTES
+        || after.dev !== before.dev
+        || after.ino !== before.ino
+      ) throw new Error("discovery file changed during read");
+      return await handle.readFile("utf8");
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+function readDiscoveryFile(
+  filePath: string,
+  readImpl: DiscoveryFileReadImpl = readDiscoveryFileUnshared,
+): Promise<string | null> {
+  const existing = pendingDiscoveryFileReads.get(filePath);
+  if (existing) return withDeadline(existing);
+
+  const pending = Promise.resolve().then(() => readImpl(filePath));
+  pendingDiscoveryFileReads.set(filePath, pending);
+  const clear = (): void => {
+    if (pendingDiscoveryFileReads.get(filePath) === pending) {
+      pendingDiscoveryFileReads.delete(filePath);
+    }
+  };
+  void pending.then(clear, clear);
+  // 每个调用者仍有独立 2s 预算，但单飞表只在不可取消的底层 I/O 真正 settle 后清位。
+  return withDeadline(pending);
 }
 
 function isUuid(value: unknown): value is string {
@@ -175,6 +204,8 @@ async function probeInstance(
 interface InspectCandidateOptions {
   requireReachableHome?: boolean;
   sameProcessNamespace?: boolean;
+  /** 仅供对抗性测试注入底层不可取消的文件读。 */
+  readDiscoveryFileImpl?: DiscoveryFileReadImpl;
 }
 
 export async function inspectCandidate(
@@ -201,8 +232,14 @@ export async function inspectCandidate(
   let startingRaw: string | null;
   try {
     [instanceRaw, startingRaw] = await Promise.all([
-      readDiscoveryFile(path.join(discoveryDir, "instance.json")),
-      readDiscoveryFile(path.join(discoveryDir, "starting.json")),
+      readDiscoveryFile(
+        path.join(discoveryDir, "instance.json"),
+        options.readDiscoveryFileImpl,
+      ),
+      readDiscoveryFile(
+        path.join(discoveryDir, "starting.json"),
+        options.readDiscoveryFileImpl,
+      ),
     ]);
   } catch (error) {
     return {
@@ -350,22 +387,32 @@ export async function discoverWsl(options: DiscoverWslOptions = {}): Promise<Dis
   return observations;
 }
 
+export async function discoverLocalObservations(
+  home: string,
+  inspectCandidateImpl: typeof inspectCandidate = inspectCandidate,
+): Promise<DiscoveryObservation[]> {
+  if (!home) {
+    return [{ source: "local", state: "indeterminate", errorCode: "ENUM_FAILED" }];
+  }
+  return [await inspectCandidateImpl("local", home, { sameProcessNamespace: true })];
+}
+
 async function main(): Promise<void> {
   const home = argument("--home");
   const platform = argument("--platform") ?? process.platform;
-  const observations: DiscoveryObservation[] = [];
-  if (!home) {
-    observations.push({ source: "local", state: "indeterminate", errorCode: "ENUM_FAILED" });
-  } else {
-    observations.push(await inspectCandidate("local", home, { sameProcessNamespace: true }));
-  }
+  const observations = await discoverLocalObservations(home ?? "");
   if (platform === "win32") observations.push(...await discoverWsl());
   const report: DiscoveryReport = { observations };
   process.stdout.write(JSON.stringify(report), () => process.exit(0));
 }
 
+const workerEntryPath = fileURLToPath(import.meta.url);
+const workerEntryName = path.basename(workerEntryPath);
 const isDirectExecution = typeof process.argv[1] === "string"
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  && path.resolve(process.argv[1]) === workerEntryPath
+  // esbuild 会把本模块内联进 index / packaged smoke；仅 worker 固定入口可执行 main。
+  && (workerEntryName === "attachDiscoveryWorker.ts"
+    || workerEntryName === "attach-discovery-worker.js");
 
 if (isDirectExecution) {
   void main().catch(() => {

@@ -1,5 +1,7 @@
-import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runJsInWorker,
@@ -13,8 +15,10 @@ import {
   compileSafeRegex,
   execSafeRegexAll,
 } from "../../../../packages/core/src/agent-run/safeRegex.js";
+import { discoverAttachInstances, isDiscoveryReport } from "./attachDiscovery.js";
 
 const DOS_CHILD_ARG = "--run-js-dos-child";
+const ATTACH_DISCOVERY_ARG = "--smoke-attach-discovery";
 const toolInvocationOptions = { toolCallId: "packaged-worker-smoke", messages: [] } as never;
 
 function fail(message: string, details?: unknown): never {
@@ -37,6 +41,34 @@ async function runDosChild(): Promise<void> {
   });
   const followUp = await runJsInWorker({ code: "return 6 * 7;" });
   process.stdout.write(JSON.stringify({ allocation, followUp, hostSurvived: true }));
+}
+
+async function runAttachDiscoverySmoke(): Promise<void> {
+  const home = await mkdtemp(join(tmpdir(), "qingagent-packaged-attach-discovery-"));
+  let spawnCalled = false;
+  const spawnWorker = ((command: string, args: readonly string[], options: SpawnOptions) => {
+    spawnCalled = true;
+    if (process.platform !== "win32") {
+      throw new Error("非 win32 打包发现意外尝试拉起 worker");
+    }
+    return spawn(command, [...args], options);
+  }) as typeof spawn;
+  try {
+    const report = await discoverAttachInstances({
+      home,
+      platform: process.platform,
+      workerPath: fileURLToPath(new URL("./attach-discovery-worker.js", import.meta.url)),
+      execPath: process.execPath,
+      spawnWorker,
+    });
+    if (!isDiscoveryReport(report)) fail("打包版 attach discovery 报告非法", report);
+    if (process.platform !== "win32" && spawnCalled) {
+      fail("非 win32 打包版 attach discovery 发生了自我拉起");
+    }
+    process.stdout.write("packaged attach discovery smoke passed\n");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 function assertRunJs(result: RunJsResult): void {
@@ -119,6 +151,8 @@ async function runPackagedWorkerSmoke(): Promise<void> {
 try {
   if (process.argv.includes(DOS_CHILD_ARG)) {
     await runDosChild();
+  } else if (process.argv.includes(ATTACH_DISCOVERY_ARG)) {
+    await runAttachDiscoverySmoke();
   } else {
     await runPackagedWorkerSmoke();
   }

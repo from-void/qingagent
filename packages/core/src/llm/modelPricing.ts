@@ -72,6 +72,29 @@ const CURRENT_MODEL_PRICING_CNY_PER_MILLION: ModelPricingTable = {
   },
 };
 
+const MODEL_PRICING_CNY_PER_MILLION_FROM_2026_08_17: ModelPricingTable = {
+  [DEEPSEEK_MODEL_IDS.flash]: {
+    inputCacheHitPerMillion: 0.05,
+    inputCacheMissPerMillion: 1.5,
+    outputPerMillion: 4.5,
+  },
+  [DEEPSEEK_MODEL_IDS.pro]: {
+    inputCacheHitPerMillion: 0.15,
+    inputCacheMissPerMillion: 4.5,
+    outputPerMillion: 13.5,
+  },
+  [KIMI_MODEL_IDS.flash]: {
+    inputCacheHitPerMillion: 1.3,
+    inputCacheMissPerMillion: 6.5,
+    outputPerMillion: 27,
+  },
+  [KIMI_MODEL_IDS.pro]: {
+    inputCacheHitPerMillion: 2,
+    inputCacheMissPerMillion: 20,
+    outputPerMillion: 100,
+  },
+};
+
 const DEPRECATED_PRICING_ENV_NAMES = [
   "MODEL_PRICING_JSON",
   "DEEPSEEK_PRICING_JSON",
@@ -180,6 +203,17 @@ export function createPricingSchedule(epochs: PricingEpoch[]): PricingSchedule {
 export const PRICING_SCHEDULE: PricingSchedule = createPricingSchedule([{
   effectiveFrom: "1970-01-01T00:00:00.000Z",
   pricing: CURRENT_MODEL_PRICING_CNY_PER_MILLION,
+}, {
+  effectiveFrom: "2026-08-16T16:00:00.000Z",
+  pricing: MODEL_PRICING_CNY_PER_MILLION_FROM_2026_08_17,
+  peak: {
+    multiplier: 2,
+    windows: [
+      { start: "09:00", end: "12:00" },
+      { start: "14:00", end: "18:00" },
+    ],
+    models: [DEEPSEEK_MODEL_IDS.flash, DEEPSEEK_MODEL_IDS.pro],
+  },
 }]);
 
 function normalizedCount(value: number | undefined): number {

@@ -3,12 +3,14 @@ import {
   PRICING_SCHEDULE,
   assertPricingEpochs,
   computeCostCnyAt,
+  computeCostCnyForSlice,
   createPricingSchedule,
   toPricingSliceSpec,
   type ModelPricing,
   type PricingEpoch,
   type PricingSchedule,
 } from "../llm/modelPricing.js";
+import { DEEPSEEK_MODEL_IDS, KIMI_MODEL_IDS } from "../llm/modelTypes.js";
 
 const unitPrice: ModelPricing = {
   inputCacheHitPerMillion: 1,
@@ -38,7 +40,20 @@ afterEach(() => {
 describe("pricing schedule", () => {
   it("内置 schedule revision 是 canonical epochs 的完整 SHA-256", () => {
     expect(PRICING_SCHEDULE.revision).toMatch(/^[0-9a-f]{64}$/);
-    expect(toPricingSliceSpec(PRICING_SCHEDULE).epochs).toHaveLength(1);
+    expect(toPricingSliceSpec(PRICING_SCHEDULE)).toEqual({
+      epochs: [{
+        effectiveFrom: "1970-01-01T00:00:00.000Z",
+      }, {
+        effectiveFrom: "2026-08-16T16:00:00.000Z",
+        peak: {
+          windows: [
+            { start: "09:00", end: "12:00" },
+            { start: "14:00", end: "18:00" },
+          ],
+          models: [DEEPSEEK_MODEL_IDS.flash, DEEPSEEK_MODEL_IDS.pro],
+        },
+      }],
+    });
     const changed = createPricingSchedule(PRICING_SCHEDULE.epochs.map((epoch, index) => ({
       ...epoch,
       pricing: Object.fromEntries(Object.entries(epoch.pricing).map(([model, price]) => [
@@ -56,6 +71,108 @@ describe("pricing schedule", () => {
       effectiveFrom: "1970-01-01T00:00:00.000Z",
     }]);
     expect(first.revision).toBe(reordered.revision);
+  });
+
+  it("DeepSeek 2026-08-17 新价从北京时间零时起生效，旧账单保持旧价", () => {
+    expect(PRICING_SCHEDULE.epochs[1]?.pricing[DEEPSEEK_MODEL_IDS.flash]).toEqual({
+      inputCacheHitPerMillion: 0.05,
+      inputCacheMissPerMillion: 1.5,
+      outputPerMillion: 4.5,
+    });
+    expect(PRICING_SCHEDULE.epochs[1]?.pricing[DEEPSEEK_MODEL_IDS.pro]).toEqual({
+      inputCacheHitPerMillion: 0.15,
+      inputCacheMissPerMillion: 4.5,
+      outputPerMillion: 13.5,
+    });
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_MODEL_IDS.flash,
+      { output: 1_000_000 },
+      "2026-08-16T15:59:59.000Z",
+    )).toEqual({ costCny: 2, pricingTier: "standard", pricingMultiplier: 1 });
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_MODEL_IDS.flash,
+      { output: 1_000_000 },
+      "2026-08-16T16:00:00.000Z",
+    )).toEqual({ costCny: 4.5, pricingTier: "standard", pricingMultiplier: 1 });
+  });
+
+  it("DeepSeek 新价在北京时间峰段按 2 倍计价", () => {
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_MODEL_IDS.flash,
+      { output: 1_000_000 },
+      "2026-08-17T01:30:00.000Z",
+    )).toEqual({ costCny: 9, pricingTier: "peak", pricingMultiplier: 2 });
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_MODEL_IDS.pro,
+      { cacheHit: 1_000_000 },
+      "2026-08-17T01:30:00.000Z",
+    )).toEqual({ costCny: 0.3, pricingTier: "peak", pricingMultiplier: 2 });
+  });
+
+  it.each([
+    ["09:00", "2026-08-17T01:00:00.000Z", "peak", 2, 9],
+    ["13:00", "2026-08-17T05:00:00.000Z", "standard", 1, 4.5],
+    ["18:00", "2026-08-17T10:00:00.000Z", "standard", 1, 4.5],
+  ] as const)("北京时间 %s 遵循峰段 [start,end)", (
+    _clock,
+    occurredAt,
+    pricingTier,
+    pricingMultiplier,
+    costCny,
+  ) => {
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_MODEL_IDS.flash,
+      { output: 1_000_000 },
+      occurredAt,
+    )).toEqual({ costCny, pricingTier, pricingMultiplier });
+  });
+
+  it("新 epoch 完整保留 Kimi 两档原价，且 Kimi 不受 DeepSeek 峰段影响", () => {
+    const [oldEpoch, newEpoch] = PRICING_SCHEDULE.epochs;
+    expect(newEpoch?.pricing[KIMI_MODEL_IDS.flash])
+      .toEqual(oldEpoch?.pricing[KIMI_MODEL_IDS.flash]);
+    expect(newEpoch?.pricing[KIMI_MODEL_IDS.pro])
+      .toEqual(oldEpoch?.pricing[KIMI_MODEL_IDS.pro]);
+
+    const usage = { cacheHit: 1_000_000, cacheMiss: 1_000_000, output: 1_000_000 };
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      KIMI_MODEL_IDS.flash,
+      usage,
+      "2026-08-17T01:30:00.000Z",
+    )).toEqual({ costCny: 34.8, pricingTier: "standard", pricingMultiplier: 1 });
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      KIMI_MODEL_IDS.pro,
+      usage,
+      "2026-08-17T01:30:00.000Z",
+    )).toEqual({ costCny: 122, pricingTier: "standard", pricingMultiplier: 1 });
+  });
+
+  it("新 epoch 的 SQL slice 2/3 分别按空闲价与峰价计价", () => {
+    expect(computeCostCnyForSlice(
+      PRICING_SCHEDULE,
+      2,
+      DEEPSEEK_MODEL_IDS.flash,
+      { output: 1_000_000 },
+    )).toEqual({ costCny: 4.5, pricingTier: "standard", pricingMultiplier: 1 });
+    expect(computeCostCnyForSlice(
+      PRICING_SCHEDULE,
+      3,
+      DEEPSEEK_MODEL_IDS.flash,
+      { output: 1_000_000 },
+    )).toEqual({ costCny: 9, pricingTier: "peak", pricingMultiplier: 2 });
+    expect(computeCostCnyForSlice(
+      PRICING_SCHEDULE,
+      3,
+      DEEPSEEK_MODEL_IDS.pro,
+      { cacheHit: 1_000_000 },
+    )).toEqual({ costCny: 0.3, pricingTier: "peak", pricingMultiplier: 2 });
   });
 
   it("修改既有 epoch 单价会追溯重算，事实用量对象逐字节不变", () => {

@@ -12,6 +12,7 @@ import {
   inspectWslCandidate,
   wslUncHomes,
 } from "./attachDiscoveryWorker.js";
+import { decideAttachMode } from "./attachModeDecision.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const roots: string[] = [];
@@ -32,6 +33,37 @@ function discover(home: string) {
   });
 }
 
+async function writeInstance(home: string, pid: number): Promise<void> {
+  const discoveryDir = path.join(home, ".qingagent");
+  await mkdir(discoveryDir, { recursive: true });
+  await writeFile(path.join(discoveryDir, "instance.json"), JSON.stringify({
+    schemaVersion: 2,
+    port: 43_123,
+    pid,
+    version: "0.1.6",
+    attachProtocolVersion: 1,
+    instanceId: "00000000-0000-4000-8000-000000000001",
+    libraryId: "00000000-0000-4000-8000-000000000002",
+    token: `qa_instance_${"a".repeat(64)}`,
+    startedAt: "2026-08-17T00:00:00.000Z",
+  }), { mode: 0o600 });
+}
+
+async function withRefusedConnection<T>(work: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:43123"), {
+      code: "ECONNREFUSED",
+    });
+    throw new TypeError("fetch failed", { cause });
+  }) as typeof fetch;
+  try {
+    return await work();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -39,6 +71,39 @@ after(async () => {
 test("本机发现确认无文件时返回 absent", async () => {
   const result = await discover(await tempHome());
   assert.deepEqual(result, { observations: [{ source: "local", state: "absent" }] });
+});
+
+test("instance.json 的 pid 已死且端口拒连时视为 absent 并启动嵌入式", async () => {
+  const home = await tempHome();
+  await writeInstance(home, 2_147_483_647);
+
+  const observation = await withRefusedConnection(() => (
+    inspectCandidate("local", home, { sameProcessNamespace: true })
+  ));
+
+  assert.deepEqual(observation, { source: "local", state: "absent" });
+  assert.deepEqual(decideAttachMode({ observations: [observation] }, null), { kind: "embedded" });
+});
+
+test("instance.json 的 pid 存活但端口拒连时维持 UNREACHABLE 阻断", async () => {
+  const home = await tempHome();
+  await writeInstance(home, process.pid);
+
+  const observation = await withRefusedConnection(() => (
+    inspectCandidate("local", home, { sameProcessNamespace: true })
+  ));
+
+  assert.deepEqual(observation, {
+    source: "local",
+    state: "indeterminate",
+    errorCode: "UNREACHABLE",
+  });
+  assert.deepEqual(decideAttachMode({ observations: [observation] }, null), {
+    kind: "blocked",
+    reason: "discovery",
+    errorCodes: ["UNREACHABLE"],
+    allowUnbind: false,
+  });
 });
 
 test("活跃 starting.json 租约返回精确的 STARTING_LEASE", async () => {

@@ -139,6 +139,7 @@ function identityMatches(actual: unknown, expected: InstanceFile): boolean {
 async function probeInstance(
   instance: InstanceFile,
   source: string,
+  sameProcessNamespace: boolean | undefined,
 ): Promise<DiscoveryObservation> {
   const endpoint = `http://127.0.0.1:${instance.port}`;
   let response: Response;
@@ -148,6 +149,10 @@ async function probeInstance(
       signal: AbortSignal.timeout(HEALTH_DEADLINE_MS),
     });
   } catch {
+    // 只有同一进程命名空间内才能用 PID 否定实例存活；跨 WSL/Windows 仍保持不确定。
+    if (sameProcessNamespace !== false && !pidAlive(instance.pid)) {
+      return { source, state: "absent" };
+    }
     return { source, state: "indeterminate", errorCode: "UNREACHABLE" };
   }
   if (response.status === 401 || response.status === 403) {
@@ -215,7 +220,7 @@ export async function inspectCandidate(
       if (parsed.kind === "incompatible") {
         return { source, state: "incompatible", errorCode: "INCOMPATIBLE" };
       }
-      return await probeInstance(parsed.value, source);
+      return await probeInstance(parsed.value, source, options.sameProcessNamespace);
     } catch {
       return { source, state: "indeterminate", errorCode: "MALFORMED" };
     }

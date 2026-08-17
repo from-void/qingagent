@@ -1,8 +1,8 @@
 appId: com.qingagent.desktop
 productName: 青简
-# 可执行文件名固定 ASCII(避免产物 exe 命名为「青简.exe」的编码/URL 隐患);
-# 应用显示名仍是 productName「青简」。注:Windows NSIS 打包性能由下方关闭差分包与
-# Linux/Wine 构建策略保障；旧 resources/installer.nsh 压缩器覆盖已删除，非 CJK 文件名问题。
+# Windows/Linux 可执行文件名固定 ASCII(避免产物 exe 命名为「青简.exe」的编码/URL 隐患);
+# macOS 在 mac.executableName 单独恢复「青简」bundle 名。注:Windows NSIS 打包性能由下方关闭
+# 差分包与 Linux/Wine 构建策略保障；旧 resources/installer.nsh 压缩器覆盖已删除，非 CJK 文件名问题。
 executableName: qingagent
 # 产物文件名用干净 ASCII:默认会取包名 @qingagent/desktop(含 @ 与 /)或中文 productName,
 # 上传 GitHub Release 时 "Request path contains unescaped characters"。固定为 qingagent-版本-os-arch。
@@ -74,6 +74,9 @@ extraResources:
     filter:
       - "**/*"
 mac:
+  # electron-builder 会用该平台值生成 productFilename、青简.app 与 CFBundleExecutable;
+  # Finder/Dock/菜单栏名及 CFBundleName/CFBundleDisplayName 则由顶层 productName「青简」提供。
+  executableName: 青简
   # CI 使用 Developer ID Application 签名；GitHub Actions 的 macOS 发布步骤再开启 Apple notarization。
   # 本地 build-mac.sh 仍保持未签名，便于快速测试；正式/Beta tag 由 GitHub Actions 处理。
   hardenedRuntime: true
@@ -83,6 +86,22 @@ mac:
   target:
     - zip
     - dmg
+dmg:
+  # 同目录 dmg-background@2x.png 会由 electron-builder 自动配对并合成为 Retina TIFF。
+  background: dmg-background.png
+  title: ${productName}
+  window:
+    width: 660
+    height: 400
+  iconSize: 96
+  contents:
+    - x: 185
+      y: 235
+      type: file
+    - x: 475
+      y: 235
+      type: link
+      path: /Applications
 win:
   # Linux 无 wine:关闭对 exe 的 rcedit/签名(图标/版本元数据),避免 wine 依赖。
   signAndEditExecutable: false

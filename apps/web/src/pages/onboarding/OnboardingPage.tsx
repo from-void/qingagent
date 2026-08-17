@@ -17,6 +17,7 @@ import {
   type ModelProvider,
 } from "../../overlays/settings/visitorKeyStore";
 import { useOnboardingSettings } from "../../system/onboarding/OnboardingSettingsContext";
+import { DeepSeekColorIcon, KimiColorIcon } from "./ProviderBrandIcons";
 import "./onboarding.css";
 
 type SetupMode = "official" | "custom";
@@ -419,7 +420,7 @@ export function OnboardingPage() {
                 onClick={() => setSelectedProvider(provider)}
               >
                 {provider === "deepseek" ? (
-                  <span className="ws-launch-role-recommended">推荐</span>
+                  <span className="onboarding-provider-recommended">推荐</span>
                 ) : null}
                 <ProviderLogo provider={provider} />
                 <strong>{meta.name}</strong>
@@ -528,7 +529,7 @@ export function OnboardingLoadingPage() {
 function ProviderLogo({ provider }: { provider: ModelProvider }) {
   return (
     <span className={`onboarding-provider-logo onboarding-provider-logo--${provider}`} aria-hidden="true">
-      {provider === "deepseek" ? "D" : "K"}
+      {provider === "deepseek" ? <DeepSeekColorIcon /> : <KimiColorIcon />}
     </span>
   );
 }

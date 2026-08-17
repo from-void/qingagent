@@ -1,8 +1,14 @@
-.onboarding-page,
-.onboarding-loading-page {
+.onboarding-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
   background: linear-gradient(165deg, var(--bg-canvas), var(--bg-paper-deep) 62%, var(--bg-window));
@@ -10,15 +16,25 @@
   font-family: var(--font-zh-serif);
 }
 
-.onboarding-column {
-  width: min(460px, calc(100vw - 48px));
+.onboarding-loading-page {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
   min-width: 0;
-  margin: 0 auto;
-  padding: clamp(44px, 8vh, 76px) 0 56px;
+  background: linear-gradient(165deg, var(--bg-canvas), var(--bg-paper-deep) 62%, var(--bg-window));
+}
+
+.onboarding-column {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: min(480px, calc(100vw - 48px));
+  min-width: 0;
+  margin: auto;
+  padding: 32px 0;
 }
 
 .onboarding-column h1 {
-  margin: 0 0 24px;
+  margin: 0 0 28px;
   color: var(--ink-1);
   font: 700 26px/1.3 var(--font-zh-serif);
   letter-spacing: .06em;
@@ -27,19 +43,24 @@
 .onboarding-provider-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  align-items: stretch;
+  gap: 12px;
   min-width: 0;
-  margin-bottom: 22px;
+  margin-bottom: 30px;
 }
 
 .onboarding-provider-card {
   position: relative;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  column-gap: 10px;
+  box-sizing: border-box;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-rows: 19px auto;
+  align-content: start;
+  column-gap: 12px;
+  row-gap: 2px;
+  min-height: 78px;
   min-width: 0;
-  padding: 13px 14px;
+  padding: 17px 16px;
   border: 1px solid var(--line-2);
   border-radius: 0;
   background: var(--bg-canvas);
@@ -72,42 +93,67 @@
   box-shadow: inset 3px 0 var(--mark);
 }
 
-.onboarding-provider-card .ws-launch-role-recommended {
-  position: absolute;
-  top: 5px;
-  left: 10px;
+.onboarding-provider-recommended {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  padding: 1px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: var(--mark-soft);
   color: var(--mark);
-  font-size: 9.5px;
-  line-height: 1.2;
-  letter-spacing: .08em;
+  font: 10px/1.5 var(--font-zh-serif);
+  letter-spacing: .04em;
+  white-space: nowrap;
 }
 
 .onboarding-provider-logo {
+  grid-column: 1;
   grid-row: 1 / 3;
+  align-self: start;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--line-2);
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border: 0;
   border-radius: 0;
-  color: var(--ink-on-dark);
-  font: 700 16px/1 var(--font-zh-serif);
+  overflow: hidden;
 }
 
-.onboarding-provider-logo--deepseek { background: var(--mark); }
-.onboarding-provider-logo--kimi { background: var(--ink-surface); }
+.onboarding-provider-logo svg {
+  display: block;
+  width: 40px;
+  height: 40px;
+}
+
+.onboarding-provider-logo--kimi {
+  padding: 2px;
+  background: var(--ink-surface);
+}
+
+.onboarding-provider-logo--kimi svg {
+  width: 36px;
+  height: 36px;
+}
 
 .onboarding-provider-card strong {
-  align-self: end;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
   min-width: 0;
   overflow: hidden;
   font-size: 13.5px;
+  line-height: 19px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .onboarding-provider-card > span:last-child {
+  grid-column: 2 / 4;
+  grid-row: 2;
   min-width: 0;
   color: var(--ink-3);
   font-size: 11px;
@@ -303,7 +349,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 34px;
+  margin-top: 32px;
 }
 .onboarding-actions .wf-btn { min-height: 34px; padding-inline: 20px; }
 
@@ -320,7 +366,7 @@
 }
 
 @media (max-width: 560px) {
-  .onboarding-column { width: min(100% - 30px, 460px); padding-top: 34px; }
+  .onboarding-column { width: min(100% - 30px, 480px); padding: 28px 0; }
   .onboarding-provider-cards { grid-template-columns: 1fr; }
 }
 

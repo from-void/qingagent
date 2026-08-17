@@ -32,6 +32,23 @@ describe("OnboardingPage", () => {
     __resetClientPersistCacheForTests();
   });
 
+  it("厂商卡使用品牌 SVG，推荐标签完整留在 DeepSeek 卡内", async () => {
+    vi.stubGlobal("fetch", onboardingFetch());
+    await renderPage();
+
+    const deepseekIcon = host.querySelector<SVGSVGElement>('[data-brand-icon="deepseek"]');
+    const kimiIcon = host.querySelector<SVGSVGElement>('[data-brand-icon="kimi"]');
+    expect(deepseekIcon?.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(deepseekIcon?.querySelector("path")?.getAttribute("fill")).toBe("#4D6BFE");
+    expect(kimiIcon?.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(Array.from(kimiIcon?.querySelectorAll("path") ?? []).map((path) => path.getAttribute("fill")))
+      .toEqual(["#1783FF", "#fff"]);
+
+    const recommended = host.querySelector(".onboarding-provider-recommended");
+    expect(recommended?.textContent).toBe("推荐");
+    expect(recommended?.closest(".onboarding-provider-card")?.textContent).toContain("DeepSeek");
+  });
+
   it("厂商与官方/自定义切换分别保留已填内容", async () => {
     vi.stubGlobal("fetch", onboardingFetch());
     await renderPage();

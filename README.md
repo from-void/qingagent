@@ -48,10 +48,25 @@
 |---|---|
 | <img src=".github/assets/shots/questionnaire.webp" alt="开场问卷"> | <img src=".github/assets/shots/draft-done.webp" alt="成稿"> |
 | **动笔前先问几句**——主题、侧重、文体确认清楚再生成 | **成稿直接落在编辑器里**——不是聊天记录，是可编辑的文档 |
-| <img src=".github/assets/shots/new-doc-templates.webp" alt="模板起稿"> | <img src=".github/assets/shots/chat-skills.webp" alt="技能 chip"> |
-| **模板起头**——产品需求文档、竞品分析、用户调研等模板一点即填 | **技能随手调用**——联网搜、画配图、算数据，输入框里一点即用 |
+| <img src=".github/assets/shots/new-doc-templates.webp" alt="模板起稿"> | <img src=".github/assets/shots/materials.webp" alt="素材区"> |
+| **模板起头**——产品需求文档、竞品分析、用户调研等模板一点即填 | **带着资料写**——PDF / Word / Excel 丢进素材区，写稿时随取随用 |
 
-### 2. 先审后应用：AI 改稿，你说了算
+### 2. 编辑器：对标飞书文档 85% 的功能集
+
+稿子落在一个**真正的编辑器**里，不是聊天气泡。表格、公式、流程图、分栏、代码块——写作过程即所见即所得，导出保持同一套观感。
+
+| | |
+|---|---|
+| <img src=".github/assets/shots/editor-diagrams.webp" alt="Mermaid 与 drawio 图表"> | <img src=".github/assets/shots/editor-table.webp" alt="表格"> |
+| **图表两条腿走路**——Mermaid 写流程图 / 时序图 / 饼图；drawio 工程图双击即开离线编辑器改完写回，AI 也能直接读写 | **表格能合并单元格**——跨行跨列表头、单元格底色、粘性表头，行列按住即拖 |
+| <img src=".github/assets/shots/editor-math-code.webp" alt="公式与代码块"> | <img src=".github/assets/shots/editor-columns.webp" alt="图文分栏"> |
+| **公式与代码块**——行内公式与块级公式（KaTeX），代码块自动语法高亮并标注语言 | **图文分栏**——插入分栏后左图右文各自成列；图片、脚注、高亮块（callout）、超链接都在纸上排好 |
+| <img src=".github/assets/shots/editor-lists.webp" alt="清单与任务项"> | <img src=".github/assets/shots/chat-skills.webp" alt="技能 chip"> |
+| **清单与任务项**——多级列表、任务勾选、五种有序序号（数字 / 字母 / 罗马），勾完自动划线 | **技能随手调用**——联网搜、画配图、算数据，输入框里一点即用 |
+
+工具栏的插入菜单覆盖：图片、文件、行内公式、块级公式、图表、drawio 工程图、表格、分栏、代码块、分隔线。AI 生成的内容走的是同一套结构——**它写进来的表格和图，你可以直接接着改**。
+
+### 3. 先审后应用：AI 改稿，你说了算
 
 让 AI 改稿，它不会直接覆盖你的正文。所有改动先以候选形式摆在原文上，你逐条翻看、采纳或驳回，确认后才落成新版本——不满意的改动永远进不了正文，版本还可回滚。
 
@@ -62,7 +77,7 @@
 | <img src=".github/assets/shots/patch-review.webp" alt="候选 diff"> | <img src=".github/assets/shots/patch-committed.webp" alt="落稿"> |
 | **逐条审查**——上一处 / 下一处翻看，支持局部撤销 | **提交才落稿**——确认后写入新版本 |
 
-### 3. 审查中心：让 AI 当你的编辑部
+### 4. 审查中心：让 AI 当你的编辑部
 
 写完让不同角色替你过一遍稿子。青简出厂带 8 类审查、23 个模板（11 个通用 + 12 个角色视角）：
 
@@ -75,7 +90,7 @@
 
 两种工作方式：从菜单发起审查**只生成批注、不动正文**；在对话里要求「改一下并审查」，AI 会先改，改动依然作为候选等你确认。
 
-### 4. 写完之后：一稿多形态
+### 5. 写完之后：一稿多形态
 
 | | |
 |---|---|
@@ -84,7 +99,7 @@
 | <img src=".github/assets/shots/xhs-preview.webp" alt="真机预览"> | <img src=".github/assets/shots/export-menu.webp" alt="导出"> |
 | **发布前真机预览**——排出来什么样，先看见 | **五种导出**——PDF / Word / Markdown / HTML / TXT |
 
-### 5. 素材、技能与模型
+### 6. 素材、技能与模型
 
 | | |
 |---|---|
@@ -95,7 +110,7 @@
 | <img src=".github/assets/shots/model-panel.webp" alt="模型设置"> | <img src=".github/assets/shots/usage-details.webp" alt="用量看板"> |
 | **自带钥匙**——填自己的 DeepSeek 或 Kimi API Key，快 / 强两档任选 | **用量看板**——token、缓存命中、调用次数与花销，全记在本地 |
 
-### 6. 开源、免费，跑在你自己的电脑上
+### 7. 开源、免费，跑在你自己的电脑上
 
 青简以 MIT 协议开源，除模型 API 外零费用。写完一篇约 3000 字的文章，模型开销大约 **¥0.05 ~ 0.10**（按 DeepSeek V4 Flash 峰谷时段价估算）。数据全部存放在你本地，不经过我们的服务器。
 

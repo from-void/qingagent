@@ -48,10 +48,25 @@ Say what you want in the chat box. qingagent narrows things down with a few ques
 |---|---|
 | <img src=".github/assets/shots/questionnaire.webp" alt="Opening questionnaire"> | <img src=".github/assets/shots/draft-done.webp" alt="Finished draft"> |
 | **Align before writing** — topic, angle and tone confirmed up front | **The draft lands in the editor** — a document, not a chat message |
-| <img src=".github/assets/shots/new-doc-templates.webp" alt="Templates"> | <img src=".github/assets/shots/chat-skills.webp" alt="Skill chips"> |
-| **Start from a template** — PRD, competitive analysis, user research and more | **Skills on tap** — web search, illustration, data crunching, one tap away |
+| <img src=".github/assets/shots/new-doc-templates.webp" alt="Templates"> | <img src=".github/assets/shots/materials.webp" alt="Materials"> |
+| **Start from a template** — PRD, competitive analysis, user research and more | **Write with your sources** — drop in PDFs, Word or Excel files and cite them as you write |
 
-### 1.2 Review before apply: the AI edits, you decide
+### 1.2 The editor: about 85% of what Feishu Docs can do
+
+Your draft lands in a **real editor**, not a chat bubble. Tables, formulas, diagrams, columns, code blocks — what you write is what you see, and what exports.
+
+| | |
+|---|---|
+| <img src=".github/assets/shots/editor-diagrams.webp" alt="Mermaid and drawio diagrams"> | <img src=".github/assets/shots/editor-table.webp" alt="Tables"> |
+| **Two kinds of diagram** — Mermaid for flowcharts, sequence and pie charts; drawio engineering diagrams open in an offline editor on double-click and write straight back, and the AI can read and edit both | **Tables with merged cells** — spanning headers, cell fills, sticky headers, drag to resize rows and columns |
+| <img src=".github/assets/shots/editor-math-code.webp" alt="Formulas and code"> | <img src=".github/assets/shots/editor-columns.webp" alt="Image and text columns"> |
+| **Formulas and code blocks** — inline and block math (KaTeX), syntax-highlighted code with the language labelled | **Image + text columns** — insert columns and the image and prose sit side by side; images, footnotes, callouts and links all typeset on the page |
+| <img src=".github/assets/shots/editor-lists.webp" alt="Lists and tasks"> | <img src=".github/assets/shots/chat-skills.webp" alt="Skill chips"> |
+| **Lists and task items** — nested lists, checkboxes, five ordered-list styles (numeric / alphabetic / roman), struck through when done | **Skills on tap** — web search, illustration, data crunching, one tap away |
+
+The insert menu covers images, files, inline math, block math, diagrams, drawio drawings, tables, columns, code blocks and dividers. AI-generated content uses the same structures — **the tables and diagrams it writes are yours to keep editing**.
+
+### 1.3 Review before apply: the AI edits, you decide
 
 When you ask for changes, the AI never overwrites your text. Every edit appears as a candidate on the original; you walk through them, accept or reject, and only then does a new version land — rejected changes never enter your document, and versions roll back.
 
@@ -62,7 +77,7 @@ When you ask for changes, the AI never overwrites your text. Every edit appears 
 | <img src=".github/assets/shots/patch-review.webp" alt="Candidate diffs"> | <img src=".github/assets/shots/patch-committed.webp" alt="Committed"> |
 | **Review one by one** — previous / next navigation, partial undo supported | **Commit to land** — confirmed changes become a new version |
 
-### 1.3 Review center: an editorial team on call
+### 1.4 Review center: an editorial team on call
 
 Have different reviewers read your draft before you ship it. qingagent ships with 8 review types and 23 templates (11 general + 12 role perspectives):
 
@@ -75,7 +90,7 @@ Have different reviewers read your draft before you ship it. qingagent ships wit
 
 Two ways to work: launching a review from the menu **only creates annotations and never touches the text**; asking for "fix it and review" in chat lets the AI edit first — those edits still queue up as candidates for your approval.
 
-### 1.4 After the draft: one piece, many forms
+### 1.5 After the draft: one piece, many forms
 
 | | |
 |---|---|
@@ -84,7 +99,7 @@ Two ways to work: launching a review from the menu **only creates annotations an
 | <img src=".github/assets/shots/xhs-preview.webp" alt="Device preview"> | <img src=".github/assets/shots/export-menu.webp" alt="Export"> |
 | **Preview before publishing** — see the real layout first | **Five export formats** — PDF / Word / Markdown / HTML / TXT |
 
-### 1.5 Materials, skills and models
+### 1.6 Materials, skills and models
 
 | | |
 |---|---|
@@ -95,7 +110,7 @@ Two ways to work: launching a review from the menu **only creates annotations an
 | <img src=".github/assets/shots/model-panel.webp" alt="Model settings"> | <img src=".github/assets/shots/usage-details.webp" alt="Usage dashboard"> |
 | **Bring your own key** — DeepSeek or Kimi, flash / pro tiers | **Usage dashboard** — tokens, cache hits, call counts and spend, all local |
 
-### 1.6 Open source, free, running on your own machine
+### 1.7 Open source, free, running on your own machine
 
 qingagent is MIT-licensed and costs nothing beyond your own model API usage. A ~3,000-character article runs about **¥0.05–0.10** in model fees (estimated from DeepSeek V4 Flash peak/off-peak pricing). All data stays on your machine and never passes through our servers.
 

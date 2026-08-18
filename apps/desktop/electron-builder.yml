@@ -90,9 +90,14 @@ dmg:
   # 同目录 dmg-background@2x.png 会由 electron-builder 自动配对并合成为 Retina TIFF。
   background: dmg-background.png
   title: ${productName}
+  # electron-builder 26.15.3 的 dmg-builder/out/dmgUtil.js:137-177 会把 window.size
+  # 原样交给 dmgbuild；后者 core.py:99-111,263-276 将其原样写入 Finder
+  # bwsp.WindowBounds（含标题栏的窗口外框），不会自动补偿标题栏。
+  # 因此内容区要完整显示 660x400 背景：外框高 = 背景图 400 高 + Finder 标题栏 28 = 428；
+  # contents x/y 另行原样写入 Iloc，是内容区内的图标中心坐标，无需随标题栏补偿。
   window:
     width: 660
-    height: 400
+    height: 428
   iconSize: 96
   contents:
     - x: 185

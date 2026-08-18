@@ -48,13 +48,14 @@ test("macOS 应用名保持青简，跨平台可执行名与发布产物名保�
   assert.match(mac, /^  executableName:\s*青简\s*$/m);
 });
 
-test("DMG 保持青简安装背景、窗口尺寸与拖拽坐标", () => {
+test("DMG 保持青简安装背景、完整内容区高度与拖拽坐标", () => {
   const dmg = readTopLevelBlock("dmg");
 
   assert.match(dmg, /^  background:\s*dmg-background\.png\s*$/m);
   assert.match(dmg, /^  title:\s*\$\{productName\}\s*$/m);
   assert.match(dmg, /^  iconSize:\s*96\s*$/m);
-  assert.match(dmg, /^  window:\s*\n    width:\s*660\s*\n    height:\s*400\s*$/m);
+  assert.match(dmg, /背景图 400 高 \+ Finder 标题栏 28/);
+  assert.match(dmg, /^  window:\s*\n    width:\s*660\s*\n    height:\s*428\s*$/m);
   assert.match(
     dmg,
     /^  contents:\s*\n    - x:\s*185\s*\n      y:\s*235\s*\n      type:\s*file\s*\n    - x:\s*475\s*\n      y:\s*235\s*\n      type:\s*link\s*\n      path:\s*\/Applications\s*$/m,

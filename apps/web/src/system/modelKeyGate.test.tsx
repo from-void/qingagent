@@ -62,7 +62,7 @@ describe("modelKeyGate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("ready 后无显式 provider 的旧 DeepSeek key 不锁定厂商，跟随 server provider", async () => {
+  it("ready 后无显式 provider 时门禁仍跟随 server，请求头按本地 DeepSeek key 兜底", async () => {
     let ready = false;
     let notifyReady: (() => void) | undefined;
     const store = { "qingagent.deepseek_api_key": "existing-deepseek-key" };
@@ -93,7 +93,10 @@ describe("modelKeyGate", () => {
 
     await waitForGateSnapshot("unconfigured");
     expect(host?.textContent).toContain("当前使用中的 Kimi 还没配置 key");
-    expect(visitorKeyHeaders()["x-model-key"]).toBeUndefined();
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "deepseek",
+      "x-model-key": "existing-deepseek-key",
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

@@ -29,6 +29,7 @@ import {
   type ModelTier,
   clearCustomProvider,
   clearVisitorModelKey,
+  ensureStoredModelProvider,
   getSelectedModelProvider,
   getSelectedModelTier,
   getStoredModelProvider,
@@ -185,7 +186,8 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
 
   // 「启 用」= 切换 modelProvider(两家配置各自保留,不互相清除)
   const handleProviderChange = async (provider: ModelProvider, silent = false) => {
-    if (provider === modelProvider) return true;
+    const uiChanged = provider !== modelProvider;
+    if (!uiChanged && getStoredModelProvider()) return true;
     const revision = persistRevisionRef.current;
     setPersisting(true);
     const saved = await setSelectedModelProvider(provider);
@@ -195,8 +197,8 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       showPersistFailure();
       return false;
     }
-    setModelProvider(provider);
-    if (!silent) {
+    if (uiChanged) setModelProvider(provider);
+    if (!silent && uiChanged) {
       toast.show({
         message: `已启用 ${vendorName(provider)}`,
         tone: "success",
@@ -573,7 +575,6 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       if (!proceed) return;
     }
     const target = configProvider;
-    const activeConfigured = vendorConfigured(effectiveProvider);
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
@@ -595,21 +596,25 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
       target,
     );
     if (!canCommit()) return;
-    setPersisting(false);
     if (!savedOfficialOverride) {
       settlePersistFailure(target, "key 已保存，但模型别名未保存，请重试");
       return;
     }
+    const hadStoredProvider = Boolean(getStoredModelProvider());
+    const ensuredProvider = await ensureStoredModelProvider(target);
+    if (!canCommit()) return;
+    if (!ensuredProvider) {
+      settlePersistFailure(target, "key 已保存，但使用中的模型厂商未保存，请重试");
+      return;
+    }
+    if (!hadStoredProvider) setModelProvider(target);
+    setPersisting(false);
     setVisitorKeys((current) => ({ ...current, [target]: trimmed }));
     setCustomProviders((current) => ({ ...current, [target]: null }));
     setKeyInput("");
     setMessage(null);
     setView("main");
     toast.show(verifyStatus === "ok" ? "key 已验证并保存到本机" : "key 已保存到本机，尚未验证通过");
-    // 原来那家还没配好时,刚配好的这家直接成为"使用中",省掉一次多余的「启 用」
-    if (!activeConfigured && target !== effectiveProvider) {
-      void handleProviderChange(target, true);
-    }
     // 保存后回到主视图:滚到顶 + 主动查一次连通性(否则可能停在"暂时无法连接",需手动重测)
     requestAnimationFrame(() => {
       document.querySelector(".qj-sheet-body")?.scrollTo({ top: 0, behavior: "auto" });
@@ -694,7 +699,6 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
   // 其他云厂商(进阶):先调后端测试接口(代理避免 CORS),通了再保存并启用
   const handleSaveCustom = async () => {
     const target = configProvider;
-    const activeConfigured = vendorConfigured(effectiveProvider);
     const rawBaseUrl = customBaseUrl.trim();
     const apiKey = customKey.trim();
     if (!rawBaseUrl || !apiKey) {
@@ -774,15 +778,20 @@ export function useModelSettingsPanel(initialConfigProvider?: ModelProvider) {
         showPersistFailure("自定义模型已保存，但旧的官方 key 未清除，请重试");
         return;
       }
+      const hadStoredProvider = Boolean(getStoredModelProvider());
+      const ensuredProvider = await ensureStoredModelProvider(target);
+      if (!canCommit()) return;
+      if (!ensuredProvider) {
+        showPersistFailure("自定义模型已保存，但使用中的模型厂商未保存，请重试");
+        return;
+      }
+      if (!hadStoredProvider) setModelProvider(target);
       setCustomProviders((current) => ({ ...current, [target]: provider }));
       setVisitorKeys((current) => ({ ...current, [target]: null }));
       // 回填:让用户看到的就是真正存下来的地址,别留着原始输入造成"存的和显示的不一样"。
       setCustomBaseUrl(savedBaseUrl);
       setMessage(null);
       setView("main");
-      if (!activeConfigured && target !== effectiveProvider) {
-        void handleProviderChange(target, true);
-      }
     } catch (e) {
       if (canCommit()) {
         setMessage(

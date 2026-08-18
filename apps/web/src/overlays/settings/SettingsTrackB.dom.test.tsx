@@ -207,6 +207,45 @@ describe("Settings Track B", () => {
     expect(getButtonByWf("ModelUsingKimi")).toBeTruthy();
   });
 
+  it("跳过 onboarding 后首配 DeepSeek 官方 key 时补齐持久化 provider", async () => {
+    expect(getStoredModelProvider()).toBeNull();
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    await openVendorConfig("deepseek");
+    setInput(getInputByWf("ModelKeyInput"), "deepseek-first-key");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(getVisitorModelKey("deepseek")).toBe("deepseek-first-key");
+    expect(getStoredModelProvider()).toBe("deepseek");
+  });
+
+  it("已选 Kimi 时保存 DeepSeek key 不覆盖既有 provider", async () => {
+    await setSelectedModelProvider("kimi");
+    await setVisitorModelKey("kimi", "kimi-existing-key");
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    await openVendorConfig("deepseek");
+    setInput(getInputByWf("ModelKeyInput"), "deepseek-secondary-key");
+    await click(getButtonByText("保存"));
+    await click(getButtonByText("仍要保存"));
+
+    expect(getVisitorModelKey("deepseek")).toBe("deepseek-secondary-key");
+    expect(getStoredModelProvider()).toBe("kimi");
+  });
+
   // —— 「使用中」不变式:只要存在已配置的厂商,必须有且恰好一家在使用中 ——
 
   it("不变式 · 仅一家已配:那家必然使用中,不出现无处可切的「启 用」", async () => {
@@ -519,6 +558,7 @@ describe("Settings Track B", () => {
     await click(getButtonByText("测试并保存"));
     await flush();
 
+    expect(getStoredModelProvider()).toBe("deepseek");
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "")
       .not.toContain("接口测试通过");
     expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
@@ -1003,14 +1043,16 @@ describe("Settings Track B", () => {
     expect(toastText).not.toContain("desktop getter failed");
   });
 
-  it("未显式选择时不发送本地旧槽位配置，由 server 决定 provider", async () => {
+  it("未显式选择但仅有 DeepSeek key 时按已配置厂商透传", async () => {
     expect(getStoredModelProvider()).toBeNull();
     expect(getSelectedModelProvider()).toBe("deepseek");
     expect(visitorKeyHeaders()["x-model-provider"]).toBeUndefined();
 
     await setVisitorModelKey("deepseek", "legacy-deepseek-key");
-    expect(visitorKeyHeaders()["x-model-provider"]).toBeUndefined();
-    expect(visitorKeyHeaders()["x-model-key"]).toBeUndefined();
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "deepseek",
+      "x-model-key": "legacy-deepseek-key",
+    });
   });
 
   it("DeepSeek/Kimi 各自记忆第三方 baseUrl、key 与模型别名", async () => {

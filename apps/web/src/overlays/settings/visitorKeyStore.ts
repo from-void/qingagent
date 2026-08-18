@@ -98,6 +98,13 @@ export function setSelectedModelProvider(provider: ModelProvider): Promise<boole
   return writePersistedAwaited(MODEL_PROVIDER_KEY, provider);
 }
 
+/** 首次配置时补齐显式 provider；已有选择属于用户状态，不能被配置另一家时覆盖。 */
+export function ensureStoredModelProvider(provider: ModelProvider): Promise<boolean> {
+  return getStoredModelProvider()
+    ? Promise.resolve(true)
+    : setSelectedModelProvider(provider);
+}
+
 export function getVisitorModelKey(provider: ModelProvider): string | null {
   const value = readPersisted(providerStorageKeys(provider).apiKey);
   return value && value.trim() ? value.trim() : null;
@@ -280,8 +287,14 @@ export function visitorKeyHeaders(): Record<string, string> {
   }
   const storedProvider = getStoredModelProvider();
   const vision = visionKeyHeaders();
-  if (!storedProvider) return vision;
-  const provider = storedProvider;
+  const localSnapshot = storedProvider ? null : readLocalModelKeySnapshot();
+  const provider = storedProvider
+    ?? (localSnapshot?.providers.deepseek.configured
+      ? "deepseek"
+      : localSnapshot?.providers.kimi.configured
+        ? "kimi"
+        : null);
+  if (!provider) return vision;
   const tier = getSelectedModelTier(provider);
   const tierHeaders: Record<string, string> = tier === "pro" ? { "x-model-tier": "pro" } : {};
   // 其他云厂商:整体覆盖 baseURL + key + 模型别名

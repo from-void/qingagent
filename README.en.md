@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/assets/hero.png" alt="qingagent — start a new scroll" width="820">
+<img src=".github/assets/logo.svg" alt="qingagent" width="128">
 
 # qingagent 青简
 

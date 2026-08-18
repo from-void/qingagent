@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/assets/hero.png" alt="青简 · 新起一卷" width="820">
+<img src=".github/assets/logo.svg" alt="青简 QingAgent" width="128">
 
 # 青简 QingAgent
 

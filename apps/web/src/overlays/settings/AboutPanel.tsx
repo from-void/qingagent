@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useToast } from "../../system/ToastProvider";
 import {
   getDesktopUpdateSnapshot,
@@ -6,6 +6,11 @@ import {
   type DesktopUpdateStatus,
 } from "../../system/desktopUpdateStore";
 import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
+import {
+  GitHubStarInvite,
+  SettingsExternalLink as ExternalLink,
+} from "./GitHubStarInvite";
+import { copySettingsText } from "./settingsClipboard";
 
 // 关于页:主区居中(产品标识 + 唯一「检查更新」按钮),辅助信息弱化在底部(链接 / 许可 / 内核)。
 // 更新走「请求-响应」手动检查 + 共享 store 的被动推送(下载就绪 / 强更),不各自挂 IPC 监听。
@@ -26,30 +31,6 @@ function webVersion(): string {
     return typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
   } catch {
     return "0.0.0";
-  }
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // 降级到 execCommand
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
-  } catch {
-    return false;
   }
 }
 
@@ -110,7 +91,7 @@ export function AboutPanel() {
             : "",
         ]
       : [`青简 网页版 v${appVersion}`];
-    const ok = await copyText(lines.filter(Boolean).join("\n"));
+    const ok = await copySettingsText(lines.filter(Boolean).join("\n"));
     if (ok) toast.show({ message: COPY_TOAST, tone: "success" });
   }, [isDesktop, appVersion, channelLabel, platform, versions, toast]);
 
@@ -201,20 +182,21 @@ export function AboutPanel() {
           <div className="ab-block-title">链接</div>
           <div className="ab-block-body">
             {SITE_URL ? (
-              <ExternalLink href={SITE_URL} wf="AboutSite">
+              <ExternalLink href={SITE_URL} wf="AboutSite" className="ab-linklike">
                 官网
               </ExternalLink>
             ) : null}
-            <ExternalLink href={GITHUB_REPO_URL} wf="AboutGithub">
+            <ExternalLink href={GITHUB_REPO_URL} wf="AboutGithub" className="ab-linklike">
               GitHub 仓库
             </ExternalLink>
-            <ExternalLink href={RELEASES_URL} wf="AboutReleases">
+            <GitHubStarInvite repoUrl={GITHUB_REPO_URL} wf="AboutStarInvite" />
+            <ExternalLink href={RELEASES_URL} wf="AboutReleases" className="ab-linklike">
               版本发布页 Releases
             </ExternalLink>
           </div>
         </div>
 
-        <LicenseBlock isDesktop={isDesktop} electron={electron} />
+        <LicenseBlock />
 
         {isDesktop && versions ? (
           <button
@@ -257,7 +239,7 @@ function AboutUpdateArea({
           检查更新
         </button>
         <div className="ab-update-status" data-wf="AboutUpdateStatus">
-          连接外部后台时由后台所在环境管理更新
+          当前青简引擎由运行环境管理更新
         </div>
       </div>
     );
@@ -336,88 +318,18 @@ function AboutUpdateArea({
   );
 }
 
-function LicenseBlock({
-  isDesktop,
-  electron,
-}: {
-  isDesktop: boolean;
-  electron: Window["electron"];
-}) {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const openNotices = useCallback(async () => {
-    // web 端:直接跳 GitHub 查看第三方声明。
-    if (!isDesktop || !electron?.getThirdPartyNotices) {
-      window.open(NOTICES_URL, "_blank", "noopener,noreferrer");
-      return;
-    }
-    if (text !== null) {
-      setOpen((prev) => !prev);
-      return;
-    }
-    setLoading(true);
-    try {
-      const content = await electron.getThirdPartyNotices();
-      if (content && content.trim()) {
-        setText(content);
-        setOpen(true);
-      } else {
-        // 读不到:降级跳 GitHub。
-        window.open(NOTICES_URL, "_blank", "noopener,noreferrer");
-      }
-    } catch {
-      window.open(NOTICES_URL, "_blank", "noopener,noreferrer");
-    } finally {
-      setLoading(false);
-    }
-  }, [isDesktop, electron, text]);
-
+function LicenseBlock() {
   return (
     <div className="ab-block">
       <div className="ab-block-title">许可</div>
       <div className="ab-block-body">
-        <ExternalLink href={LICENSE_URL} wf="AboutLicense">
+        <ExternalLink href={LICENSE_URL} wf="AboutLicense" className="ab-linklike">
           MIT 许可
         </ExternalLink>
-        <button
-          type="button"
-          className="ab-linklike"
-          data-wf="AboutNoticesToggle"
-          disabled={loading}
-          onClick={openNotices}
-        >
+        <ExternalLink href={NOTICES_URL} wf="AboutNotices" className="ab-linklike">
           第三方开源声明
-        </button>
+        </ExternalLink>
       </div>
-      {open && text !== null ? (
-        <pre className="ab-notices-body" data-wf="AboutNoticesBody">
-          {text}
-        </pre>
-      ) : null}
     </div>
-  );
-}
-
-function ExternalLink({
-  href,
-  wf,
-  children,
-}: {
-  href: string;
-  wf: string;
-  children: ReactNode;
-}) {
-  return (
-    <a
-      className="ab-linklike"
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      data-wf={wf}
-    >
-      {children}
-    </a>
   );
 }

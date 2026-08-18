@@ -34,9 +34,42 @@ interface ElectronKernelVersions {
   node: string;
 }
 
+interface ElectronDshProfileSnapshot {
+  name: string;
+  bundles: string[];
+  pluginVersion: string | null;
+}
+
+interface ElectronDshDetectionSnapshot {
+  detected: boolean;
+  profiles: ElectronDshProfileSnapshot[];
+  defaultProfile: string | null;
+  npxAvailable: boolean;
+}
+
+type ElectronDshInstallResult =
+  | { ok: true; profile: string; command: string; output: string }
+  | {
+      ok: false;
+      profile: string;
+      command: string;
+      reason:
+        | "already-running"
+        | "invalid-profile"
+        | "npx-not-found"
+        | "spawn-failed"
+        | "timed-out"
+        | "exit-failed";
+      stderr: string;
+      output: string;
+    };
+
 type ElectronDesktopDialogKind =
   | "quit-during-generation"
-  | "content-load-failed";
+  | "content-load-failed"
+  | "renderer-recovery-stopped"
+  | "backend-startup-failed"
+  | "database-migration-failed";
 
 interface ElectronDesktopDialogRequest {
   id: number;
@@ -67,6 +100,7 @@ interface ElectronBackendConnectionSnapshot {
   generation: number;
   libraryId: string | null;
   instanceId: string | null;
+  port?: number;
   effectiveCapabilities: Record<string, boolean>;
   errorCode: string | null;
   conflictKind: "pending-conflict" | "conflict" | null;
@@ -86,6 +120,10 @@ interface Window {
       callback: (snapshot: ElectronBackendConnectionSnapshot) => void,
     ) => () => void;
     retryBackendConnection?: () => Promise<boolean>;
+    getPendingStartupNotice?: () => "cross-namespace-library-demoted" | null;
+    acknowledgeStartupNotice?: (
+      kind: "cross-namespace-library-demoted",
+    ) => Promise<boolean>;
     saveExportDownload?: (input: {
       filename: string;
       format: ElectronExportFormat;
@@ -152,11 +190,12 @@ interface Window {
     getUpdateStatus?: () => Promise<ElectronUpdateStatus>;
     quitAndInstall?: () => Promise<unknown>;
     openDownloadPage?: () => Promise<unknown>;
-    // 关于页:应用版本号(preload 启动期同步注入)、内核版本、手动检查、第三方声明全文。
+    // 关于页:应用版本号(preload 启动期同步注入)、内核版本、手动检查。
     appVersion?: string;
     versions?: ElectronKernelVersions;
     checkForUpdate?: () => Promise<ElectronUpdateStatus>;
-    getThirdPartyNotices?: () => Promise<string | null>;
+    detectDshPlugin?: () => Promise<ElectronDshDetectionSnapshot>;
+    installDshPlugin?: (profile: string) => Promise<ElectronDshInstallResult>;
     onDesktopDialogRequest?: (
       callback: (request: ElectronDesktopDialogRequest) => void,
     ) => () => void;

@@ -37,7 +37,7 @@ export function TemplateGroup(props: {
           type="button"
           className="ws-launch-template-new"
           disabled={props.disabled || props.mutationDisabled}
-          title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : undefined}
+          title={props.mutationDisabled ? "当前青简引擎暂不支持修改模板" : undefined}
           onClick={props.onCreate}
         ><PlusIcon size={12} />新建</button>
       </div>
@@ -71,7 +71,7 @@ export function TemplateGroup(props: {
               className="ws-launch-template-edit"
               aria-label={`编辑${item.name}`}
               disabled={props.disabled || props.mutationDisabled}
-              title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : "编辑模板"}
+              title={props.mutationDisabled ? "当前青简引擎暂不支持修改模板" : "编辑模板"}
               onClick={() => props.onEdit(item)}
             >
               <svg viewBox="0 0 16 16" aria-hidden="true">

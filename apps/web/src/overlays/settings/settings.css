@@ -788,12 +788,137 @@
 .settings-about .ab-linklike:hover:not(:disabled){color:var(--qj-cinnabar);text-decoration:underline}
 .settings-about .ab-linklike:disabled{opacity:.5;cursor:default}
 .settings-about .ab-kernel{font-family:var(--font-mono);font-size:10.5px;color:var(--qj-header-sub)}
-/* 第三方声明:应用内滚动阅读 */
-.settings-about .ab-notices-body{
-  margin:8px 0 0;max-height:180px;overflow:auto;
-  padding:10px;border:1px solid var(--qj-switch-border);background:rgba(3,6,8,.4);
-  font-family:var(--font-mono);font-size:10.5px;line-height:1.6;color:var(--qj-switch-text);
-  white-space:pre-wrap;word-break:break-word;
+
+/* 关于页与 DSH 页共用的克制 Star 邀请：细分隔、小方钮、只用金铜强调。 */
+.qj-star-invite{
+  width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  margin-top:3px;padding-top:9px;border-top:1px solid var(--qj-switch-border);
+  font-family:var(--font-zh-serif);
+}
+.qj-star-copy{display:flex;min-width:0;flex:1 1 190px;flex-direction:column;gap:2px}
+.qj-star-title{font-size:12px;line-height:1.5;color:var(--qj-ink)}
+.qj-star-note{font-size:10.5px;line-height:1.55;color:var(--ink-desc)}
+.qj-star-action{
+  display:inline-flex;flex:0 0 auto;align-items:center;gap:5px;height:28px;padding:0 9px;
+  border:1px solid var(--qj-cinnabar);border-radius:0;background:transparent;color:var(--qj-cinnabar);
+  font-family:var(--font-zh-serif);font-size:11px;font-weight:700;text-decoration:none;
+  transition:background .2s,color .2s;
+}
+.qj-star-action:hover,.qj-star-action:focus-visible{
+  background:var(--qj-seal-red-soft);color:var(--qj-ink);outline:none;
+}
+.qj-star-action svg{display:block;flex-shrink:0}
+
+/* —— DSH 插件 tab：顺序说明页，不做卡片堆叠。 —— */
+.settings-dsh{
+  display:flex;flex-direction:column;padding:0 6px 8px 0;
+  font-family:var(--font-zh-serif);color:var(--qj-switch-text);
+}
+.dsh-section{margin:0;padding:16px 0;border-top:1px solid var(--qj-switch-border)}
+.dsh-section:first-child{padding-top:4px;border-top:0}
+.dsh-section-title{
+  margin:0 0 8px;font-size:11px;line-height:1.5;font-weight:700;letter-spacing:.12em;color:var(--qj-cinnabar);
+}
+.dsh-copy{margin:0;max-width:660px;font-size:13px;line-height:1.85;color:var(--qj-switch-text)}
+.dsh-steps{display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
+.dsh-step{
+  display:grid;grid-template-columns:24px minmax(0,1fr);gap:10px;padding:11px 0;
+  border-top:1px solid var(--qj-switch-border);
+}
+.dsh-step:first-child{border-top:0}
+.dsh-step-number{
+  display:flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border:1px solid var(--qj-cinnabar);border-radius:0;color:var(--qj-cinnabar);
+  font-family:var(--font-mono);font-size:11px;line-height:1;
+}
+.dsh-step-body{display:flex;min-width:0;flex-direction:column;gap:8px}
+.dsh-step-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:12px;line-height:1.65}
+.dsh-step-line strong{color:var(--qj-ink);font-size:13px}
+.dsh-step-line span{color:var(--ink-desc)}
+.dsh-command{
+  display:flex;align-items:stretch;min-width:0;max-width:660px;
+  border:1px solid var(--qj-switch-border);border-radius:0;background:var(--qj-switch-active-bg);
+}
+.dsh-command code{
+  min-width:0;flex:1 1 auto;padding:9px 10px;overflow:auto;
+  font-family:var(--font-mono);font-size:11px;line-height:1.55;color:var(--qj-switch-text);white-space:nowrap;
+}
+.dsh-command--secondary{border:0;background:transparent}
+.dsh-command--secondary code{padding:3px 0;font-size:10.5px;color:var(--ink-desc)}
+.dsh-command--secondary .dsh-copy-button{padding:0 7px;border-left:0}
+.dsh-copy-button{
+  flex:0 0 auto;padding:0 11px;border:0;border-left:1px solid var(--qj-switch-border);border-radius:0;
+  background:transparent;color:var(--qj-cinnabar);font-family:var(--font-zh-serif);font-size:11px;cursor:pointer;
+}
+.dsh-copy-button:hover,.dsh-copy-button:focus-visible{
+  background:var(--qj-seal-red-soft);color:var(--qj-ink);outline:none;
+}
+.dsh-detected-install{display:flex;max-width:660px;flex-direction:column;gap:12px;animation:dsh-state-in .18s ease-out}
+.dsh-detected-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.dsh-detected-heading strong{font-size:14px;line-height:1.6;color:var(--qj-ink)}
+.dsh-detected-heading span{font-size:11px;line-height:1.5;color:var(--ink-desc)}
+.dsh-detected-heading code{font-family:var(--font-mono);color:var(--qj-cinnabar)}
+.dsh-profile-field{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink-desc)}
+.dsh-profile-field select{
+  min-width:140px;height:30px;padding:0 26px 0 9px;border:1px solid var(--qj-switch-border);border-radius:0;
+  background:var(--qj-switch-active-bg);color:var(--qj-ink);font-family:var(--font-mono);font-size:11px;
+}
+.dsh-profile-field select:focus-visible{border-color:var(--qj-cinnabar);outline:none}
+.dsh-profile-field select:disabled{opacity:.55}
+.dsh-install-operation{display:flex;align-items:flex-start;flex-direction:column;gap:8px}
+.dsh-install-button,.dsh-manual-button{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:32px;padding:0 13px;
+  border:1px solid var(--qj-cinnabar);border-radius:0;background:var(--qj-cinnabar);color:var(--qj-paper);
+  font-family:var(--font-zh-serif);font-size:11.5px;font-weight:700;cursor:pointer;
+  transition:background .18s,color .18s,opacity .18s;
+}
+.dsh-manual-button{
+  background:transparent;color:var(--qj-cinnabar);
+}
+.dsh-install-button:hover:not(:disabled),.dsh-install-button:focus-visible,
+.dsh-manual-button:hover,.dsh-manual-button:focus-visible{
+  background:var(--qj-seal-red-soft);color:var(--qj-ink);outline:none;
+}
+.dsh-install-button:disabled{opacity:.58;cursor:default}
+.dsh-install-spinner{
+  width:11px;height:11px;border:1px solid currentColor;border-right-color:transparent;border-radius:999px;
+  animation:dsh-spin .7s linear infinite;
+}
+.dsh-install-note{margin:0;font-size:12px;line-height:1.6;color:var(--ink-desc)}
+.dsh-install-result{
+  display:flex;flex-direction:column;align-items:flex-start;gap:7px;width:100%;padding:2px 0 0 10px;
+  border-left:1px solid var(--qj-cinnabar);box-sizing:border-box;font-size:11.5px;color:var(--qj-switch-text);
+}
+.dsh-install-result-label{color:var(--qj-ink)}
+.dsh-install-result pre{
+  width:100%;max-height:132px;margin:0;padding:9px 10px;overflow:auto;box-sizing:border-box;
+  border:1px solid var(--qj-switch-border);border-radius:0;background:var(--qj-switch-active-bg);
+  color:var(--qj-switch-text);font-family:var(--font-mono);font-size:10.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;
+}
+@keyframes dsh-state-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@keyframes dsh-spin{to{transform:rotate(360deg)}}
+.dsh-engine-status{font-size:11.5px;line-height:1.6;color:var(--ink-desc)}
+.dsh-engine-status--ready,.dsh-engine-status--external{color:var(--qj-cinnabar)}
+.dsh-engine-line{display:flex;align-items:baseline;gap:7px;min-height:24px}
+.dsh-engine-label{font-size:12px;line-height:1.6;color:var(--qj-ink)}
+.dsh-examples{display:flex;flex-direction:column;gap:7px}
+.dsh-examples blockquote{
+  margin:0;padding:8px 11px;border-left:2px solid var(--qj-cinnabar);
+  background:var(--qj-switch-active-bg);font-size:12px;line-height:1.7;color:var(--qj-switch-text);
+}
+.dsh-repository{padding-bottom:4px}
+.dsh-repository-link{
+  display:inline-block;margin-bottom:8px;color:var(--qj-switch-text);
+  font-family:var(--font-mono);font-size:11px;line-height:1.6;text-decoration:none;
+}
+.dsh-repository-link:hover,.dsh-repository-link:focus-visible{color:var(--qj-cinnabar);text-decoration:underline;outline:none}
+
+@media (max-width:640px){
+  .dsh-command{flex-direction:column}
+  .dsh-copy-button{height:30px;border-left:0;border-top:1px solid var(--qj-switch-border)}
+}
+@media (prefers-reduced-motion:reduce){
+  .dsh-detected-install,.dsh-install-spinner{animation:none}
 }
 
 /* —— 连接 tab：一级列表 → 二级详情；色板与技能页共用，不新增 token —— */

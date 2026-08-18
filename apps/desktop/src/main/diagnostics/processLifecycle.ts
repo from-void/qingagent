@@ -90,7 +90,7 @@ export function attachMainWindowProcessMonitor(
   const lastFailureAt = new Map<RecoveryIncident["trigger"], number>();
   let reloadScheduled = false;
   let recoveryStopped = false;
-  let nativeFallbackShown = false;
+  let recoveryNoticeShown = false;
   let unresponsiveAt: number | null = null;
 
   const rendererContext = (): Record<string, unknown> => ({
@@ -100,16 +100,16 @@ export function attachMainWindowProcessMonitor(
   });
 
   const showRecoveryStoppedOnce = (): void => {
-    if (nativeFallbackShown) return;
-    nativeFallbackShown = true;
+    if (recoveryNoticeShown) return;
+    recoveryNoticeShown = true;
     try {
       void Promise.resolve(options.showRecoveryStopped()).catch((error: unknown) => {
-        log("error", "renderer-recovery-native-prompt-failed", {
+        log("error", "renderer-recovery-notice-failed", {
           error: errorMessage(error),
         });
       });
     } catch (error) {
-      log("error", "renderer-recovery-native-prompt-failed", {
+      log("error", "renderer-recovery-notice-failed", {
         error: errorMessage(error),
       });
     }

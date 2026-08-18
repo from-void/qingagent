@@ -92,7 +92,8 @@ function isDiscoveryObservation(value: unknown): value is DiscoveryObservation {
   const observation = value as Partial<DiscoveryObservation> & { errorCode?: unknown };
   if (!isSource(observation.source)) return false;
   if (observation.state === "valid") {
-    return isDiscoveredInstance((observation as { instance?: unknown }).instance);
+    const instance = (observation as { instance?: unknown }).instance;
+    return isDiscoveredInstance(instance) && instance.source === observation.source;
   }
   if (observation.state === "absent") {
     return observation.errorCode === undefined

@@ -4,6 +4,7 @@ import { FeedbackPanel } from "../../../overlays/settings/FeedbackPanel";
 import { ShortcutsPanel } from "../../../overlays/settings/ShortcutsPanel";
 import { SkillsPanel } from "../../../overlays/settings/SkillsPanel";
 import { ConnectionsPanel } from "../../../overlays/settings/ConnectionsPanel";
+import { DshPanel } from "../../../overlays/settings/DshPanel";
 import type { ConnectorId } from "@qingagent/contract-ts";
 import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import { SecurityPanel } from "../../../overlays/settings/SecurityPanel";
@@ -16,13 +17,17 @@ import type { ModelProvider } from "../../../overlays/settings/visitorKeyStore";
 import { CloseIcon } from "../../../system/icons";
 
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
-// tab:模型(看板) · 技能 · 连接 · 记忆 · 安全 · 快捷键 · 反馈 · 关于。
+// tab:模型(看板) · 技能 · 连接 · DSH 插件 · 记忆 · 安全 · 快捷键 · 反馈 · 关于。
 
-export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "memory" | "security" | "diagnostics" | "shortcuts" | "about";
+export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "dsh" | "memory" | "security" | "diagnostics" | "shortcuts" | "about";
 
 interface SheetOption<T extends string> {
   id: T;
   label: string;
+}
+
+interface SettingsTabOption extends SheetOption<SettingsSheetTab> {
+  hidden?: boolean;
 }
 
 interface HomeSettingsSheetProps<AnimId extends string, Font extends string> {
@@ -43,17 +48,29 @@ interface HomeSettingsSheetProps<AnimId extends string, Font extends string> {
   onClose: () => void;
 }
 
-const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
+const SETTINGS_TABS: SettingsTabOption[] = [
   { id: "model", label: "模型" },
   // 「外观」整组已隐藏:产品只保留浅色宣纸,无深/浅模式与外观设置。
   { id: "skills", label: "技能" },
   { id: "connections", label: "连接" },
+  // DSH 面板设计待重做,260819 暂隐藏入口,代码保留。
+  { id: "dsh", label: "DSH 插件", hidden: true },
   { id: "memory", label: "记忆" },
   { id: "security", label: "安全" },
   { id: "shortcuts", label: "快捷键" },
   { id: "diagnostics", label: "反馈" },
   { id: "about", label: "关于" },
 ];
+
+const VISIBLE_SETTINGS_TABS = SETTINGS_TABS.filter((tab) => !tab.hidden);
+const DEFAULT_SETTINGS_TAB: SettingsSheetTab = "model";
+
+function resolveInitialTab(initialTab?: SettingsSheetTab): SettingsSheetTab {
+  if (initialTab && VISIBLE_SETTINGS_TABS.some((tab) => tab.id === initialTab)) {
+    return initialTab;
+  }
+  return DEFAULT_SETTINGS_TAB;
+}
 
 export function HomeSettingsSheet<AnimId extends string, Font extends string>({
   initialTab,
@@ -72,7 +89,7 @@ export function HomeSettingsSheet<AnimId extends string, Font extends string>({
   onOpenShelf,
   onClose,
 }: HomeSettingsSheetProps<AnimId, Font>) {
-  const [tab, setTab] = useState<SettingsSheetTab>(initialTab ?? "model");
+  const [tab, setTab] = useState<SettingsSheetTab>(() => resolveInitialTab(initialTab));
   const [selectedConnectorId, setSelectedConnectorId] = useState<ConnectorId | null>(null);
   const [inkReady, setInkReady] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -187,7 +204,7 @@ export function HomeSettingsSheet<AnimId extends string, Font extends string>({
           <div className="qj-sheet-nav">
             <span className="qj-sheet-title">设 置</span>
             <nav className="qj-sheet-tabs" role="tablist" aria-label="设置分类">
-              {TABS.map((t) => (
+              {VISIBLE_SETTINGS_TABS.map((t) => (
                 <button
                   key={t.id}
                   type="button"
@@ -303,6 +320,7 @@ export function HomeSettingsSheet<AnimId extends string, Font extends string>({
                 onSelectedIdChange={setSelectedConnectorId}
               />
             )}
+            {tab === "dsh" && <DshPanel />}
             {tab === "memory" && <MemoryPanel />}
             {tab === "security" && <SecurityPanel />}
             {tab === "diagnostics" && <FeedbackPanel />}

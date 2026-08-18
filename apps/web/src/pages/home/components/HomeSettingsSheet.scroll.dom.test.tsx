@@ -21,6 +21,10 @@ vi.mock("../../../overlays/settings/ConnectionsPanel", () => ({
   ConnectionsPanel: () => <div>连接内容</div>,
 }));
 
+vi.mock("../../../overlays/settings/DshPanel", () => ({
+  DshPanel: () => <div>DSH 插件内容</div>,
+}));
+
 vi.mock("../../../overlays/settings/SecurityPanel", () => ({
   SecurityPanel: () => <div>安全内容</div>,
 }));
@@ -91,6 +95,26 @@ describe("HomeSettingsSheet tab 滚动位置", () => {
     vi.clearAllMocks();
   });
 
+  it("左栏不渲染 DSH 插件入口", () => {
+    act(() => root?.render(<HomeSettingsSheet {...props} onClose={vi.fn()} />));
+
+    const tabLabels = [...host!.querySelectorAll('[role="tab"]')]
+      .map((tab) => tab.textContent);
+    expect(tabLabels).not.toContain("DSH 插件");
+  });
+
+  it("初始 tab 为已隐藏的 dsh 时回落到默认 tab", () => {
+    act(() => root?.render(
+      <HomeSettingsSheet {...props} initialTab="dsh" onClose={vi.fn()} />,
+    ));
+
+    const modelTab = [...host!.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((tab) => tab.textContent === "模型");
+    expect(modelTab?.getAttribute("aria-selected")).toBe("true");
+    expect(host!.textContent).toContain("模型内容");
+    expect(host!.textContent).not.toContain("DSH 插件内容");
+  });
+
   it("各 tab 独立恢复，关闭卸载后重开全部回顶", () => {
     let open = true;
     const renderSheet = () => {
@@ -109,11 +133,17 @@ describe("HomeSettingsSheet tab 滚动位置", () => {
     expect([...host!.querySelectorAll('[role="tab"]')].some(
       (tab) => tab.textContent === "记忆",
     )).toBe(true);
+    const tabLabels = [...host!.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
+    expect(tabLabels.slice(tabLabels.indexOf("连接"), tabLabels.indexOf("连接") + 2))
+      .toEqual(["连接", "记忆"]);
     const body = host!.querySelector<HTMLDivElement>(".qj-sheet-body")!;
     body.scrollTop = 420;
 
     clickTab("技能");
     expect(body.scrollTop).toBe(0);
+
+    clickTab("连接");
+    expect(host!.textContent).toContain("连接内容");
 
     body.scrollTop = 90;
     clickTab("模型");

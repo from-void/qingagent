@@ -1,61 +1,15 @@
-import { dialog, type BrowserWindow, type MessageBoxOptions } from "electron";
-import type { DesktopDialogResult } from "../rendererDialogContract.js";
-
-async function showMessageBoxFallback(
-  owner: BrowserWindow | null,
-  options: MessageBoxOptions,
-): Promise<DesktopDialogResult> {
-  const activeOwner = owner && !owner.isDestroyed() ? owner : null;
-  const { response } = activeOwner
-    ? await dialog.showMessageBox(activeOwner, options)
-    : await dialog.showMessageBox(options);
-  return response === 0 ? "confirm" : "cancel";
+export interface FatalEarlyErrorDialog {
+  showErrorBox(title: string, content: string): void;
 }
 
-/** renderer 已销毁、尚未就绪或导航失联时，退出确认才允许降级为原生兜底。 */
-export function showNativeQuitFallback(
-  owner: BrowserWindow | null,
-): Promise<DesktopDialogResult> {
-  return showMessageBoxFallback(owner, {
-    type: "warning",
-    title: "正在生成",
-    message: "正在生成，退出将中断",
-    detail: "退出应用会停止当前生成，尚未完成的内容可能无法保留。",
-    buttons: ["退出应用", "继续生成"],
-    defaultId: 1,
-    cancelId: 1,
-    noLink: true,
-  });
-}
-
-/** 暖纸启动壳也不可交互时，内容恢复才允许降级为原生兜底。 */
-export function showNativeContentRecoveryFallback(
-  owner: BrowserWindow | null,
-): Promise<DesktopDialogResult> {
-  return showMessageBoxFallback(owner, {
-    type: "warning",
-    title: "内容页加载失败",
-    message: "青简当前无法加载内容页。",
-    detail: "本地服务不可用或内容页加载失败。你可以重新尝试加载，或退出应用。",
-    buttons: ["重试", "退出"],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
-}
-
-/** renderer/GPU 在短时间内再次失败时停止自动 reload，避免恢复循环。 */
-export async function showNativeRendererRecoveryStopped(
-  owner: BrowserWindow | null,
-): Promise<void> {
-  await showMessageBoxFallback(owner, {
-    type: "warning",
-    title: "页面暂时无法恢复",
-    message: "青简的页面连续两次停止运行，已暂停自动恢复。",
-    detail: "请先重新启动青简。若问题再次出现，请保留应用日志和 Crashpad 目录以便排查。",
-    buttons: ["知道了"],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  });
+/**
+ * 仅限渲染层不可用的致命早期错误。常规确认、告知与恢复消息必须走
+ * rendererDialogBroker，由产品内浮层呈现，禁止在这里增加原生消息框调用。
+ */
+export function showNativeFatalEarlyErrorFallback(
+  nativeDialog: FatalEarlyErrorDialog,
+  title: string,
+  content: string,
+): void {
+  nativeDialog.showErrorBox(title, content);
 }

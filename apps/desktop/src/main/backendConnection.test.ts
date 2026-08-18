@@ -17,6 +17,7 @@ import {
   AttachConnectionError,
   AttachBackendConnection,
   EmbeddedBackendConnection,
+  connectAttachBackend,
   handshakeAttachInstance,
   resolveQingjianDeepLink,
   type BackendConnection,
@@ -117,6 +118,27 @@ test("握手只在主进程携带 instance token，并校验完整身份/能力"
     desktopCapabilities: DESKTOP_ATTACH_CAPABILITIES,
   });
   assert.equal(result.libraryId, instance.libraryId);
+});
+
+test("attach 阶段即使底层 fetch 忽略 AbortSignal 也会超时并得到确定结局", async () => {
+  const neverSettles = (() => new Promise<Response>(() => undefined)) as typeof fetch;
+  const result = await Promise.race([
+    connectAttachBackend(instance, {
+      fetchImpl: neverSettles,
+      connectTimeoutMs: 20,
+    }).then(
+      () => ({ kind: "connected" as const }),
+      (error: unknown) => ({
+        kind: "failed" as const,
+        code: error instanceof AttachConnectionError ? error.code : "UNKNOWN",
+      }),
+    ),
+    new Promise<{ kind: "hung" }>((resolve) => {
+      setTimeout(() => resolve({ kind: "hung" }), 250);
+    }),
+  ]);
+
+  assert.deepEqual(result, { kind: "failed", code: "UNREACHABLE" });
 });
 
 test("renderer 请求经 data 代理后剥除全部凭据头，attach token 仅由主进程注入", async () => {

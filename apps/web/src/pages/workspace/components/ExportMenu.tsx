@@ -229,7 +229,7 @@ export function ExportMenu({
           role="menuitem"
           className="ws-export-item"
           disabled={busy !== null || !documentExportEnabled}
-          title={documentExportEnabled ? undefined : "连接外部后台时暂不支持导出"}
+          title={documentExportEnabled ? undefined : "当前青简引擎暂不支持导出"}
           onClick={() => void download(f)}
           data-wf={`ExportFormat-${f.id}`}
         >

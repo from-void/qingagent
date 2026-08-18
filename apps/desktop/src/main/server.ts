@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
-import { app as electronApp, dialog } from "electron";
+import { app as electronApp } from "electron";
 import path from "node:path";
 import { listenWithDesktopPortFallback, resolveDesktopPort } from "./desktopPort.js";
 import { telemetry } from "./telemetry/index.js";
@@ -56,12 +56,6 @@ async function startClaimedServerOnce(options: StartServerOptions): Promise<Embe
   } catch (err) {
     const detail = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error("[startup] 数据库迁移失败:", detail);
-    dialog.showErrorBox(
-      "数据库迁移失败",
-      "青简已停止启动，以免影响你的数据。升级前的备份仍保留在数据目录中。" +
-        "请查看应用日志或联系支持后重试。",
-    );
-    electronApp.exit(1);
     throw markServerStartupErrorReported(err);
   }
 

@@ -45,7 +45,7 @@ export function ModelSettingsPanel({
     >
       {!modelKeysEnabled ? (
         <p id="attach-model-config-note" className="sm-keyhint">
-          当前使用外部后台的模型配置；桌面端不会读取或转交本机密钥。
+          当前青简引擎的模型配置由运行环境管理；桌面端不会读取或转交本机密钥。
         </p>
       ) : null}
       {view === "config" ? (

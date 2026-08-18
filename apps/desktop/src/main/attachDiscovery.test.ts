@@ -461,6 +461,25 @@ test("父进程拒绝子进程伪造的远程 endpoint、token 与空观察集",
     observations: [{ source: "local", state: "indeterminate", errorCode: "UNKNOWN" }],
   }), false);
   assert.equal(isDiscoveryReport({
+    observations: [{
+      source: "wsl:Ubuntu",
+      state: "valid",
+      instance: {
+        schemaVersion: 2,
+        port: 43123,
+        pid: 123,
+        version: "1.0.0",
+        attachProtocolVersion: 1,
+        instanceId: "00000000-0000-4000-8000-000000000001",
+        libraryId: "00000000-0000-4000-8000-000000000002",
+        token: `qa_instance_${"a".repeat(64)}`,
+        startedAt: new Date().toISOString(),
+        source: "local",
+        endpoint: "http://127.0.0.1:43123",
+      },
+    }],
+  }), false);
+  assert.equal(isDiscoveryReport({
     observations: [{ source: "wsl:docker-desktop", state: "absent", errorCode: "HOME_FAILED" }],
   }), true);
 });

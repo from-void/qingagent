@@ -2264,6 +2264,15 @@ describe("About Panel", () => {
     expect(getAboutVersion().textContent).toContain("网页版");
     expect(host?.querySelector('[data-wf="AboutUpdateButton"]')).toBeNull();
     expect(host?.querySelector('[data-wf="AboutKernel"]')).toBeNull();
+    expectAboutNoticesExternalLink();
+  });
+
+  it("桌面端第三方开源声明使用安全外链且不再内嵌正文", async () => {
+    installAboutElectron({});
+    await renderAbout();
+
+    expectAboutNoticesExternalLink();
+    expect(host?.querySelector("pre")).toBeNull();
   });
 
   it("点击版本号复制版本信息并走全局 toast", async () => {
@@ -2331,7 +2340,6 @@ function installAboutElectron(overrides: Record<string, unknown>): void {
     quitAndInstall: vi.fn(async () => undefined),
     openDownloadPage: vi.fn(async () => undefined),
     checkForUpdate: vi.fn(async () => ({ kind: "none" as const })),
-    getThirdPartyNotices: vi.fn(async () => null),
     getHardwareAccelerationEnabled: vi.fn(() => true),
     setHardwareAccelerationEnabled: vi.fn(async () => true),
     ...overrides,
@@ -2366,6 +2374,17 @@ function getAboutStatus(): HTMLElement {
   const el = host?.querySelector<HTMLElement>('[data-wf="AboutUpdateStatus"]');
   if (!el) throw new Error("about update status not found");
   return el;
+}
+
+function expectAboutNoticesExternalLink(): void {
+  const link = host?.querySelector<HTMLAnchorElement>('[data-wf="AboutNotices"]');
+  expect(link).not.toBeNull();
+  expect(link?.textContent).toContain("第三方开源声明");
+  expect(link?.getAttribute("href")).toBe(
+    "https://github.com/void2anything/qingagent/blob/main/THIRD_PARTY_NOTICES.md",
+  );
+  expect(link?.getAttribute("target")).toBe("_blank");
+  expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
 }
 
 async function render(element: ReactNode): Promise<void> {

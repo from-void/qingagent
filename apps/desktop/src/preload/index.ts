@@ -28,6 +28,17 @@ import {
   type BackendStartupAction,
   type BackendStartupPrompt,
 } from "../backendConnectionContract.js";
+import {
+  DSH_PLUGIN_DETECT_CHANNEL,
+  DSH_PLUGIN_INSTALL_CHANNEL,
+  type DshDetectionSnapshot,
+  type DshInstallResult,
+} from "../dshPluginContract.js";
+import {
+  DESKTOP_STARTUP_NOTICE_ACK_CHANNEL,
+  DESKTOP_STARTUP_NOTICE_GET_CHANNEL,
+  type DesktopStartupNoticeKind,
+} from "../startupNoticeContract.js";
 
 type UpdateStatusPayload = {
   kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
@@ -180,7 +191,7 @@ function onDesktopDialogRequest(
 }
 
 function markDesktopDialogReady(kinds: DesktopDialogKind[]): void {
-  // 同步握手只传两个固定枚举，确保启动壳 loadURL resolve 后主进程已看见能力，避免首个
+  // 同步握手只传固定语义枚举，确保启动壳 loadURL resolve 后主进程已看见能力，避免首个
   // 自绘请求与异步 ready 消息竞速而误降级原生。
   ipcRenderer.sendSync(
     DESKTOP_DIALOG_READY_CHANNEL,
@@ -272,9 +283,18 @@ contextBridge.exposeInMainWorld("electron", {
   versions,
   // 手动检查更新:请求-响应,直接拿回本次结果(含 error 态)。
   checkForUpdate: () => ipcRenderer.invoke("qingagent:update-check") as Promise<UpdateStatusPayload>,
-  // 第三方开源声明全文;读不到返回 null,前端降级跳 GitHub。
-  getThirdPartyNotices: () =>
-    ipcRenderer.invoke("qingagent:third-party-notices-get") as Promise<string | null>,
+  detectDshPlugin: () =>
+    ipcRenderer.invoke(DSH_PLUGIN_DETECT_CHANNEL) as Promise<DshDetectionSnapshot>,
+  installDshPlugin: (profile: string) =>
+    ipcRenderer.invoke(DSH_PLUGIN_INSTALL_CHANNEL, profile) as Promise<DshInstallResult>,
+  getPendingStartupNotice: () => {
+    const value = ipcRenderer.sendSync(DESKTOP_STARTUP_NOTICE_GET_CHANNEL) as unknown;
+    return value === "cross-namespace-library-demoted"
+      ? value as DesktopStartupNoticeKind
+      : null;
+  },
+  acknowledgeStartupNotice: (kind: DesktopStartupNoticeKind) =>
+    ipcRenderer.invoke(DESKTOP_STARTUP_NOTICE_ACK_CHANNEL, kind) as Promise<boolean>,
   // 主进程只发语义请求；实际确认卡由 renderer 的产品 UI 绘制并回传用户选择。
   onDesktopDialogRequest,
   markDesktopDialogReady,

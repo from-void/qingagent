@@ -37,6 +37,27 @@ export interface DiscoveryReport {
   observations: DiscoveryObservation[];
 }
 
+/**
+ * 客户端自身命名空间的唯一实例来源标记。其余来源（`wsl:*` 及任何未来来源）
+ * 只作诊断展示，永不作为 attach 候选：跨系统实例的 127.0.0.1 端点在本机
+ * 命名空间内语义不同，attach 过去轻则不可达、重则把别的系统的文库当成本机文库。
+ * 反向同理：WSL/Linux 客户端只枚举本机 HOME，天然不会看到 Windows 实例。
+ */
+export const LOCAL_NAMESPACE_SOURCE = "local";
+
+export function isSameNamespaceSource(source: string): boolean {
+  return source === LOCAL_NAMESPACE_SOURCE;
+}
+
+/**
+ * 决策视角下的本机观测来源：`local` 是本机 HOME 探测，`worker` 是发现子进程
+ * 级失败（意味着本机枚举本身没完成），两者都必须参与阻断判定；`wsl:*` 等
+ * 跨命名空间观测不参与。
+ */
+export function isLocalObservationSource(source: string): boolean {
+  return source === LOCAL_NAMESPACE_SOURCE || source === "worker";
+}
+
 export function reportValidInstances(report: DiscoveryReport): DiscoveredInstance[] {
   const unique = new Map<string, DiscoveredInstance>();
   for (const observation of report.observations) {

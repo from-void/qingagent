@@ -175,7 +175,7 @@ export function FeedbackPanel() {
             className="sm-btn primary"
             data-wf="FeedbackExportButton"
             disabled={!diagnosticsExportEnabled || exporting || (!loadFailed && checked.size === 0)}
-            title={diagnosticsExportEnabled ? undefined : "连接外部后台时暂不支持导出诊断"}
+            title={diagnosticsExportEnabled ? undefined : "当前青简引擎暂不支持导出诊断"}
             onClick={exportReport}
           >
             {exporting ? "导出中" : "导出报错记录"}

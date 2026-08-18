@@ -85,11 +85,7 @@ import { hasOtherProcessErrorHandler } from "./processErrorPolicy.js";
 import { createDesktopQuitCoordinator } from "./quitCoordinator.js";
 import { RendererDialogBroker } from "./rendererDialogBroker.js";
 import { getLiveWebContents } from "./windowLifecycle.js";
-import {
-  showNativeContentRecoveryFallback,
-  showNativeQuitFallback,
-  showNativeRendererRecoveryStopped,
-} from "./nativeDialogFallback.js";
+import { showNativeFatalEarlyErrorFallback } from "./nativeDialogFallback.js";
 import {
   DESKTOP_DIALOG_READY_CHANNEL,
   DESKTOP_DIALOG_RESPONSE_CHANNEL,
@@ -97,6 +93,11 @@ import {
   type DesktopDialogResponse,
   type DesktopDialogResult,
 } from "../rendererDialogContract.js";
+import {
+  DESKTOP_STARTUP_NOTICE_ACK_CHANNEL,
+  DESKTOP_STARTUP_NOTICE_GET_CHANNEL,
+  isDesktopStartupNoticeKind,
+} from "../startupNoticeContract.js";
 import {
   ExportDownloadCoordinator,
   EXPORT_DOWNLOAD_REVEAL_CHANNEL,
@@ -122,8 +123,15 @@ import {
 } from "../backendConnectionContract.js";
 import { discoverAttachInstances } from "./attachDiscovery.js";
 import { decideAttachMode, type AttachModeDecision } from "./attachModeDecision.js";
+import {
+  acknowledgeAttachStartupNotice,
+  persistBoundLibraryId,
+  persistDemotedCrossNamespaceBinding,
+  readAttachBindingState,
+} from "./attachBindingStore.js";
 import { resolveAttachHandshakeFailure } from "./attachStartupDecision.js";
 import type { DiscoveredInstance, DiscoveryReport } from "./attachDiscoveryTypes.js";
+import { isLocalObservationSource } from "./attachDiscoveryTypes.js";
 import {
   AttachConnectionError,
   EmbeddedBackendConnection,
@@ -140,6 +148,14 @@ import {
   createPackagedAssetManifest,
 } from "./desktopDataProtocol.js";
 import type { AttachCapability } from "@qingagent/contract-ts";
+import {
+  DSH_PLUGIN_DETECT_CHANNEL,
+  DSH_PLUGIN_INSTALL_CHANNEL,
+} from "../dshPluginContract.js";
+import {
+  detectDshInstallation,
+  installDshPlugin,
+} from "./dshPluginManager.js";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWindowProcessMonitor: MainWindowProcessMonitor | null = null;
@@ -216,6 +232,18 @@ ipcMain.on(DESKTOP_DIALOG_RESPONSE_CHANNEL, (event, rawResponse: unknown) => {
   assertTrustedRenderer(event);
   if (!isDesktopDialogResponse(rawResponse)) return;
   rendererDialogBroker.respond(event.sender, rawResponse);
+});
+
+ipcMain.on(DESKTOP_STARTUP_NOTICE_GET_CHANNEL, (event) => {
+  assertTrustedRenderer(event);
+  event.returnValue = readAttachBindingState(attachBindingPath()).pendingStartupNotice;
+});
+
+ipcMain.handle(DESKTOP_STARTUP_NOTICE_ACK_CHANNEL, (event, rawKind: unknown) => {
+  assertTrustedRenderer(event);
+  if (!isDesktopStartupNoticeKind(rawKind)) return false;
+  acknowledgeAttachStartupNotice(attachBindingPath(), rawKind);
+  return true;
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -720,6 +748,15 @@ const STARTUP_SHELL_HTML = `<!doctype html>
       </div>
     </section>
   </div>
+  <div class="ws-folder-modal-overlay" id="desktop-notice" hidden>
+    <section class="ws-folder-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="desktop-notice-title" aria-describedby="desktop-notice-message">
+      <h3 id="desktop-notice-title"></h3>
+      <p id="desktop-notice-message"></p>
+      <div class="ws-folder-confirm-actions">
+        <button class="ws-folder-modal-affirm" id="desktop-notice-confirm" type="button">知道了</button>
+      </div>
+    </section>
+  </div>
   <div class="ws-folder-modal-overlay" id="backend-startup" hidden>
     <section class="ws-folder-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="backend-startup-title" aria-describedby="backend-startup-message">
       <h3 id="backend-startup-title">正在连接文库</h3>
@@ -740,6 +777,10 @@ const STARTUP_SHELL_HTML = `<!doctype html>
       const recovery = document.getElementById("content-recovery");
       const retry = document.getElementById("content-retry");
       const exit = document.getElementById("content-exit");
+      const notice = document.getElementById("desktop-notice");
+      const noticeTitle = document.getElementById("desktop-notice-title");
+      const noticeMessage = document.getElementById("desktop-notice-message");
+      const noticeConfirm = document.getElementById("desktop-notice-confirm");
       const backendStartup = document.getElementById("backend-startup");
       const backendTitle = document.getElementById("backend-startup-title");
       const backendMessage = document.getElementById("backend-startup-message");
@@ -747,25 +788,63 @@ const STARTUP_SHELL_HTML = `<!doctype html>
       const backendCandidates = document.getElementById("backend-startup-candidates");
       const backendRetry = document.getElementById("backend-retry");
       const backendUnbind = document.getElementById("backend-unbind");
+      const noticeCopies = {
+        "renderer-recovery-stopped": {
+          title: "页面暂时无法恢复",
+          message: "青简的页面连续两次停止运行，已暂停自动恢复。请重新启动青简；若问题再次出现，请保留应用日志以便排查。",
+        },
+        "backend-startup-failed": {
+          title: "后台连接失败",
+          message: "青简暂时无法启动，应用将退出。请重新打开应用；若仍失败，请查看应用日志或联系支持。",
+        },
+        "database-migration-failed": {
+          title: "数据库迁移失败",
+          message: "青简已停止启动，以免影响你的数据。升级前的备份仍保留在数据目录中。请查看应用日志或联系支持后重试。",
+        },
+      };
       const detach = bridge.onDesktopDialogRequest((request) => {
-        if (request.kind !== "content-load-failed") return;
+        if (request.kind === "content-load-failed") {
+          loading.hidden = true;
+          notice.hidden = true;
+          backendStartup.hidden = true;
+          recovery.hidden = false;
+          retry.disabled = false;
+          exit.disabled = false;
+          const respond = (result) => {
+            retry.disabled = true;
+            exit.disabled = true;
+            bridge.respondToDesktopDialog(request.id, result);
+          };
+          retry.onclick = () => respond("confirm");
+          exit.onclick = () => respond("cancel");
+          retry.focus();
+          return;
+        }
+        const copy = noticeCopies[request.kind];
+        if (!copy) return;
         loading.hidden = true;
-        recovery.hidden = false;
-        retry.disabled = false;
-        exit.disabled = false;
-        const respond = (result) => {
-          retry.disabled = true;
-          exit.disabled = true;
-          bridge.respondToDesktopDialog(request.id, result);
+        recovery.hidden = true;
+        backendStartup.hidden = true;
+        notice.hidden = false;
+        noticeTitle.textContent = copy.title;
+        noticeMessage.textContent = copy.message;
+        noticeConfirm.disabled = false;
+        noticeConfirm.onclick = () => {
+          noticeConfirm.disabled = true;
+          bridge.respondToDesktopDialog(request.id, "confirm");
         };
-        retry.onclick = () => respond("confirm");
-        exit.onclick = () => respond("cancel");
-        retry.focus();
+        noticeConfirm.focus();
       });
-      bridge.markDesktopDialogReady(["content-load-failed"]);
+      bridge.markDesktopDialogReady([
+        "content-load-failed",
+        "renderer-recovery-stopped",
+        "backend-startup-failed",
+        "database-migration-failed",
+      ]);
       const detachBackend = bridge.onBackendStartupPrompt?.((prompt) => {
         loading.hidden = true;
         recovery.hidden = true;
+        notice.hidden = true;
         backendStartup.hidden = false;
         backendTitle.textContent = prompt.title;
         backendMessage.textContent = prompt.message;
@@ -812,6 +891,26 @@ const CHROMIUM_ERR_ABORTED = -3;
 
 function waitForContentLoadRetry(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function showRendererRecoveryStoppedInProductUi(
+  contentWindow: BrowserWindow,
+  contentWebContents: WebContents,
+): Promise<void> {
+  try {
+    await contentWindow.loadURL(STARTUP_SHELL_URL);
+  } catch (error) {
+    console.error("[process-lifecycle] 恢复提示壳加载失败:", error);
+    return;
+  }
+  if (getLiveWebContents(contentWindow) !== contentWebContents) return;
+  const response = await rendererDialogBroker.request(
+    contentWebContents,
+    "renderer-recovery-stopped",
+  );
+  if (response === null) {
+    console.error("[process-lifecycle] renderer 恢复停止消息无法投递到产品浮层");
+  }
 }
 
 function captureAppOpenedOnce() {
@@ -1149,15 +1248,16 @@ ipcMain.handle("qingagent:update-check", async (event) => {
   return manualCheckForUpdates({ window: owner });
 });
 
-// 第三方开源声明:读打进安装包根部的 THIRD_PARTY_NOTICES.md;读不到返回 null,前端降级跳 GitHub。
-ipcMain.handle("qingagent:third-party-notices-get", async (event) => {
+// DSH 插件安装只走此具名 IPC：主进程自行枚举 profile 并在执行前再次校验白名单，
+// renderer 不能提供命令、参数、路径或 shell 选项。
+ipcMain.handle(DSH_PLUGIN_DETECT_CHANNEL, (event) => {
   assertTrustedRenderer(event);
-  try {
-    const noticesPath = path.join(process.resourcesPath, "THIRD_PARTY_NOTICES.md");
-    return readFileSync(noticesPath, "utf8");
-  } catch {
-    return null;
-  }
+  return detectDshInstallation();
+});
+
+ipcMain.handle(DSH_PLUGIN_INSTALL_CHANNEL, (event, profile: unknown) => {
+  assertTrustedRenderer(event);
+  return installDshPlugin(typeof profile === "string" ? profile : "");
 });
 
 // 客户端凭证/模型配置持久化:落 userData/client-config.json,与端口/origin 解耦。
@@ -1378,29 +1478,8 @@ async function installRendererProtocols(
   });
 }
 
-const BOUND_LIBRARY_CONFIG_KEY = "boundLibraryId";
-
 function attachBindingPath(): string {
   return path.join(app.getPath("userData"), "attach-binding.json");
-}
-
-function readBoundLibraryId(): string | null {
-  try {
-    const value = readPrivateStringMap(attachBindingPath())[BOUND_LIBRARY_CONFIG_KEY];
-    return typeof value === "string"
-      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-      ? value
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistBoundLibraryId(libraryId: string | null): void {
-  const current = readPrivateStringMap(attachBindingPath());
-  if (libraryId) current[BOUND_LIBRARY_CONFIG_KEY] = libraryId;
-  else delete current[BOUND_LIBRARY_CONFIG_KEY];
-  writePrivateStringMap(attachBindingPath(), current);
 }
 
 function discoveryWorkerPath(): { workerPath: string; developmentWorker: boolean } {
@@ -1424,14 +1503,18 @@ function startEmbeddedRediscovery(backend: EmbeddedBackendConnection): void {
     if (activeBackend !== backend) return;
     const current = backend.snapshot();
     const report = await runAttachDiscovery();
-    const conflicting = report.observations.some((observation) => (
+    // 跨命名空间实例（wsl:*）与本机文库互不可达，既不是冲突也不是待启动竞态。
+    const localObservations = report.observations.filter((observation) => (
+      isLocalObservationSource(observation.source)
+    ));
+    const conflicting = localObservations.some((observation) => (
       observation.state === "valid"
       && (
         observation.instance.instanceId !== current.instanceId
         || observation.instance.libraryId !== current.libraryId
       )
     ));
-    const pending = !conflicting && report.observations.some((observation) => (
+    const pending = !conflicting && localObservations.some((observation) => (
       observation.state === "indeterminate"
       && observation.errorCode === "STARTING_LEASE"
     ));
@@ -1442,11 +1525,19 @@ function startEmbeddedRediscovery(backend: EmbeddedBackendConnection): void {
 }
 
 let startupPromptSequence = 0;
-const pendingStartupPrompts = new Map<number, (action: BackendStartupAction) => void>();
+const pendingStartupPrompts = new Map<number, (action: StartupPromptOutcome) => void>();
 
 type BackendStartupPromptInput =
   | Omit<Extract<BackendStartupPrompt, { kind: "blocked" }>, "id">
   | Omit<Extract<BackendStartupPrompt, { kind: "select" }>, "id">;
+
+/**
+ * 渲染进程在启动 prompt 挂起期间崩溃/卡死/销毁时，主进程用来收口等待的内部
+ * 结局。没有它，await 渲染应答就是永等（P83 事故形态之一）。
+ */
+type StartupPromptOutcome =
+  | BackendStartupAction
+  | { promptId: number; kind: "renderer-gone" };
 
 ipcMain.handle(BACKEND_STARTUP_ACTION_CHANNEL, (event, rawAction: unknown) => {
   assertTrustedRenderer(event);
@@ -1461,10 +1552,24 @@ ipcMain.handle(BACKEND_STARTUP_ACTION_CHANNEL, (event, rawAction: unknown) => {
 function requestBackendStartupAction(
   contents: WebContents,
   prompt: BackendStartupPromptInput,
-): Promise<BackendStartupAction> {
+): Promise<StartupPromptOutcome> {
   const id = ++startupPromptSequence;
   return new Promise((resolve) => {
-    pendingStartupPrompts.set(id, resolve);
+    const onRendererGone = (): void => {
+      const settle = pendingStartupPrompts.get(id);
+      if (!settle) return;
+      pendingStartupPrompts.delete(id);
+      settle({ promptId: id, kind: "renderer-gone" });
+    };
+    contents.once("destroyed", onRendererGone);
+    contents.once("render-process-gone", onRendererGone);
+    contents.once("unresponsive", onRendererGone);
+    pendingStartupPrompts.set(id, (action) => {
+      contents.off("destroyed", onRendererGone);
+      contents.off("render-process-gone", onRendererGone);
+      contents.off("unresponsive", onRendererGone);
+      resolve(action);
+    });
     contents.send(BACKEND_STARTUP_PROMPT_CHANNEL, { ...prompt, id });
   });
 }
@@ -1476,7 +1581,9 @@ function blockedPrompt(
     ? ["已绑定文库缺失", "发现了其他文库。为防止写入错误文库，请显式解绑后重新选择。"]
     : decision.reason === "bound-missing"
       ? ["找不到既有文库", "青简没有找到已绑定文库。请确认后台已启动后重试，或显式解绑。"]
-      : ["暂时无法确定文库", "实例发现未能安全完成。青简不会在状态不明时创建第二个文库。"];
+      : decision.reason === "cross-namespace-only"
+        ? ["青简引擎在其他系统环境中", "只在 WSL 等其他系统环境中发现了青简引擎。本客户端只能使用当前系统环境中的引擎；请在对应系统内使用青简，或在本机启动青简引擎后重试。"]
+        : ["暂时无法确定文库", "实例发现未能安全完成。青简不会在状态不明时创建第二个文库。"];
   return {
     kind: "blocked",
     title: copy[0]!,
@@ -1506,10 +1613,23 @@ async function selectStartupInstance(
         version: instance.version,
       })),
     });
+    assertStartupRendererAlive(action);
     const selected = action.kind === "select"
       ? choices.find((choice) => choice.id === action.candidateId)
       : null;
     if (selected) return selected.instance;
+  }
+}
+
+/**
+ * 渲染进程在启动 prompt 期间崩溃/卡死/销毁时，启动流程必须抛出并由上层
+ * 报错退出，而不是把 promise 永远挂在死渲染进程上。
+ */
+function assertStartupRendererAlive(
+  outcome: StartupPromptOutcome,
+): asserts outcome is BackendStartupAction {
+  if (outcome.kind === "renderer-gone") {
+    throw new Error("startup prompt renderer unavailable");
   }
 }
 
@@ -1534,13 +1654,14 @@ async function handleAutomaticStartupFailure(
     await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     return nextFailures;
   }
-  await requestBackendStartupAction(contents, {
+  const action = await requestBackendStartupAction(contents, {
     kind: "blocked",
     title: "后台启动受阻",
     message,
     errorCodes: [errorCode],
     allowUnbind: false,
   });
+  assertStartupRendererAlive(action);
   return 0;
 }
 
@@ -1553,7 +1674,8 @@ async function connectSelectedAttach(
       const decision = decideAttachMode(report, libraryId);
       if (decision.kind === "attach") return decision.instance;
       return report.observations.some((observation) => (
-        observation.state === "indeterminate"
+        isLocalObservationSource(observation.source)
+        && observation.state === "indeterminate"
         && observation.errorCode === "STARTING_LEASE"
       ))
         ? { errorCode: "STARTING_LEASE" as const }
@@ -1563,7 +1685,8 @@ async function connectSelectedAttach(
 }
 
 async function resolveStartupBackend(contents: WebContents): Promise<BackendConnection> {
-  let boundLibraryId = readBoundLibraryId();
+  const bindingState = readAttachBindingState(attachBindingPath());
+  let boundLibraryId = bindingState.boundLibraryId;
   let automaticStartupFailures = 0;
   while (true) {
     const report = await runAttachDiscovery();
@@ -1574,13 +1697,18 @@ async function resolveStartupBackend(contents: WebContents): Promise<BackendConn
     if (decision.kind === "blocked") {
       automaticStartupFailures = 0;
       const action = await requestBackendStartupAction(contents, blockedPrompt(decision));
+      assertStartupRendererAlive(action);
       if (action.kind === "unbind" && decision.allowUnbind) {
-        persistBoundLibraryId(null);
+        persistBoundLibraryId(attachBindingPath(), null);
         boundLibraryId = null;
       }
       continue;
     }
     if (decision.kind === "embedded") {
+      if (decision.demotedBinding === "cross-namespace" && boundLibraryId) {
+        persistDemotedCrossNamespaceBinding(attachBindingPath(), boundLibraryId);
+        boundLibraryId = null;
+      }
       prepareEmbeddedStorageEnvironment();
       const { acquireStartingLease, dataDirDigest } = await import(
         "@qingagent/server/externalInstance"
@@ -1607,7 +1735,7 @@ async function resolveStartupBackend(contents: WebContents): Promise<BackendConn
         };
         try {
           const backend = await connectSelectedAttach(racedInstance);
-          persistBoundLibraryId(racedInstance.libraryId);
+          persistBoundLibraryId(attachBindingPath(), racedInstance.libraryId);
           return backend;
         } catch (error) {
           automaticStartupFailures = await handleAutomaticStartupFailure(
@@ -1646,7 +1774,7 @@ async function resolveStartupBackend(contents: WebContents): Promise<BackendConn
 
     try {
       const backend = await connectSelectedAttach(decision.instance);
-      persistBoundLibraryId(decision.instance.libraryId);
+      persistBoundLibraryId(attachBindingPath(), decision.instance.libraryId);
       return backend;
     } catch (error) {
       // health 与 handshake 之间实例若恰好退出，再发现为确定 absent 时才允许回到 embedded。
@@ -1670,6 +1798,7 @@ async function resolveStartupBackend(contents: WebContents): Promise<BackendConn
         errorCodes: [code],
         allowUnbind: false,
       });
+      assertStartupRendererAlive(action);
       if (action.kind === "retry") continue;
     }
   }
@@ -1843,7 +1972,10 @@ async function createWindowOnce() {
   attachRendererDiagnostics(contentWebContents, desktopLogDir);
   const processMonitor = attachMainWindowProcessMonitor(contentWebContents, {
     isQuitting: () => quitCoordinator.isQuitting(),
-    showRecoveryStopped: () => showNativeRendererRecoveryStopped(contentWindow),
+    showRecoveryStopped: () => showRendererRecoveryStoppedInProductUi(
+      contentWindow,
+      contentWebContents,
+    ),
   });
   mainWindowProcessMonitor = processMonitor;
   contentWindow.once("closed", () => {
@@ -1941,13 +2073,25 @@ async function createWindowOnce() {
     }
   } catch (error) {
     const runtime = embeddedRuntimeReady ? await embeddedRuntimeReady.catch(() => null) : null;
-    if (!runtime?.isReportedServerStartupError(error)) {
+    const isDatabaseMigrationFailure = runtime?.isReportedServerStartupError(error) === true;
+    if (!isDatabaseMigrationFailure) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
       console.error("[startup] 后台连接初始化失败:", detail);
-      dialog.showErrorBox(
-        "后台连接失败",
-        "青简暂时无法启动，应用将退出。请重新打开应用；若仍失败，请查看应用日志或联系支持。",
-      );
+    }
+    const failure = isDatabaseMigrationFailure
+      ? {
+          kind: "database-migration-failed" as const,
+          title: "数据库迁移失败",
+          message: "青简已停止启动，以免影响你的数据。升级前的备份仍保留在数据目录中。请查看应用日志或联系支持后重试。",
+        }
+      : {
+          kind: "backend-startup-failed" as const,
+          title: "后台连接失败",
+          message: "青简暂时无法启动，应用将退出。请重新打开应用；若仍失败，请查看应用日志或联系支持。",
+        };
+    const response = await rendererDialogBroker.request(contentWebContents, failure.kind);
+    if (response === null) {
+      showNativeFatalEarlyErrorFallback(dialog, failure.title, failure.message);
     }
     app.exit(1);
     return;
@@ -2030,15 +2174,12 @@ async function createWindowOnce() {
           console.warn("[startup] 恢复询问壳加载失败:", error);
         });
         if (getLiveWebContents(contentWindow) !== contentWebContents) return;
-        let response = await rendererDialogBroker.request(
+        const response = await rendererDialogBroker.request(
           contentWebContents,
           "content-load-failed",
         );
         if (getLiveWebContents(contentWindow) !== contentWebContents) return;
-        if (response === null) {
-          response = await showNativeContentRecoveryFallback(contentWindow);
-        }
-        if (response === "cancel") {
+        if (response !== "confirm") {
           app.exit(1);
           return;
         }
@@ -2178,7 +2319,8 @@ const quitCoordinator = createDesktopQuitCoordinator({
       );
     }
     if (response === null) {
-      response = await showNativeQuitFallback(owner);
+      console.warn("[desktop] renderer 不可用，无法显示生成中退出确认，已取消退出");
+      return false;
     }
     return response === "confirm";
   },

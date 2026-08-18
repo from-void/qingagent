@@ -495,7 +495,7 @@ export function ReviewLaunchModal(props: ReviewLaunchModalProps) {
               </div>
             ))}
           </div>
-          <div className="ws-launch-actions"><Button type="button" variant="primary" disabled={saving || !lexiconMutationEnabled} title={lexiconMutationEnabled ? undefined : "连接外部后台时暂不支持修改词库"} onClick={saveLexiconSelection}>{saving ? "正在保存…" : "完成"}</Button></div>
+          <div className="ws-launch-actions"><Button type="button" variant="primary" disabled={saving || !lexiconMutationEnabled} title={lexiconMutationEnabled ? undefined : "当前青简引擎暂不支持修改词库"} onClick={saveLexiconSelection}>{saving ? "正在保存…" : "完成"}</Button></div>
         </>
       ) : null}
       {page === "entries" ? (

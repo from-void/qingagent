@@ -423,7 +423,7 @@ export function SecurityPanel() {
         <h2>操作确认</h2>
         <p>{confirmGrantEnabled
           ? "按操作类别选择确认方式。授权会立即生效，也可以随时改回。"
-          : "当前连接外部后台，确认授权设置仅供查看。"}</p>
+          : "当前青简引擎暂不支持修改确认授权设置，现仅供查看。"}</p>
       </header>
       {settings && (
         <div className="security-list">
@@ -583,7 +583,7 @@ function CredentialSharePanel({
               type="button"
               className="security-revoke"
               disabled={!enabled || busy === item.declared}
-              title={enabled ? undefined : "连接外部后台时不使用本机凭据共享"}
+              title={enabled ? undefined : "当前青简引擎不使用本机凭据共享"}
               onClick={() => void revoke(item)}
             >
               收回

@@ -91,9 +91,9 @@ export function TemplateEditorPage(props: {
             ))}
           </div>
         ) : null}
-        {props.mode !== "new" ? <Button type="button" variant="ghost" data-danger="true" disabled={props.saving || props.deleteDisabled || props.mutationDisabled} title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : props.deleteDisabled ? props.deleteDisabledReason ?? "每类至少保留一个模板" : undefined} onClick={props.onDelete}>删除</Button> : null}
+        {props.mode !== "new" ? <Button type="button" variant="ghost" data-danger="true" disabled={props.saving || props.deleteDisabled || props.mutationDisabled} title={props.mutationDisabled ? "当前青简引擎暂不支持修改模板" : props.deleteDisabled ? props.deleteDisabledReason ?? "每类至少保留一个模板" : undefined} onClick={props.onDelete}>删除</Button> : null}
         {props.mode !== "new" ? <Button type="button" disabled={props.saving || invalid || props.mutationDisabled} onClick={props.onDuplicate}>另存新模板</Button> : null}
-        <Button type="button" variant="primary" disabled={props.saving || invalid || props.mutationDisabled} title={props.mutationDisabled ? "连接外部后台时暂不支持修改模板" : undefined} onClick={props.onSave}>保存</Button>
+        <Button type="button" variant="primary" disabled={props.saving || invalid || props.mutationDisabled} title={props.mutationDisabled ? "当前青简引擎暂不支持修改模板" : undefined} onClick={props.onSave}>保存</Button>
       </div>
     </div>
   );

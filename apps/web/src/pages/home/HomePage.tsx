@@ -361,7 +361,7 @@ function HomeExperience() {
             className="home-card-menu-item is-danger"
             onClick={handleDeleteArticle}
             disabled={articleMenu.isDeleting || !sessionDeletionEnabled}
-            title={sessionDeletionEnabled ? undefined : "连接外部后台时暂不支持删除"}
+            title={sessionDeletionEnabled ? undefined : "当前青简引擎暂不支持删除"}
           >
             {articleMenu.isDeleting ? "删除中..." : "删除"}
           </button>

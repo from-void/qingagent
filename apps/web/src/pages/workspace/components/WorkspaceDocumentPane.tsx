@@ -394,7 +394,7 @@ export function WorkspaceDocumentPane({
               }}
               createDisabledReason={derivativeMutationEnabled
                 ? derivativeCreateDisabledReason
-                : "连接外部后台时暂不支持生成衍生稿"}
+                : "当前青简引擎暂不支持生成衍生稿"}
               isStaleDismissed={isStaleDismissed}
               onRename={async (nextTitle) => {
                 const requestSessionId = state.sessionId;

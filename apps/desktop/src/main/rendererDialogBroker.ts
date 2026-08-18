@@ -18,8 +18,9 @@ interface PendingDialog {
 }
 
 /**
- * 主进程只编排请求与回执，不生成产品 UI。null 表示 renderer 当前不可用，调用方才可走
- * 集中的原生兜底。导航/崩溃会立即释放等待，用户在正常自绘卡上思考时则不设武断超时。
+ * 主进程只编排请求与回执，不生成产品 UI。null 表示 renderer 当前不可用，常规流程必须
+ * fail-closed；仅致命早期启动错误可进入唯一原生兜底。导航/崩溃会立即释放等待，用户在
+ * 正常自绘卡上思考时则不设武断超时。
  */
 export class RendererDialogBroker {
   private nextRequestId = 1;

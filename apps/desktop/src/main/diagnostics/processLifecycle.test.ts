@@ -97,7 +97,7 @@ describe("main window process monitor", () => {
     );
   });
 
-  it("30 秒内第二次 renderer gone 停止恢复并只显示一次原生提示", () => {
+  it("30 秒内第二次 renderer gone 停止恢复并只显示一次产品提示", () => {
     const contents = new MockWebContents();
     const scheduled: Array<() => void> = [];
     const logs = createLogSink();

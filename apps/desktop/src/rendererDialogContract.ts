@@ -4,7 +4,10 @@ export const DESKTOP_DIALOG_RESPONSE_CHANNEL = "qingagent:desktop-dialog-respons
 
 export type DesktopDialogKind =
   | "quit-during-generation"
-  | "content-load-failed";
+  | "content-load-failed"
+  | "renderer-recovery-stopped"
+  | "backend-startup-failed"
+  | "database-migration-failed";
 
 export type DesktopDialogResult = "confirm" | "cancel";
 
@@ -19,5 +22,9 @@ export interface DesktopDialogResponse {
 }
 
 export function isDesktopDialogKind(value: unknown): value is DesktopDialogKind {
-  return value === "quit-during-generation" || value === "content-load-failed";
+  return value === "quit-during-generation"
+    || value === "content-load-failed"
+    || value === "renderer-recovery-stopped"
+    || value === "backend-startup-failed"
+    || value === "database-migration-failed";
 }

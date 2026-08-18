@@ -3,12 +3,13 @@ import { readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { showNativeFatalEarlyErrorFallback } from "./nativeDialogFallback.js";
 
 const MAIN_ROOT = fileURLToPath(new URL(".", import.meta.url));
-const NATIVE_MESSAGE_BOX = /\bdialog\s*\.\s*showMessageBox\s*\(/g;
-const NATIVE_ERROR_BOX = /\bdialog\s*\.\s*showErrorBox\s*\(/g;
+const NATIVE_MESSAGE_BOX = /\.\s*showMessageBox\s*\(/g;
+const NATIVE_ERROR_BOX = /\.\s*showErrorBox\s*\(/g;
 
-test("desktop 原生消息框只存在于 renderer 不可用的集中兜底", () => {
+test("desktop 常规消息全部走产品浮层，原生错误框只保留唯一致命早期兜底", () => {
   const productionSources = productionMainSources();
   const occurrences = productionSources.flatMap((file) => {
     const source = readFileSync(file, "utf8");
@@ -25,18 +26,11 @@ test("desktop 原生消息框只存在于 renderer 不可用的集中兜底", ()
   });
 
   assert.deepEqual(occurrences, [
-    { file: "index.ts", api: "showErrorBox" },
-    { file: "nativeDialogFallback.ts", api: "showMessageBox" },
-    { file: "nativeDialogFallback.ts", api: "showMessageBox" },
-    { file: "server.ts", api: "showErrorBox" },
+    { file: "nativeDialogFallback.ts", api: "showErrorBox" },
   ]);
-  assert.deepEqual(
-    productionSources
-      .filter((file) => /\bshowMessageBox\b/.test(readFileSync(file, "utf8")))
-      .map((file) => basename(file)),
-    ["nativeDialogFallback.ts"],
-    "任何写法的 showMessageBox 都只能进入 renderer 不可用兜底文件",
-  );
+  assert.equal(productionSources.some((file) => (
+    /\bshowMessageBox\b/.test(readFileSync(file, "utf8"))
+  )), false, "常规路径不得调用任何 Electron showMessageBox");
 
   const indexSource = readFileSync(join(MAIN_ROOT, "index.ts"), "utf8");
   const fallbackSource = readFileSync(
@@ -45,25 +39,50 @@ test("desktop 原生消息框只存在于 renderer 不可用的集中兜底", ()
   );
   const serverSource = readFileSync(join(MAIN_ROOT, "server.ts"), "utf8");
   assert.doesNotMatch(indexSource, NATIVE_MESSAGE_BOX);
-  assert.match(indexSource, /rendererDialogBroker\.request/);
-  assert.match(indexSource, /showNativeQuitFallback/);
-  assert.match(indexSource, /showNativeContentRecoveryFallback/);
+  for (const kind of [
+    "quit-during-generation",
+    "content-load-failed",
+    "renderer-recovery-stopped",
+    "backend-startup-failed",
+    "database-migration-failed",
+  ]) {
+    assert.match(indexSource, new RegExp(`"${kind}"`));
+  }
+  assert.ok((indexSource.match(/rendererDialogBroker\.request\(/g)?.length ?? 0) >= 4);
+  assert.doesNotMatch(indexSource, /showNativeQuitFallback|showNativeContentRecoveryFallback|showNativeRendererRecoveryStopped|showNativeCrossNamespaceDemotionNotice/);
   assert.doesNotMatch(
     indexSource,
     /showNativeBrowserCredentialCleanupFailure|浏览器登录数据清理失败[\s\S]{0,240}?app\.exit\(1\)/,
     "旧浏览器凭据清理失败不得用启动弹窗阻断应用",
   );
-  assert.match(fallbackSource, /buttons:\s*\["退出应用", "继续生成"\]/);
-  assert.match(fallbackSource, /defaultId:\s*1/);
-  assert.match(fallbackSource, /buttons:\s*\["重试", "退出"\]/);
+  assert.match(fallbackSource, /仅限渲染层不可用的致命早期错误/);
+  assert.match(fallbackSource, /nativeDialog\.showErrorBox\(title, content\)/);
+  assert.doesNotMatch(fallbackSource, /showMessageBox|退出应用|内容页加载失败|已改用本机文库/);
   assert.doesNotMatch(fallbackSource, /浏览器登录数据清理失败/);
-  assert.doesNotMatch(indexSource, /showErrorBox\([\s\S]{0,240}?\+\s*detail/);
-  assert.doesNotMatch(serverSource, /showErrorBox\([\s\S]{0,320}?\+\s*detail/);
+  assert.equal(indexSource.match(/showNativeFatalEarlyErrorFallback\(/g)?.length, 1);
+  assert.doesNotMatch(serverSource, /showErrorBox|showMessageBox/);
 });
 
-function productionMainSources(): string[] {
-  return readdirSync(MAIN_ROOT)
-    .filter((name) => name.endsWith(".ts") && !name.includes(".test.") && !name.endsWith(".fixture.ts"))
-    .sort()
-    .map((name) => join(MAIN_ROOT, name));
+test("唯一原生兜底支持注入替身，且只接收收敛后的中文安全文案", () => {
+  const calls: Array<{ title: string; content: string }> = [];
+  showNativeFatalEarlyErrorFallback({
+    showErrorBox: (title, content) => calls.push({ title, content }),
+  }, "后台连接失败", "请重新打开应用。");
+
+  assert.deepEqual(calls, [{ title: "后台连接失败", content: "请重新打开应用。" }]);
+});
+
+function productionMainSources(directory = MAIN_ROOT): string[] {
+  return readdirSync(directory, { withFileTypes: true })
+    .flatMap((entry) => {
+      const filePath = join(directory, entry.name);
+      if (entry.isDirectory()) return productionMainSources(filePath);
+      return entry.isFile()
+        && entry.name.endsWith(".ts")
+        && !entry.name.includes(".test.")
+        && !entry.name.endsWith(".fixture.ts")
+        ? [filePath]
+        : [];
+    })
+    .sort();
 }

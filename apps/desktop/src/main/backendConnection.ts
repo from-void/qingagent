@@ -26,6 +26,7 @@ const REAUTH_REDISCOVERY_INITIAL_BACKOFF_MS = 1_000;
 const REAUTH_REDISCOVERY_MAX_BACKOFF_MS = 8_000;
 const REDISCOVERY_RATE_WINDOW_MS = 30_000;
 const REDISCOVERY_RATE_LIMIT = 8;
+const DEFAULT_ATTACH_CONNECT_TIMEOUT_MS = 2_500;
 
 export type BackendConnectionListener = (snapshot: BackendConnectionSnapshot) => void;
 
@@ -47,6 +48,8 @@ export interface EmbeddedBackendInfo extends AttachIdentity {
 
 export interface AttachBackendOptions {
   fetchImpl?: typeof fetch;
+  /** 覆盖完整握手阶段，防止底层 fetch 不响应 AbortSignal 时启动链永远悬挂。 */
+  connectTimeoutMs?: number;
   dataProxyFetch?: (request: Request) => Promise<Response>;
   rediscover?: (libraryId: string) => Promise<AttachRediscoveryResult>;
   now?: () => number;
@@ -781,7 +784,28 @@ export async function connectAttachBackend(
   instance: DiscoveredInstance,
   options: AttachBackendOptions = {},
 ): Promise<AttachBackendConnection> {
-  const handshake = await handshakeAttachInstance(instance, options.fetchImpl ?? fetch);
+  const configuredTimeout = options.connectTimeoutMs ?? DEFAULT_ATTACH_CONNECT_TIMEOUT_MS;
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : DEFAULT_ATTACH_CONNECT_TIMEOUT_MS;
+  const handshakePromise = handshakeAttachInstance(instance, options.fetchImpl ?? fetch);
+  const handshake = await new Promise<AttachHandshakeResponse>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      finish(() => reject(new AttachConnectionError("UNREACHABLE")));
+    }, timeoutMs);
+    timer.unref?.();
+    handshakePromise.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
   return new AttachBackendConnection(instance, handshake, options);
 }
 

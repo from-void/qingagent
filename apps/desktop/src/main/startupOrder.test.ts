@@ -159,11 +159,63 @@ test("启动决策自动重试有界退避，超限后进入阻断 UI", () => {
   );
 });
 
+test("启动 prompt 在渲染崩溃/卡死/销毁时有确定结局，不会永等", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const requestStart = source.indexOf("function requestBackendStartupAction(");
+  const requestEnd = source.indexOf("function blockedPrompt(", requestStart);
+  const requestSource = source.slice(requestStart, requestEnd);
+
+  for (const event of ["destroyed", "render-process-gone", "unresponsive"]) {
+    assert.match(requestSource, new RegExp(`"${event}"`), `启动 prompt 必须监听 ${event}`);
+  }
+  assert.match(requestSource, /kind: "renderer-gone"/);
+  const resolver = source.slice(
+    source.indexOf("async function resolveStartupBackend"),
+    source.indexOf("let detachBackendSnapshotListener"),
+  );
+  assert.match(resolver, /assertStartupRendererAlive\(action\)/);
+  const helper = source.slice(
+    source.indexOf("function assertStartupRendererAlive"),
+    source.indexOf("const STARTUP_AUTO_RETRY_DELAYS_MS"),
+  );
+  assert.match(helper, /outcome\.kind === "renderer-gone"/);
+  assert.match(helper, /throw new Error/, "渲染不可用时必须抛出，由上层报错退出而不是永等");
+});
+
+test("跨系统绑定自动降级 embedded：原子清绑定并记录非阻塞持久提示", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const resolver = source.slice(
+    source.indexOf("async function resolveStartupBackend"),
+    source.indexOf("let detachBackendSnapshotListener"),
+  );
+  const embeddedBranch = resolver.indexOf('decision.kind === "embedded"');
+  const demote = resolver.indexOf('decision.demotedBinding === "cross-namespace"');
+  assert.ok(embeddedBranch >= 0 && demote > embeddedBranch, "降级判定必须在 embedded 分支内");
+  const demoteSource = resolver.slice(demote, resolver.indexOf("prepareEmbeddedStorageEnvironment()", demote));
+  assert.match(demoteSource, /persistDemotedCrossNamespaceBinding\([^,]+, boundLibraryId\)/);
+  assert.match(demoteSource, /boundLibraryId = null/);
+  assert.doesNotMatch(demoteSource, /await|requestBackendStartupAction|rendererDialogBroker/);
+  assert.doesNotMatch(source, /notifyCrossNamespaceBindingDemoted/);
+  const startupShell = readStartupShellHtml(source);
+  assert.doesNotMatch(startupShell, /cross-namespace-library-demoted|原绑定指向/);
+  assert.match(source, /readAttachBindingState\(attachBindingPath\(\)\)/);
+  assert.match(source, /decideAttachMode\(report, boundLibraryId\)/);
+});
+
+test("embedded 周期再发现只把本机命名空间观测算作冲突", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const rediscovery = source.slice(
+    source.indexOf("function startEmbeddedRediscovery"),
+    source.indexOf("let startupPromptSequence"),
+  );
+  assert.match(rediscovery, /isLocalObservationSource\(observation\.source\)/);
+});
+
 test("data origin 可执行装载黑名单覆盖 object 与 media", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const filterSource = source.slice(
     source.indexOf("const dataResourceFilter"),
-    source.indexOf("const BOUND_LIBRARY_CONFIG_KEY"),
+    source.indexOf("function attachBindingPath"),
   );
   for (const resourceType of [
     "mainFrame", "subFrame", "script", "stylesheet", "worker", "sharedWorker", "object", "media",
@@ -270,8 +322,8 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
   assert.match(recoverySource, /await backend\.probe\(\)/);
   assert.match(recoverySource, /contentWindow\.loadURL\(STARTUP_SHELL_URL\)/);
   assert.match(recoverySource, /rendererDialogBroker\.request\([\s\S]*"content-load-failed"/);
-  assert.match(recoverySource, /showNativeContentRecoveryFallback\(contentWindow\)/);
-  assert.doesNotMatch(recoverySource, /dialog\.showMessageBox/);
+  assert.doesNotMatch(recoverySource, /showNative|showMessageBox|showErrorBox/);
+  assert.match(recoverySource, /response !== "confirm"/);
   const finalPromptIndex = recoverySource.indexOf("rendererDialogBroker.request");
   const finalShellIndex = recoverySource.lastIndexOf(
     "contentWindow.loadURL(STARTUP_SHELL_URL)",
@@ -282,7 +334,7 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
   assert.match(startupShell, /class="ws-folder-confirm-modal"/);
   assert.match(startupShell, />重试<\/button>/);
   assert.match(startupShell, />退出<\/button>/);
-  assert.match(startupShell, /markDesktopDialogReady\(\["content-load-failed"\]\)/);
+  assert.match(startupShell, /markDesktopDialogReady\(\[[\s\S]*"content-load-failed"/);
   assert.match(recoverySource, /app\.exit\(1\)/);
   assert.match(rejectionSource, /generation !== contentLoadGeneration/, "被新深链中止的旧导航不得误触发恢复");
   assert.match(rejectionSource, /recoverContentLoad\(error\)/, "loadURL rejection 也必须进入同一恢复流程");
@@ -291,7 +343,7 @@ test("内容页主 frame 加载失败注册恢复流程并过滤子 frame 与 ER
 test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const guardLine = source.indexOf('contentWebContents.on("will-navigate"');
-  const shellLoadLine = source.indexOf("contentWindow.loadURL(STARTUP_SHELL_URL)");
+  const shellLoadLine = source.indexOf("contentWindow.loadURL(STARTUP_SHELL_URL)", guardLine);
   const guardSource = source.slice(guardLine, shellLoadLine);
 
   assert.ok(guardLine >= 0 && guardLine < shellLoadLine, "will-navigate 必须在 data: 启动壳加载前挂载");
@@ -303,7 +355,7 @@ test("data 启动壳加载前即挂载目标 origin 白名单外链守卫", () =
   assert.doesNotMatch(source, /addAllowedOrigin\(allowedAppOrigins, `http:\/\/(?:localhost|127\.0\.0\.1):\$\{port\}`\)/);
 });
 
-test("后台初始化失败会弹框并退出，不会停在启动壳", () => {
+test("后台初始化失败优先投递启动壳产品浮层，仅渲染不可用时走唯一原生兜底", () => {
   const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
   const awaitLine = source.indexOf("backend = activeBackend ?? await resolveStartupBackend");
   const catchLine = source.indexOf("} catch (error) {", awaitLine);
@@ -312,12 +364,16 @@ test("后台初始化失败会弹框并退出，不会停在启动壳", () => {
 
   assert.ok(awaitLine >= 0 && catchLine > awaitLine && exitLine > catchLine, "BackendConnection reject 必须被收口");
   assert.match(catchSource, /runtime\?\.isReportedServerStartupError\(error\)/);
-  assert.match(catchSource, /dialog\.showErrorBox\(/);
-  assert.match(catchSource, /"后台连接失败"/);
+  assert.match(catchSource, /rendererDialogBroker\.request\(contentWebContents, failure\.kind\)/);
+  assert.match(catchSource, /response === null/);
+  assert.match(catchSource, /showNativeFatalEarlyErrorFallback\(dialog, failure\.title, failure\.message\)/);
+  assert.match(catchSource, /"backend-startup-failed"/);
+  assert.match(catchSource, /"database-migration-failed"/);
   assert.match(catchSource, /app\.exit\(1\)/);
 
   const serverSource = readFileSync(path.join(__dirname, "server.ts"), "utf8");
-  assert.match(serverSource, /throw markServerStartupErrorReported\(err\)/, "迁移失败需标记为已报错，避免重复弹框");
+  assert.match(serverSource, /throw markServerStartupErrorReported\(err\)/, "迁移失败需标记，让主窗口选择对应产品文案");
+  assert.doesNotMatch(serverSource, /showErrorBox|showMessageBox/);
 });
 
 test("createWindow 复用现有窗口并复用最终 BackendConnection", () => {
@@ -533,8 +589,8 @@ test("desktop 仅在退出应用时对生成中任务给出明确中断提示", 
 
   assert.match(source, /hasActiveDesktopGeneration/);
   assert.match(source, /rendererDialogBroker\.request\([\s\S]*"quit-during-generation"/);
-  assert.match(source, /showNativeQuitFallback\(owner\)/);
-  assert.doesNotMatch(source, /dialog\.showMessageBox/);
+  assert.doesNotMatch(source, /showNativeQuitFallback|dialog\.showMessageBox/);
+  assert.match(source, /renderer 不可用，无法显示生成中退出确认，已取消退出/);
   assert.match(hostSource, /title:\s*"正在生成，退出将中断"/);
   assert.match(hostSource, /confirmLabel:\s*"退出应用"/);
   assert.match(hostSource, /cancelLabel:\s*"继续生成"/);

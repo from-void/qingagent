@@ -395,7 +395,7 @@ export function DerivativeGenerateModal(props: {
           />
           <div className="ws-launch-actions">
             <Button type="button" variant="ghost" disabled={submitting} onClick={props.onClose}>取消</Button>
-            <Button type="submit" variant="primary" disabled={!derivativeMutationEnabled || submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)} title={derivativeMutationEnabled ? undefined : "连接外部后台时暂不支持生成衍生稿"}>{submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
+            <Button type="submit" variant="primary" disabled={!derivativeMutationEnabled || submitting || loading || !writingStyleId || (props.descriptor.dtype === "translate" && targetLanguages.length === 0)} title={derivativeMutationEnabled ? undefined : "当前青简引擎暂不支持生成衍生稿"}>{submitting ? "创建中" : props.descriptor.dtype === "translate" ? "开始翻译" : "生成"}</Button>
           </div>
         </form>
       )}

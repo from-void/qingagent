@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 // 端点默认必须为空:源码构建/本地构建不带官方注入时,遥测整体静默不启用。
 export const TELEMETRY_BUILD_INFO_FILENAME = "telemetry-build-info.json";
 export const DEFAULT_UPDATE_POLICY_URL =
-  "https://raw.githubusercontent.com/from-void/qingagent/main/update-policy.json";
+  "https://raw.githubusercontent.com/void2anything/qingagent/main/update-policy.json";
 
 const DEFAULT_WEBSITE_ID = "6a9cf3e2-5c5b-4bb3-919f-5c24e2260b61";
 const DEFAULT_POLICY_TIMEOUT_MS = 1200;

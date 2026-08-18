@@ -72,12 +72,12 @@ jobs:
       # 上传后没有任何人创建 release 对象("release not found"),这里幂等确保存在。
       - name: ensure release exists
         run: |
-          if ! gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null 2>&1; then
+          if ! gh release view "$RELEASE_TAG" --repo void2anything/qingagent >/dev/null 2>&1; then
             # mac/linux 两个矩阵行并发到这里会竞态建 release:输掉的一方 create 报
             # already exists,再 view 确认存在即视为成功。
-            gh release create "$RELEASE_TAG" --repo from-void/qingagent \
+            gh release create "$RELEASE_TAG" --repo void2anything/qingagent \
               --title "$RELEASE_TAG" --generate-notes || \
-              gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null
+              gh release view "$RELEASE_TAG" --repo void2anything/qingagent >/dev/null
           fi
 
       # electron-builder 只打包不编译:dist/main 必须先由 build:desktop 产出,
@@ -96,7 +96,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           VERSION="${RELEASE_TAG#v}"
-          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} -c.mac.notarize=true --publish never -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent -c.publish.releaseType=release -c.extraMetadata.version="$VERSION"
+          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} -c.mac.notarize=true --publish never -c.publish.provider=github -c.publish.owner=void2anything -c.publish.repo=qingagent -c.publish.releaseType=release -c.extraMetadata.version="$VERSION"
           shopt -s nullglob
           files=(
             apps/desktop/release/*.dmg
@@ -109,13 +109,13 @@ jobs:
             echo "No macOS release artifacts were generated."
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" --repo from-void/qingagent "${files[@]}" --clobber
+          gh release upload "$RELEASE_TAG" --repo void2anything/qingagent "${files[@]}" --clobber
 
       - name: publish Linux artifacts
         if: matrix.name == 'linux'
         run: |
           VERSION="${RELEASE_TAG#v}"
-          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} --publish never -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent -c.publish.releaseType=release -c.extraMetadata.version="$VERSION"
+          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} --publish never -c.publish.provider=github -c.publish.owner=void2anything -c.publish.repo=qingagent -c.publish.releaseType=release -c.extraMetadata.version="$VERSION"
           shopt -s nullglob
           files=(
             apps/desktop/release/*.AppImage
@@ -127,7 +127,7 @@ jobs:
             echo "No Linux release artifacts were generated."
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" --repo from-void/qingagent "${files[@]}" --clobber
+          gh release upload "$RELEASE_TAG" --repo void2anything/qingagent "${files[@]}" --clobber
 
   # Windows 安装器在 ubuntu runner 上用 wine 交叉构建(理由同 build-win-installer.sh:2 核 windows
   # runner 压不完整包 solid-LZMA,Linux 多核 <2min)。needs: build 确保 linux/mac 已建好 release。
@@ -172,10 +172,10 @@ jobs:
       # windows 现在不再等 mac/linux 全成,release 对象自行幂等确保(与 build job 同款)。
       - name: ensure release exists
         run: |
-          if ! gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --repo from-void/qingagent \
+          if ! gh release view "$RELEASE_TAG" --repo void2anything/qingagent >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo void2anything/qingagent \
               --title "$RELEASE_TAG" --generate-notes || \
-              gh release view "$RELEASE_TAG" --repo from-void/qingagent >/dev/null
+              gh release view "$RELEASE_TAG" --repo void2anything/qingagent >/dev/null
           fi
 
       - name: build windows installer (wine cross-build)
@@ -183,6 +183,6 @@ jobs:
 
       - name: upload installer + update feed to release
         run: |
-          gh release upload "$RELEASE_TAG" --repo from-void/qingagent \
+          gh release upload "$RELEASE_TAG" --repo void2anything/qingagent \
             apps/desktop/release/qingagent-*-win-x64.exe \
             apps/desktop/release/latest.yml --clobber

@@ -10,7 +10,7 @@ import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
 // 关于页:主区居中(产品标识 + 唯一「检查更新」按钮),辅助信息弱化在底部(链接 / 许可 / 内核)。
 // 更新走「请求-响应」手动检查 + 共享 store 的被动推送(下载就绪 / 强更),不各自挂 IPC 监听。
 
-const GITHUB_REPO_URL = "https://github.com/from-void/qingagent";
+const GITHUB_REPO_URL = "https://github.com/void2anything/qingagent";
 const RELEASES_URL = `${GITHUB_REPO_URL}/releases`;
 const LICENSE_URL = `${GITHUB_REPO_URL}/blob/main/LICENSE`;
 const NOTICES_URL = `${GITHUB_REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md`;

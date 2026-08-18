@@ -59,7 +59,7 @@ cd "$DESKTOP_DIR"
 pnpm exec electron-builder --win nsis \
   --prepackaged release/win-unpacked \
   "${VER_ARGS[@]}" \
-  -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent \
+  -c.publish.provider=github -c.publish.owner=void2anything -c.publish.repo=qingagent \
   --publish never
 
 echo "==> [3/3] 校验 latest.yml sha512 与 exe 一致"
@@ -79,5 +79,5 @@ fi
 echo "==> 完成:"
 echo "    安装器:  $DESKTOP_DIR/release/$EXE ($(du -h "$EXE" | cut -f1))"
 echo "    更新feed:$DESKTOP_DIR/release/latest.yml"
-echo "    发布:    gh release upload <tag> --repo from-void/qingagent \\"
+echo "    发布:    gh release upload <tag> --repo void2anything/qingagent \\"
 echo "               $DESKTOP_DIR/release/$EXE $DESKTOP_DIR/release/latest.yml --clobber"

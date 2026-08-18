@@ -55,7 +55,7 @@ function configureAutoUpdater(updater: AppUpdater, appVersion: string): void {
   updater.autoDownload = process.platform !== "darwin";
   updater.setFeedURL({
     provider: "github",
-    owner: "from-void",
+    owner: "void2anything",
     repo: "qingagent",
   });
 

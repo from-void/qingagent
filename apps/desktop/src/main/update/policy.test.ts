@@ -6,7 +6,7 @@ import {
   isTrustedUpdatePolicyUrl,
 } from "./policy.js";
 
-const trustedPolicyUrl = "https://raw.githubusercontent.com/from-void/qingagent/main/update-policy.json";
+const trustedPolicyUrl = "https://raw.githubusercontent.com/void2anything/qingagent/main/update-policy.json";
 
 test("policy 200 合法 minSupported 返回规范值", async () => {
   const policy = await fetchUpdatePolicy(
@@ -125,9 +125,9 @@ test("isBelowMinSupported 非法输入 fail-open", () => {
 
 test("强更策略端点只接受官方固定 GitHub raw 地址", () => {
   assert.equal(isTrustedUpdatePolicyUrl(trustedPolicyUrl), true);
-  assert.equal(isTrustedUpdatePolicyUrl("http://raw.githubusercontent.com/from-void/qingagent/main/update-policy.json"), false);
-  assert.equal(isTrustedUpdatePolicyUrl("https://raw.githubusercontent.com/from-void/other/main/update-policy.json"), false);
-  assert.equal(isTrustedUpdatePolicyUrl("https://github.com/from-void/qingagent/raw/main/update-policy.json"), false);
+  assert.equal(isTrustedUpdatePolicyUrl("http://raw.githubusercontent.com/void2anything/qingagent/main/update-policy.json"), false);
+  assert.equal(isTrustedUpdatePolicyUrl("https://raw.githubusercontent.com/void2anything/other/main/update-policy.json"), false);
+  assert.equal(isTrustedUpdatePolicyUrl("https://github.com/void2anything/qingagent/raw/main/update-policy.json"), false);
   assert.equal(isTrustedUpdatePolicyUrl(`${trustedPolicyUrl}?redirect=https://example.com`), false);
 });
 

@@ -2,7 +2,7 @@ import { DEFAULT_UPDATE_POLICY_URL, readTelemetryBuildInfo } from "../telemetry/
 
 const DEFAULT_POLICY_TIMEOUT_MS = 1200;
 const TRUSTED_POLICY_HOST = "raw.githubusercontent.com";
-const TRUSTED_POLICY_PATH = "/from-void/qingagent/main/update-policy.json";
+const TRUSTED_POLICY_PATH = "/void2anything/qingagent/main/update-policy.json";
 
 // 强更策略只能来自官方仓库的固定 raw 文件。构建时注入的 URL 也必须经过同一校验，
 // 不能把一次构建配置错误扩大为任意远端可强制升级的能力。

@@ -9,8 +9,8 @@
 A more human-friendly way to write documents with AI, with a toolkit built around real writing workflows — for when drafting is hard, reviewing is harder, and typesetting is worst of all.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Release](https://img.shields.io/github/v/release/from-void/qingagent)](https://github.com/from-void/qingagent/releases)
-[![CI](https://github.com/from-void/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/from-void/qingagent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/void2anything/qingagent)](https://github.com/void2anything/qingagent/releases)
+[![CI](https://github.com/void2anything/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/void2anything/qingagent/actions/workflows/ci.yml)
 
 [qingagent.com](https://qingagent.com) · [Download](https://qingagent.com/#download) · [Changelog](https://qingagent.com/changelog) · [中文](./README.md)
 
@@ -118,7 +118,7 @@ qingagent is MIT-licensed and costs nothing beyond your own model API usage. A ~
 
 ## 2. Download & install
 
-**The preferred route is the client from [qingagent.com](https://qingagent.com/#download)** — one-click install on Windows and macOS; packages are also on [GitHub Releases](https://github.com/from-void/qingagent/releases).
+**The preferred route is the client from [qingagent.com](https://qingagent.com/#download)** — one-click install on Windows and macOS; packages are also on [GitHub Releases](https://github.com/void2anything/qingagent/releases).
 
 | Platform | Package | Notes |
 |---|---|---|
@@ -144,7 +144,7 @@ Prerequisites: Node ≥ 22, pnpm 9.15.0, and a [DeepSeek API key](https://platfo
 # one-time setup
 corepack enable && corepack prepare pnpm@9.15.0 --activate
 
-git clone https://github.com/from-void/qingagent.git
+git clone https://github.com/void2anything/qingagent.git
 cd qingagent
 pnpm install
 
@@ -176,7 +176,7 @@ Open `http://localhost:6173`, enter the `QINGAGENT_AUTH_TOKEN` you set, and it i
 
 ## 4. qingagent inside DeepSeek Harness
 
-qingagent now supports the **DeepSeek Harness plugin system** — [**dsh-qingagent**](https://github.com/from-void/dsh-qingagent).
+qingagent now supports the **DeepSeek Harness plugin system** — [**dsh-qingagent**](https://github.com/void2anything/dsh-qingagent).
 
 With the plugin installed, you shape the writing in a DSH conversation while the agent drafts, edits and submits reviews through the qingagent engine; a **paper panel built from the same source as the desktop app** grows on the right, with per-change verdicts, annotation carousel, diagram editing and export. Documents live in the **same local library** as the desktop client — write it in DSH, keep editing it in qingagent.
 
@@ -184,7 +184,7 @@ With the plugin installed, you shape the writing in a DSH conversation while the
 npx @deepseek-ai/dsh plugin --profile web add dsh-qingagent@latest
 ```
 
-> The plugin talks to the local qingagent engine, so install and launch the desktop client once first. See the [dsh-qingagent repo](https://github.com/from-void/dsh-qingagent).
+> The plugin talks to the local qingagent engine, so install and launch the desktop client once first. See the [dsh-qingagent repo](https://github.com/void2anything/dsh-qingagent).
 
 ---
 
@@ -367,7 +367,7 @@ You can also request and upvote features on the [feature board](https://qingagen
 
 ## 11. Contact
 
-- Usage questions, bugs, feature requests: [GitHub Issues](https://github.com/from-void/qingagent/issues)
+- Usage questions, bugs, feature requests: [GitHub Issues](https://github.com/void2anything/qingagent/issues)
 - Security: security@qingagent.com
 
 <!-- TODO: author contact pending -->

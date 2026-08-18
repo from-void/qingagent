@@ -12,11 +12,11 @@
 
 ## 桌面端自动更新信任模型
 
-桌面端自动更新当前**未使用代码签名**。Windows 与 Linux 客户端通过 `electron-updater` 从 GitHub 仓库 `from-void/qingagent` 的 Release 获取更新；更新元数据中的 `sha512` 用于校验下载文件完整性。macOS 未签名构建不自动安装更新，仅提示用户手动下载。
+桌面端自动更新当前**未使用代码签名**。Windows 与 Linux 客户端通过 `electron-updater` 从 GitHub 仓库 `void2anything/qingagent` 的 Release 获取更新；更新元数据中的 `sha512` 用于校验下载文件完整性。macOS 未签名构建不自动安装更新，仅提示用户手动下载。
 
 因此，自动更新信任 GitHub 的 TLS 连接、GitHub Release 内容以及该仓库的发布权限。攻击者若能控制仓库发布权限、GitHub 账户或 TLS 终端，可能发布能通过上述完整性校验的恶意更新；`sha512` 不等同于独立签名，也不能降低这一风险。
 
-强制更新策略只从固定的 GitHub Raw HTTPS 地址 `https://raw.githubusercontent.com/from-void/qingagent/main/update-policy.json` 读取。客户端拒绝其它域名、仓库、路径、查询参数和重定向；策略不可用时 fail-open，不会阻止常规更新检查。该策略本身没有签名，仍与 GitHub 仓库发布权限处于同一信任边界。
+强制更新策略只从固定的 GitHub Raw HTTPS 地址 `https://raw.githubusercontent.com/void2anything/qingagent/main/update-policy.json` 读取。客户端拒绝其它域名、仓库、路径、查询参数和重定向；策略不可用时 fail-open，不会阻止常规更新检查。该策略本身没有签名，仍与 GitHub 仓库发布权限处于同一信任边界。
 
 在引入受保护的签名密钥和平台代码签名基础设施前，发布者应保护 GitHub 账户、启用多因素认证并限制发布权限；高风险环境应从受信任渠道独立核验发布文件的校验值。
 

@@ -71,14 +71,14 @@ jobs:
         run: |
           # 用 tag(去掉前导 v)作 app 版本,保持 beta 产物与发布 tag 一致。
           VERSION="${GITHUB_REF_NAME#v}"
-          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} -c.mac.notarize=true --publish always -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent -c.publish.releaseType=prerelease -c.extraMetadata.version="$VERSION"
+          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} -c.mac.notarize=true --publish always -c.publish.provider=github -c.publish.owner=void2anything -c.publish.repo=qingagent -c.publish.releaseType=prerelease -c.extraMetadata.version="$VERSION"
 
       - name: publish Linux artifacts
         if: matrix.name == 'linux'
         run: |
           # 用 tag(去掉前导 v)作 app 版本,保持 beta 产物与发布 tag 一致。
           VERSION="${GITHUB_REF_NAME#v}"
-          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} --publish always -c.publish.provider=github -c.publish.owner=from-void -c.publish.repo=qingagent -c.publish.releaseType=prerelease -c.extraMetadata.version="$VERSION"
+          pnpm --filter @qingagent/desktop exec electron-builder ${{ matrix.electron_builder_args }} --publish always -c.publish.provider=github -c.publish.owner=void2anything -c.publish.repo=qingagent -c.publish.releaseType=prerelease -c.extraMetadata.version="$VERSION"
 
   # Windows 安装器在 ubuntu runner 上用 wine 交叉构建(不再用 windows-latest)。
   # 实测定论:免费 2 核 windows runner 压不完整包 solid-LZMA(30-75min 超时),但同一 payload
@@ -122,7 +122,7 @@ jobs:
 
       - name: upload installer + update feed to release
         run: |
-          gh release upload "${{ github.ref_name }}" --repo from-void/qingagent \
+          gh release upload "${{ github.ref_name }}" --repo void2anything/qingagent \
             apps/desktop/release/qingagent-*-win-x64.exe \
             apps/desktop/release/latest.yml --clobber
 

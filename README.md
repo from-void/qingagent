@@ -9,8 +9,8 @@
 更人机友好的文档编写体验，围绕写作场景开箱即用的一系列工具，解决 AI 写稿时，起稿难、review 难、排版难等问题。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Release](https://img.shields.io/github/v/release/from-void/qingagent)](https://github.com/from-void/qingagent/releases)
-[![CI](https://github.com/from-void/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/from-void/qingagent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/void2anything/qingagent)](https://github.com/void2anything/qingagent/releases)
+[![CI](https://github.com/void2anything/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/void2anything/qingagent/actions/workflows/ci.yml)
 
 [官网 qingagent.com](https://qingagent.com) · [下载客户端](https://qingagent.com/#download) · [更新日志](https://qingagent.com/changelog) · [English](./README.en.md)
 
@@ -118,7 +118,7 @@
 
 ## 二、下载与安装
 
-**首选：到 [官网 qingagent.com](https://qingagent.com/#download) 下载客户端**——Windows / macOS 一键安装，也可从 [GitHub Releases](https://github.com/from-void/qingagent/releases) 取包。
+**首选：到 [官网 qingagent.com](https://qingagent.com/#download) 下载客户端**——Windows / macOS 一键安装，也可从 [GitHub Releases](https://github.com/void2anything/qingagent/releases) 取包。
 
 | 平台 | 安装包 | 说明 |
 |---|---|---|
@@ -144,7 +144,7 @@
 # 一次性准备
 corepack enable && corepack prepare pnpm@9.15.0 --activate
 
-git clone https://github.com/from-void/qingagent.git
+git clone https://github.com/void2anything/qingagent.git
 cd qingagent
 pnpm install
 
@@ -176,7 +176,7 @@ pnpm dev          # 前端 http://localhost:6173（/api 代理到 :8080）
 
 ## 四、在 DeepSeek Harness 里使用青简
 
-青简已支持 **DeepSeek Harness 插件体系**——[**dsh-qingagent**](https://github.com/from-void/dsh-qingagent)。
+青简已支持 **DeepSeek Harness 插件体系**——[**dsh-qingagent**](https://github.com/void2anything/dsh-qingagent)。
 
 装上插件后，你在 DSH 对话里收敛写作方向，Agent 通过青简引擎起草、局部修改、提交审阅；浏览器右侧同步长出**与青简桌面端同源的宣纸面板**，支持逐条裁决、批注轮播、图编辑与导出。文稿与桌面端**同一本机库**——DSH 里写的，回到青简继续改。
 
@@ -184,7 +184,7 @@ pnpm dev          # 前端 http://localhost:6173（/api 代理到 :8080）
 npx @deepseek-ai/dsh plugin --profile web add dsh-qingagent@latest
 ```
 
-> 插件依赖本机青简引擎，需要先安装并启动一次青简客户端。详见 [dsh-qingagent 仓库](https://github.com/from-void/dsh-qingagent)。
+> 插件依赖本机青简引擎，需要先安装并启动一次青简客户端。详见 [dsh-qingagent 仓库](https://github.com/void2anything/dsh-qingagent)。
 
 ---
 
@@ -367,7 +367,7 @@ ProseMirror 文档先处理图表等富内容生成 HTML，再分流：Web / ser
 
 ## 十一、联系作者
 
-- 使用问题、bug、需求：[GitHub Issues](https://github.com/from-void/qingagent/issues)
+- 使用问题、bug、需求：[GitHub Issues](https://github.com/void2anything/qingagent/issues)
 - 安全问题：security@qingagent.com
 
 <!-- TODO: 作者联系方式待补 -->

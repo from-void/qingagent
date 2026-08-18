@@ -48,30 +48,37 @@ describe("ganzhiYear", () => {
   });
 });
 
-describe("dayToClassical(古法日名:初一/十几/廿几/三十)", () => {
+// 落款算的是**公历**,而「初几/廿几」在中文里强指农历,会误导读者;统一为「N日」。
+describe("dayToClassical(公历日名:N日,不得出现初/廿)", () => {
   it.each([
-    [1, "初一"],
-    [5, "初五"],
-    [9, "初九"],
-    [10, "初十"],
-    [11, "十一"],
-    [14, "十四"],
-    [19, "十九"],
-    [20, "二十"],
-    [21, "廿一"],
-    [25, "廿五"],
-    [29, "廿九"],
-    [30, "三十"],
-    [31, "三十一"],
+    [1, "一日"],
+    [5, "五日"],
+    [9, "九日"],
+    [10, "十日"],
+    [11, "十一日"],
+    [14, "十四日"],
+    [19, "十九日"],
+    [20, "二十日"],
+    [21, "二十一日"],
+    [25, "二十五日"],
+    [29, "二十九日"],
+    [30, "三十日"],
+    [31, "三十一日"],
   ])("%i → %s", (d, expected) => {
     expect(dayToClassical(d)).toBe(expected);
+  });
+
+  it("任何一天都不得带农历暗示的「初」或「廿」", () => {
+    for (let d = 1; d <= 31; d += 1) {
+      expect(dayToClassical(d)).not.toMatch(/[初廿]/);
+    }
   });
 });
 
 describe("formatColophonDate", () => {
-  it("拼成『干支年+中文月+古法日』紧排(无空格、无『日』字)", () => {
-    expect(formatColophonDate(2026, 6, 14)).toBe("丙午年六月十四");
-    expect(formatColophonDate(2026, 6, 5)).toBe("丙午年六月初五");
-    expect(formatColophonDate(1984, 1, 1)).toBe("甲子年一月初一");
+  it("拼成『干支年+中文月+中文日』紧排(无空格)", () => {
+    expect(formatColophonDate(2026, 6, 14)).toBe("丙午年六月十四日");
+    expect(formatColophonDate(2026, 6, 5)).toBe("丙午年六月五日");
+    expect(formatColophonDate(1984, 1, 1)).toBe("甲子年一月一日");
   });
 });

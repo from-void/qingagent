@@ -75,21 +75,19 @@ export function ganzhiYear(year: number): string {
 }
 
 /**
- * 日 → 古法日名(初一..初十 / 十一..十九 / 二十 / 廿一..廿九 / 三十 / 三十一)。
- * 与干支年同属古典纪法语感(用户要「X月初几」那样)。day 取 1–31。
+ * 日 → 中文日名(一日..三十一日)。day 取 1–31。
+ *
+ * 曾用「初一/廿三」这类古法日名,但**落款算的是公历**,而「初几」「廿几」在中文里
+ * 强指农历,会让读者以为这是农历日期。故统一改为「N日」,不带农历暗示。
+ * (年仍用干支只是纪年风格,不构成日期歧义。)
  */
 export function dayToClassical(day: number): string {
   const d = Math.floor(Math.abs(day));
   if (d < 1) return "";
-  if (d <= 10) return `初${numberToChinese(d)}`; // 初一..初十(numberToChinese(10)="十")
-  if (d < 20) return numberToChinese(d); // 十一..十九
-  if (d === 20) return "二十";
-  if (d < 30) return `廿${numberToChinese(d - 20)}`; // 廿一..廿九
-  if (d === 30) return "三十";
-  return `三十${numberToChinese(d - 30)}`; // 三十一(公历可能到 31)
+  return `${numberToChinese(d)}日`;
 }
 
-/** 日期 → 「丙午年六月初五」(干支年 + 中文月 + 古法日名,紧排无空格)。month 1–12,day 1–31。 */
+/** 日期 → 「丙午年六月五日」(干支年 + 中文月 + 中文日,紧排无空格)。month 1–12,day 1–31。 */
 export function formatColophonDate(year: number, month: number, day: number): string {
   return `${ganzhiYear(year)}年${numberToChinese(month)}月${dayToClassical(day)}`;
 }

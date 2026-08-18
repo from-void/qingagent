@@ -669,6 +669,7 @@ const STARTUP_SHELL_HTML = `<!doctype html>
     html, body { width: 100%; height: 100%; margin: 0; background: #ece4d3; }
     body { display: grid; place-items: center; color: #2f2a22; font-family: "Songti SC", "STSong", serif; }
     .shell { display: grid; justify-items: center; gap: 14px; }
+    .product-icon { display: block; width: 52px; height: 52px; }
     .mark { font-size: 22px; letter-spacing: 0.36em; text-indent: 0.36em; }
     .breath { width: 42px; height: 1px; background: #5c5346; animation: breathe 1.8s ease-in-out infinite; }
     .ws-folder-modal-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 26px; background: rgba(47, 42, 34, 0.34); }
@@ -686,7 +687,29 @@ const STARTUP_SHELL_HTML = `<!doctype html>
   </style>
 </head>
 <body>
-  <div class="shell" id="startup-loading"><div class="mark">青简</div><div class="breath"></div></div>
+  <div class="shell" id="startup-loading">
+    <svg class="product-icon" viewBox="0 0 400 400" aria-hidden="true" focusable="false">
+      <defs><clipPath id="startup-icon-squircle"><rect width="400" height="400" rx="91" ry="91"/></clipPath></defs>
+      <rect width="400" height="400" rx="91" ry="91" fill="#16212c"/>
+      <g clip-path="url(#startup-icon-squircle)">
+        <g transform="translate(-24 -24) scale(1.12)">
+          <rect x="88" y="111" width="223" height="290" fill="#faf6ec"/>
+          <rect x="120" y="143" width="71" height="13" fill="#e8dcb4"/>
+          <rect x="209" y="143" width="71" height="13" fill="#e8dcb4"/>
+          <rect x="120" y="174" width="71" height="13" fill="#e8dcb4"/>
+          <rect x="209" y="174" width="71" height="13" fill="#e8dcb4"/>
+          <rect x="120" y="205" width="71" height="13" fill="#e8dcb4"/>
+          <rect x="209" y="205" width="71" height="13" fill="#e8dcb4"/>
+          <rect x="120" y="246" width="160" height="13" fill="#e8dcb4"/>
+          <rect x="120" y="277" width="160" height="13" fill="#e8dcb4"/>
+          <rect x="120" y="308" width="160" height="13" fill="#e8dcb4"/>
+        </g>
+      </g>
+      <rect width="400" height="400" rx="91" ry="91" fill="none" stroke="#faf6ec" stroke-opacity="0.55" stroke-width="12" clip-path="url(#startup-icon-squircle)"/>
+    </svg>
+    <div class="mark">青简</div>
+    <div class="breath"></div>
+  </div>
   <div class="ws-folder-modal-overlay" id="content-recovery" hidden>
     <section class="ws-folder-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="content-recovery-title">
       <h3 id="content-recovery-title">内容页加载失败</h3>

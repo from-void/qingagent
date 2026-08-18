@@ -27,19 +27,73 @@
 .onboarding-column {
   box-sizing: border-box;
   flex: 0 0 auto;
-  width: min(440px, calc(100vw - 48px));
+  width: min(480px, calc(100vw - 48px));
   min-width: 0;
   margin: auto;
   padding: 32px 0;
 }
 
-.onboarding-column h1 {
+.onboarding-title-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: 0 0 20px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line-2);
+}
+
+.onboarding-title-row h1 {
+  margin: 0;
   color: var(--ink-1);
   font: 700 19px/1.35 var(--font-zh-serif);
   letter-spacing: .08em;
+}
+
+.onboarding-title-help { display: inline-flex; }
+
+.onboarding-title-help-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: help;
+}
+
+.onboarding-title-help-button:hover,
+.onboarding-title-help-button:focus-visible { color: var(--mark); }
+
+.onboarding-title-help-button:focus-visible {
+  outline: 2px solid var(--mark);
+  outline-offset: 1px;
+}
+
+.onboarding-title-help-tooltip {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 8px);
+  left: 0;
+  box-sizing: border-box;
+  width: min(356px, 100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity .16s, transform .16s, visibility 0s linear .16s;
+}
+
+.onboarding-title-help:hover .onboarding-title-help-tooltip,
+.onboarding-title-help:focus-within .onboarding-title-help-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
 }
 
 .onboarding-provider-cards {
@@ -96,6 +150,9 @@
   box-shadow: inset 0 0 0 1px var(--mark);
 }
 
+.onboarding-provider-card.is-selected strong { color: var(--ink-surface); }
+.onboarding-provider-card.is-selected > span:last-child { color: var(--ink-2); }
+
 .onboarding-provider-recommended {
   grid-column: 3;
   grid-row: 1;
@@ -138,8 +195,8 @@
 }
 
 .onboarding-provider-logo--kimi svg {
-  width: 27px;
-  height: 27px;
+  width: 40px;
+  height: 40px;
   background: var(--ink-surface);
 }
 
@@ -162,8 +219,9 @@
   color: var(--ink-3);
   font-size: 10.5px;
   line-height: 1.6;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .onboarding-form { min-width: 0; }
@@ -271,9 +329,12 @@
 .onboarding-validation {
   display: flex;
   align-items: center;
+  box-sizing: border-box;
   gap: 7px;
-  min-height: 20px;
+  height: 36px;
+  min-height: 36px;
   margin-top: 6px;
+  overflow-y: auto;
   color: var(--ink-3);
   font-size: 12px;
   line-height: 1.5;
@@ -294,7 +355,16 @@
 
 @keyframes onboarding-spin { to { transform: rotate(360deg); } }
 
-.onboarding-help { margin-top: 2px; }
+.onboarding-official-meta {
+  display: grid;
+  min-width: 0;
+}
+
+.onboarding-help-slot {
+  min-width: 0;
+}
+
+.onboarding-help { margin-top: 8px; }
 .onboarding-help summary {
   display: inline;
   border-bottom: 1px dotted var(--mark);
@@ -307,7 +377,7 @@
 .onboarding-help-link {
   display: block;
   width: fit-content;
-  margin-top: 2px;
+  margin-top: 8px;
   border-bottom: 1px dotted var(--mark);
   color: var(--mark);
   font-size: 12px;
@@ -385,6 +455,7 @@ body:has(> #root .onboarding-page) .skin-select__menu--ink {
   padding-top: 16px;
   border-top: 1px solid var(--line-1);
 }
+.onboarding-actions--official { margin-top: 8px; }
 .onboarding-actions .wf-btn { min-height: 34px; padding-inline: 20px; }
 
 /* 主按钮禁用态:墨块压 40% 透明度的"灰块"太笨重,改空心线框待启态 */
@@ -408,10 +479,11 @@ body:has(> #root .onboarding-page) .skin-select__menu--ink {
 }
 
 @media (max-width: 560px) {
-  .onboarding-column { width: min(100% - 30px, 440px); padding: 28px 0; }
+  .onboarding-column { width: min(100% - 30px, 480px); padding: 28px 0; }
   .onboarding-provider-cards { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .onboarding-spinner { animation-duration: 1.4s; }
+  .onboarding-title-help-tooltip { transition: none; }
 }

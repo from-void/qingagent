@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goConfigureModel } from "../../../system/modelKeyGate";
+import { OnboardingSettingsProvider } from "../../../system/onboarding/OnboardingSettingsContext";
 import { setHomeArrive } from "../../../system/transition/origin";
 import { QingjianScroll } from "./QingjianScroll";
 
@@ -36,6 +37,18 @@ vi.mock("./HomeSettingsSheet", () => ({
       设置
     </div>
   ),
+}));
+
+vi.mock("../../../system/onboarding/CoachMark", () => ({
+  CoachMark: ({
+    id,
+    placement,
+    visible,
+  }: {
+    id: string;
+    placement: string;
+    visible: boolean;
+  }) => visible ? <div data-coach-mark={id} data-placement={placement} /> : null,
 }));
 
 let root: Root | null = null;
@@ -143,6 +156,51 @@ describe("QingjianScroll 去首页配置", () => {
     expect(window.sessionStorage.getItem("qj-open-settings")).toBeNull();
   });
 
+  it("首次进入首页时设置与新建气泡同时出现，并用不同锚点方向错位", async () => {
+    window.localStorage.setItem("qj-reduce", "1");
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (request) => {
+      if (String(request).endsWith("/settings/onboarding")) {
+        return Response.json({
+          state: { status: "done", completedAt: "2026-08-17T00:00:00.000Z" },
+          coachSeen: [],
+        });
+      }
+      throw new Error(`unexpected request: ${String(request)}`);
+    }));
+
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(
+        <OnboardingSettingsProvider>
+          <QingjianScroll
+            sessions={[]}
+            onOpenSession={() => undefined}
+            onNewSession={() => undefined}
+          />
+        </OnboardingSettingsProvider>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const scroller = host.querySelector<HTMLElement>(".qj-scroll")!;
+    const newCard = host.querySelector<HTMLElement>('.qj-card-slot[data-kind="new"]')!;
+    scroller.getBoundingClientRect = () => domRect(0, 0, 800, 600);
+    newCard.getBoundingClientRect = () => domRect(64, 100, 320, 380);
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+      await Promise.resolve();
+    });
+
+    const settingsCoach = host.querySelector('[data-coach-mark="home-settings"]');
+    const newCoach = host.querySelector('[data-coach-mark="home-new"]');
+    expect(settingsCoach).not.toBeNull();
+    expect(newCoach).not.toBeNull();
+    expect(settingsCoach?.getAttribute("data-placement")).toBe("bottom-end");
+    expect(newCoach?.getAttribute("data-placement")).toBe("right");
+  });
+
   it("系统减动效时直接消费 workspace 返回到达态，不播放深底渐出", async () => {
     vi.mocked(window.matchMedia).mockImplementation((query) => ({
       matches: query === "(prefers-reduced-motion: reduce)",
@@ -178,3 +236,17 @@ describe("QingjianScroll 去首页配置", () => {
     expect(host.querySelector(".qj-root")?.classList.contains("qj-arriving")).toBe(false);
   });
 });
+
+function domRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}

@@ -2507,7 +2507,7 @@ export function QingjianScroll({
       <CoachMark
         id="home-new"
         anchor={() => newCardSlotRef.current}
-        visible={coachReady && !settingsSheetOpen && onboarding.coachSeen.has("home-settings") && newCardInView && !newFabVisible}
+        visible={coachReady && !settingsSheetOpen && newCardInView && !newFabVisible}
         placement="right"
         title="从这里开始"
       >

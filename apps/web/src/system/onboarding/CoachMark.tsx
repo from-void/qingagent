@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import type { CoachMarkId } from "@qingagent/contract-ts";
 import { Button } from "@qingagent/ui-kit";
 import { useOnboardingSettings } from "./OnboardingSettingsContext";
+import { PaperTip } from "./PaperTip";
 import "./coachMark.css";
 
 export type CoachMarkPlacement = "bottom-end" | "right" | "top-start" | "top-end";
@@ -138,29 +139,23 @@ export function CoachMark({
   };
 
   return createPortal(
-    <div
+    <PaperTip
       ref={bubbleRef}
       className="coach-mark"
       data-coach-mark={id}
       data-placement={placement}
       style={style}
       role="note"
-    >
-      <div className="coach-mark__title">
-        <span
-          className="coach-mark__title-dot"
-          aria-hidden="true"
-          style={{ backgroundColor: position?.accent || "var(--mark)" }}
-        />
-        {title}
-      </div>
-      <div className="coach-mark__body">{children}</div>
-      <div className="coach-mark__footer">
+      title={title}
+      accent={position?.accent || undefined}
+      actions={(
         <Button type="button" variant="ghost" size="small" onClick={() => void dismiss()}>
           知道了
         </Button>
-      </div>
-    </div>,
+      )}
+    >
+      {children}
+    </PaperTip>,
     document.body,
   );
 }

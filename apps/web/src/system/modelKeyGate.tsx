@@ -1,6 +1,7 @@
 // 模型 key 门禁：只有“已明确无 key”才禁用发送；本地持久层不可读时保持 loading/fail-open。
 // 当前厂商无 key、另一家可用时给明确的一键切换，不静默改变 provider。
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Button } from "@qingagent/ui-kit";
 import {
   CLIENT_PERSIST_CHANGED_EVENT,
 } from "../overlays/settings/clientPersist";
@@ -12,6 +13,7 @@ import {
 } from "../overlays/settings/visitorKeyStore";
 import { useToast } from "./ToastProvider";
 import { ArrowRightIcon } from "./icons";
+import { PaperTip } from "./onboarding/PaperTip";
 
 const OPEN_SETTINGS_FLAG = "qj-open-settings";
 const RETRY_DELAYS_MS = [50, 100, 250, 500, 1_000] as const;
@@ -229,11 +231,13 @@ export function consumeOpenSettingsFlag(): boolean {
 export function NoKeyTip({
   gate,
   forced = false,
+  suppressed = false,
   onConfigure,
   children,
 }: {
   gate?: ModelKeyGateSnapshot;
   forced?: boolean;
+  suppressed?: boolean;
   onConfigure: (provider: ModelProvider) => void;
   children: ReactNode;
 }) {
@@ -243,7 +247,7 @@ export function NoKeyTip({
     status: "configured",
     provider: "deepseek",
   };
-  if (effectiveGate.status !== "unconfigured") return <>{children}</>;
+  if (effectiveGate.status !== "unconfigured" || suppressed) return <>{children}</>;
 
   const { provider, fallbackProvider } = effectiveGate;
   const handlePrimaryAction = async () => {
@@ -269,24 +273,29 @@ export function NoKeyTip({
   };
 
   return (
-    <span className={`nokey-gate${forced ? " is-forced" : ""}`}>
+    <div className={`nokey-gate${forced ? " is-forced" : ""}`}>
       {children}
-      <span className="nokey-tip" role="tooltip">
-        <span className="nokey-tip-text">
-          当前使用中的 {providerName(provider)} 还没配置 key{fallbackProvider ? "。" : "，无法开始写作。"}
-        </span>
-        <button
-          type="button"
-          className="nokey-tip-btn"
-          disabled={switching}
-          onClick={() => void handlePrimaryAction()}
-        >
-          {fallbackProvider
-            ? `切到 ${providerName(fallbackProvider)}`
-            : `去配置 ${providerName(provider)}`}
-          <ArrowRightIcon size={12} />
-        </button>
-      </span>
-    </span>
+      <PaperTip
+        className="nokey-tip"
+        role="tooltip"
+        title="模型尚未就绪"
+        actions={(
+          <Button
+            type="button"
+            variant="primary"
+            size="small"
+            disabled={switching}
+            onClick={() => void handlePrimaryAction()}
+          >
+            {fallbackProvider
+              ? `切到 ${providerName(fallbackProvider)}`
+              : `去配置 ${providerName(provider)}`}
+            <ArrowRightIcon size={12} />
+          </Button>
+        )}
+      >
+        当前使用中的 {providerName(provider)} 还没配置 key{fallbackProvider ? "。" : "，无法开始写作。"}
+      </PaperTip>
+    </div>
   );
 }

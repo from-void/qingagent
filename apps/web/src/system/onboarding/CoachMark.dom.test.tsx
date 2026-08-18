@@ -42,6 +42,11 @@ describe("CoachMark", () => {
 
     await renderCoach();
     await vi.waitFor(() => expect(document.querySelector('[data-coach-mark="home-new"]')).not.toBeNull());
+    const paperTip = document.querySelector<HTMLElement>('[data-coach-mark="home-new"]');
+    expect(paperTip?.classList.contains("paper-tip")).toBe(true);
+    expect(paperTip?.querySelector(".paper-tip__title-dot")).not.toBeNull();
+    expect(paperTip?.querySelector(".paper-tip__title")?.textContent).toContain("从这里开始");
+    expect(paperTip?.querySelector(".paper-tip__body")?.textContent).toContain("点开新建文档");
     const gotIt = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "知道了") as HTMLButtonElement;
     expect(gotIt.classList.contains("wf-btn")).toBe(true);
     expect(gotIt.classList.contains("small")).toBe(true);

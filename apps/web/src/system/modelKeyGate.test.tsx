@@ -24,6 +24,7 @@ import {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let configureSpy = vi.fn<(provider: ModelProvider) => void>();
+let suppressTip = false;
 
 describe("modelKeyGate", () => {
   beforeEach(() => {
@@ -32,6 +33,7 @@ describe("modelKeyGate", () => {
     window.sessionStorage.clear();
     __resetClientPersistCacheForTests();
     configureSpy = vi.fn();
+    suppressTip = false;
   });
 
   afterEach(() => {
@@ -146,9 +148,18 @@ describe("modelKeyGate", () => {
 
     await renderGate();
     expect(host?.textContent).toContain("当前使用中的 Kimi 还没配置 key，无法开始写作");
+    const tip = host?.querySelector<HTMLElement>(".nokey-tip");
+    expect(tip?.classList.contains("paper-tip")).toBe(true);
+    expect(tip?.querySelector(".paper-tip__title-dot")).not.toBeNull();
+    expect(tip?.querySelector(".paper-tip__title")?.textContent).toBe("模型尚未就绪");
+    expect(tip?.querySelector(".paper-tip__body")?.textContent).toContain("无法开始写作");
+    const configureButton = findCta("去配置 Kimi");
+    expect(configureButton.classList.contains("wf-btn")).toBe(true);
+    expect(configureButton.classList.contains("primary")).toBe(true);
+    expect(configureButton.classList.contains("small")).toBe(true);
 
     await act(async () => {
-      findCta("去配置 Kimi").click();
+      configureButton.click();
     });
 
     expect(configureSpy).toHaveBeenCalledWith("kimi");
@@ -179,6 +190,26 @@ describe("modelKeyGate", () => {
     expect(store["qingagent.model_provider"]).toBe("kimi");
     expectGate(true);
     expect(host?.textContent).toContain("本机保存失败，请重试");
+  });
+
+  it("coach 接棒期间只保留禁用发送，不挂载缺 key 纸签", async () => {
+    await setSelectedModelProvider("deepseek");
+    suppressTip = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(modelSettings({
+        activeProvider: "deepseek",
+        deepseek: false,
+        kimi: false,
+      }))),
+    );
+
+    await renderGate();
+
+    expectGateSnapshot("unconfigured");
+    expect(host?.querySelector<HTMLButtonElement>("[data-send]")?.disabled).toBe(true);
+    expect(host?.querySelector(".nokey-gate")).toBeNull();
+    expect(host?.querySelector(".nokey-tip")).toBeNull();
   });
 
   it("同窗口 key 写入成功立即重算；desktop 写入失败回滚后不误放行", async () => {
@@ -289,7 +320,7 @@ function GateHarness() {
   const blocked = gate.status === "unconfigured";
   return (
     <div data-gate-status={gate.status}>
-      <NoKeyTip gate={gate} onConfigure={configureSpy}>
+      <NoKeyTip gate={gate} suppressed={suppressTip} onConfigure={configureSpy}>
         <button type="button" data-send disabled={blocked}>
           发送
         </button>
@@ -326,7 +357,7 @@ async function waitForGateSnapshot(status: ModelKeyGateSnapshot["status"]): Prom
 }
 
 function findCta(label: string): HTMLButtonElement {
-  const button = host?.querySelector<HTMLButtonElement>(".nokey-tip-btn");
+  const button = host?.querySelector<HTMLButtonElement>(".nokey-tip .wf-btn");
   expect(button?.textContent).toContain(label);
   return button!;
 }

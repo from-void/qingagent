@@ -48,6 +48,7 @@ import type { SkillMenuAction } from "../../system/SkillMenu";
 // forceOpen 走 demo 隔离,不监听全局 401 事件;.wf-modal 是 absolute 定位,uk-portal 即可圈住)
 import { AuthTokenGate } from "../../system/AuthTokenGate";
 import { ToastProvider } from "../../system/ToastProvider";
+import { NoKeyTip } from "../../system/modelKeyGate";
 import {
   ST,
   askA,
@@ -2127,20 +2128,22 @@ export function UIKitPage() {
               基座 <code>ui-kit/components.css</code>。
             </p>
           </Group>
-          <Group title="未配置 key 门禁气泡(强制态)" code=".nokey-gate.is-forced / .nokey-tip / .nokey-tip-text / .nokey-tip-btn">
+          <Group title="未配置 key 门禁气泡(强制态)" code="NoKeyTip / .paper-tip / .wf-btn.primary.small">
             <div id="view-workspace" className="uk-portal uk-send-demo" style={{ height: 150 }}>
               <div className="ws-input-tools has-nokey-gate">
-                <span className="nokey-gate is-forced">
-                  <button className="wf-btn primary small" type="button" disabled>发送<ArrowRightIcon size={12} /></button>
-                  <span className="nokey-tip" role="tooltip">
-                    <span className="nokey-tip-text">当前使用中的 Kimi 还没配置 key。</span>
-                    <button className="nokey-tip-btn" type="button">切到 DeepSeek<ArrowRightIcon size={12} /></button>
-                  </span>
-                </span>
+                <ToastProvider>
+                  <NoKeyTip
+                    gate={{ status: "unconfigured", provider: "kimi", fallbackProvider: "deepseek" }}
+                    forced
+                    onConfigure={() => undefined}
+                  >
+                    <button className="wf-btn primary small" type="button" disabled>发送<ArrowRightIcon size={12} /></button>
+                  </NoKeyTip>
+                </ToastProvider>
               </div>
             </div>
             <p className="uk-cap uk-lead">
-              证据:挂载 <code>ChatInput.tsx:1145</code>;渲染 <code>system/modelKeyGate.tsx:71</code>;CSS <code>app.css:47</code>。
+              证据:生产组件 <code>NoKeyTip</code> 复用 <code>PaperTip</code>,动作使用 UI Kit 标准小号主按钮。
             </p>
           </Group>
         </Section>

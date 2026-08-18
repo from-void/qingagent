@@ -17,8 +17,9 @@ import {
   type ModelProvider,
 } from "../../overlays/settings/visitorKeyStore";
 import { useOnboardingSettings } from "../../system/onboarding/OnboardingSettingsContext";
+import { PaperTip } from "../../system/onboarding/PaperTip";
 import { CheckIcon } from "../../system/icons";
-import { DeepSeekColorIcon, KimiColorIcon } from "./ProviderBrandIcons";
+import { DeepSeekColorIcon, KimiColorIcon, QuestionIcon } from "./ProviderBrandIcons";
 import "./onboarding.css";
 
 type SetupMode = "official" | "custom";
@@ -41,6 +42,7 @@ interface ProviderFormState {
 
 const EMPTY_VALIDATION: ValidationState = { status: "idle", message: "", fingerprint: "" };
 const PROVIDERS: readonly ModelProvider[] = ["deepseek", "kimi"];
+const API_KEY_HELP_COPY = "青简本身免费,也不收 AI 使用费——写作与审查由你自己的 DeepSeek / Kimi 账户直连驱动,所以首次使用需要一把你自己的 API Key。密钥只保存在本机,不经任何第三方。";
 const PROVIDER_META: Record<ModelProvider, {
   name: string;
   description: string;
@@ -55,7 +57,7 @@ const PROVIDER_META: Record<ModelProvider, {
   },
   kimi: {
     name: "Kimi",
-    description: "基于 K3 / 2.7 code 驱动,国产最强模型",
+    description: "基于 K3 / 2.7 code 驱动",
     keyLabel: "Kimi 官方 API Key",
     keyPlaceholder: "粘贴 Kimi API key",
   },
@@ -405,7 +407,27 @@ export function OnboardingPage() {
   return (
     <main className="onboarding-page" data-view="onboarding" aria-labelledby="onboarding-title">
       <section className="onboarding-column">
-        <h1 id="onboarding-title">模型 API 配置</h1>
+        <div className="onboarding-title-row">
+          <h1 id="onboarding-title">模型 API 配置</h1>
+          <div className="onboarding-title-help">
+            <button
+              type="button"
+              className="onboarding-title-help-button"
+              aria-label="为什么要配置 API Key?"
+              aria-describedby="onboarding-api-key-tooltip"
+            >
+              <QuestionIcon />
+            </button>
+            <PaperTip
+              id="onboarding-api-key-tooltip"
+              className="onboarding-title-help-tooltip"
+              role="tooltip"
+              title="为什么要配置 API Key?"
+            >
+              {API_KEY_HELP_COPY}
+            </PaperTip>
+          </div>
+        </div>
 
         <div className="onboarding-provider-cards" role="radiogroup" aria-label="模型厂商">
           {PROVIDERS.map((provider) => {
@@ -471,36 +493,40 @@ export function OnboardingPage() {
                   onKeyDown={handleKeyEnter}
                 />
               </label>
-              <ValidationLine validation={activeValidation} />
-              {selectedProvider === "deepseek" ? (
-                <a
-                  className="onboarding-help-link"
-                  href="https://qingagent.com/blog/setup-deepseek"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  如何获取?
-                </a>
-              ) : (
-                <details className="onboarding-help">
-                  <summary>如何获取?</summary>
-                  <ol>
-                    <li>
-                      前往{" "}
-                      <a
-                        href="https://platform.moonshot.cn/"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        platform.moonshot.cn
-                      </a>
-                      {" "}并登录
-                    </li>
-                    <li>进入 API Key 管理，新建并复制密钥</li>
-                    <li>确认套餐已开通 K3 / K2.7 Code 权限</li>
-                  </ol>
-                </details>
-              )}
+              <div className="onboarding-official-meta">
+                <div className="onboarding-help-slot">
+                  {selectedProvider === "deepseek" ? (
+                    <a
+                      className="onboarding-help-link"
+                      href="https://qingagent.com/blog/setup-deepseek"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      如何获取?
+                    </a>
+                  ) : (
+                    <details className="onboarding-help">
+                      <summary>如何获取?</summary>
+                      <ol>
+                        <li>
+                          前往{" "}
+                          <a
+                            href="https://platform.moonshot.cn/"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            platform.moonshot.cn
+                          </a>
+                          {" "}并登录
+                        </li>
+                        <li>进入 API Key 管理，新建并复制密钥</li>
+                        <li>确认套餐已开通 K3 / K2.7 Code 权限</li>
+                      </ol>
+                    </details>
+                  )}
+                </div>
+                <ValidationLine validation={activeValidation} />
+              </div>
             </>
           ) : (
             <div className="onboarding-custom-fields">
@@ -513,13 +539,13 @@ export function OnboardingPage() {
                 onApiKeyKeyDown={handleKeyEnter}
                 onChange={(key, value) => updateCustom(selectedProvider, key, value)}
               />
-              <ValidationLine validation={activeValidation} />
+              <ValidationLine validation={activeValidation} reserveIdleSpace />
             </div>
           )}
         </section>
 
         {submitMessage ? <p className="onboarding-submit-message" role="status">{submitMessage}</p> : null}
-        <div className="onboarding-actions">
+        <div className={`onboarding-actions${activeMode === "official" ? " onboarding-actions--official" : ""}`}>
           <Button type="button" variant="ghost" disabled={submitting} onClick={() => void handleSkip()}>
             先跳过
           </Button>
@@ -544,8 +570,18 @@ function ProviderLogo({ provider }: { provider: ModelProvider }) {
   );
 }
 
-function ValidationLine({ validation }: { validation: ValidationState }) {
-  if (validation.status === "idle") return <div className="onboarding-validation" aria-hidden="true" />;
+function ValidationLine({
+  validation,
+  reserveIdleSpace = false,
+}: {
+  validation: ValidationState;
+  reserveIdleSpace?: boolean;
+}) {
+  if (validation.status === "idle") {
+    return reserveIdleSpace
+      ? <div className="onboarding-validation" aria-hidden="true" />
+      : null;
+  }
   return (
     <div
       className={`onboarding-validation is-${validation.status}`}

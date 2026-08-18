@@ -19,15 +19,37 @@ export function KimiColorIcon() {
   return (
     <svg
       data-brand-icon="kimi"
-      height="1em"
+      height="40"
       style={{ flex: "none", lineHeight: 1 }}
       viewBox="0 0 24 24"
-      width="1em"
+      width="40"
       xmlns="http://www.w3.org/2000/svg"
     >
       <title>Kimi</title>
       <path d="M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0z" fill="#1783FF" />
       <path d="M11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z" fill="#fff" />
+    </svg>
+  );
+}
+
+export function QuestionIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg
+      data-ui-icon="question"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="square"
+      strokeLinejoin="miter"
+      aria-hidden="true"
+      focusable="false"
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.7 9a2.45 2.45 0 0 1 4.68 1c0 1.8-2.38 2.05-2.38 3.75M12 17.25h.01" />
     </svg>
   );
 }

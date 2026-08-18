@@ -68,6 +68,8 @@ export function WorkspaceChatPane({
     stream: controller.streamRef.current,
   });
   const inputHidden = inputHandedOff || Boolean(inlineConfirm);
+  const editorCoachPending = onboarding.state !== null
+    && !onboarding.coachSeen.has("editor-input");
   const [coachReady, setCoachReady] = useState(false);
   useEffect(() => {
     if (inputHidden || controller.hydration.phase === "waiting" || !onboarding.state) {
@@ -139,6 +141,7 @@ export function WorkspaceChatPane({
             openMaterialSignal={materialPanelOpenSignal}
             noModelKey={!hasModelKey}
             modelKeyGate={modelKeyGate}
+            suppressModelKeyTip={editorCoachPending}
             onConfigureModel={(provider) => goConfigureModel(handleBackHome, provider)}
           />
         </div>

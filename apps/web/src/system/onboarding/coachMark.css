@@ -4,15 +4,6 @@
   box-sizing: border-box;
   width: max-content;
   max-width: min(242px, calc(100vw - 24px));
-  padding: 11px 13px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: 0;
-  background: var(--bg-paper-deep);
-  color: var(--line-ink);
-  box-shadow: var(--shadow-3);
-  font-family: var(--font-zh-serif);
-  font-size: 12.5px;
-  line-height: 1.8;
   animation: coach-mark-in 320ms cubic-bezier(.2, .8, .2, 1) both;
 }
 
@@ -52,28 +43,6 @@
   bottom: -6px;
   border-top: 0;
   border-left: 0;
-}
-
-.coach-mark__title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 2px;
-  font-weight: 700;
-}
-
-.coach-mark__title-dot {
-  flex: 0 0 5px;
-  width: 5px;
-  height: 5px;
-  border-radius: 0;
-}
-
-.coach-mark__body { min-width: 0; }
-.coach-mark__footer { display: flex; justify-content: flex-end; margin-top: 6px; }
-.coach-mark__footer .wf-btn:focus-visible {
-  outline: 2px solid var(--mark);
-  outline-offset: 2px;
 }
 
 @keyframes coach-mark-in {

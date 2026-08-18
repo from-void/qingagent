@@ -115,18 +115,7 @@
   right: 0;
   z-index: 90;
   width: max-content;
-  max-width: 248px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 0;
-  /* 暖白纸实底,跟左侧技能面板(.qa-skill-menu)同一套配色。
-     必须用 --bg-paper-deep:深墨 chrome 下 --bg-canvas 被设为 transparent
-     (workspace-ink-skin.css:203),用它气泡会透出底下文档/输入框(半透明 bug) */
-  background: var(--bg-paper-deep);
-  border: 1px solid var(--line-2);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34), 0 2px 6px rgba(0, 0, 0, 0.18);
+  max-width: min(242px, calc(100vw - 24px));
   opacity: 0;
   transform: translateY(5px);
   pointer-events: none;
@@ -173,36 +162,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .nokey-gate.is-forced { animation: none; }
-}
-.nokey-tip-text {
-  font-family: var(--font-zh-serif);
-  font-size: 13px;
-  line-height: 1.7;
-  letter-spacing: 0.01em;
-  /* 气泡底是固定浅纸 --bg-paper-deep,文字必须用稳定深色 --line-ink(#2f2a22,不随皮肤翻转);
-     曾用 --ink-1——深墨皮肤下它翻成 #ece3d0 浅奶白 → 浅字压浅底看不见(#18 改底色的连带回归) */
-  color: var(--line-ink);
-}
-.nokey-tip-btn {
-  /* 右对齐:气泡锚在发送按钮上方,按钮贴右最贴近光标来向,移过去最快 */
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  align-self: flex-end;
-  height: 27px;
-  padding: 0 13px;
-  border-radius: 0;
-  cursor: pointer;
-  border: 1px solid var(--line-2);
-  background: var(--mark-soft);
-  color: var(--mark);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  font-family: var(--font-zh-serif);
-}
-.nokey-tip-btn:hover {
-  background: var(--bg-hover);
 }
 
 .web-page-frame {

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +14,10 @@ import { OnboardingPage } from "./OnboardingPage";
 
 let host: HTMLDivElement;
 let root: Root;
+const onboardingCss = readFileSync(
+  resolve(process.cwd(), "src/pages/onboarding/onboarding.css"),
+  "utf8",
+);
 
 describe("OnboardingPage", () => {
   beforeEach(() => {
@@ -41,12 +47,47 @@ describe("OnboardingPage", () => {
     expect(deepseekIcon?.getAttribute("viewBox")).toBe("0 0 24 24");
     expect(deepseekIcon?.querySelector("path")?.getAttribute("fill")).toBe("#4D6BFE");
     expect(kimiIcon?.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(kimiIcon?.getAttribute("width")).toBe("40");
+    expect(kimiIcon?.getAttribute("height")).toBe("40");
     expect(Array.from(kimiIcon?.querySelectorAll("path") ?? []).map((path) => path.getAttribute("fill")))
       .toEqual(["#1783FF", "#fff"]);
 
     const recommended = host.querySelector(".onboarding-provider-recommended");
     expect(recommended?.textContent).toBe("推荐");
     expect(recommended?.closest(".onboarding-provider-card")?.textContent).toContain("DeepSeek");
+
+    const kimiCard = kimiIcon?.closest(".onboarding-provider-card");
+    expect(kimiCard?.textContent).toContain("基于 K3 / 2.7 code 驱动");
+    expect(kimiCard?.textContent).not.toContain("国产最强模型");
+    expect(onboardingCss).toMatch(
+      /\.onboarding-provider-card\.is-selected strong\s*\{[^}]*color:\s*var\(--ink-surface\)/s,
+    );
+    expect(onboardingCss).toMatch(
+      /\.onboarding-provider-card\.is-selected > span:last-child\s*\{[^}]*color:\s*var\(--ink-2\)/s,
+    );
+  });
+
+  it("标题问号使用 SVG，并通过 hover/focus 同一提示节点解释 API Key", async () => {
+    vi.stubGlobal("fetch", onboardingFetch());
+    await renderPage();
+
+    const helpButton = host.querySelector<HTMLButtonElement>(".onboarding-title-help-button");
+    const tooltipId = helpButton?.getAttribute("aria-describedby");
+    const tooltip = tooltipId ? host.querySelector<HTMLElement>(`#${tooltipId}`) : null;
+
+    expect(helpButton?.getAttribute("aria-label")).toBe("为什么要配置 API Key?");
+    expect(helpButton?.querySelector('[data-ui-icon="question"]')).not.toBeNull();
+    expect(helpButton?.textContent).toBe("");
+    helpButton?.focus();
+    expect(document.activeElement).toBe(helpButton);
+    expect(tooltip?.getAttribute("role")).toBe("tooltip");
+    expect(tooltip?.classList.contains("paper-tip")).toBe(true);
+    expect(tooltip?.querySelector(".paper-tip__title-dot")).not.toBeNull();
+    expect(tooltip?.querySelector(".paper-tip__title")?.textContent).toBe("为什么要配置 API Key?");
+    expect(tooltip?.querySelector(".paper-tip__body")?.textContent).toBe(
+      "青简本身免费,也不收 AI 使用费——写作与审查由你自己的 DeepSeek / Kimi 账户直连驱动,所以首次使用需要一把你自己的 API Key。密钥只保存在本机,不经任何第三方。",
+    );
+    expect(tooltip?.textContent).not.toContain("用多少付多少");
   });
 
   it("DeepSeek 如何获取直达图文教程，Kimi 仍保留原折叠说明", async () => {
@@ -60,6 +101,19 @@ describe("OnboardingPage", () => {
     expect(deepseekHelp?.target).toBe("_blank");
     expect(deepseekHelp?.rel).toBe("noopener noreferrer");
     expect(deepseekHelp?.closest("details")).toBeNull();
+    const keyField = host.querySelector(".onboarding-secret-field");
+    const officialMeta = host.querySelector(".onboarding-official-meta");
+    const helpSlot = officialMeta?.querySelector(".onboarding-help-slot");
+    const validation = officialMeta?.querySelector(".onboarding-validation");
+    expect(keyField?.nextElementSibling).toBe(officialMeta);
+    expect(helpSlot?.firstElementChild).toBe(deepseekHelp);
+    expect(officialMeta?.lastElementChild).toBe(helpSlot);
+    expect(validation).toBeNull();
+    expect(onboardingCss).not.toMatch(
+      /\.onboarding-official-meta\s*\{[^}]*(?:grid-template-rows|height|min-height):/s,
+    );
+    expect(host.querySelector(".onboarding-actions")?.classList.contains("onboarding-actions--official")).toBe(true);
+    expect(onboardingCss).toMatch(/\.onboarding-actions--official\s*\{[^}]*margin-top:\s*8px/s);
     expect(host.textContent).not.toContain("进入 API keys，创建并复制密钥");
     expect(host.textContent).not.toContain("按量计费，小额充值即可开始使用");
 
@@ -69,6 +123,10 @@ describe("OnboardingPage", () => {
     );
     expect(kimiHelp?.closest("details")).not.toBeNull();
     expect(kimiHelp?.closest("details")?.querySelector("a")?.href).toBe("https://platform.moonshot.cn/");
+    expect(kimiHelp?.closest(".onboarding-help-slot")).not.toBeNull();
+    expect(host.querySelector(".onboarding-official-meta .onboarding-validation")).toBeNull();
+    act(() => kimiHelp?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(kimiHelp?.closest("details")?.open).toBe(true);
     expect(host.textContent).toContain("进入 API Key 管理，新建并复制密钥");
     expect(host.textContent).toContain("确认套餐已开通 K3 / K2.7 Code 权限");
   });
@@ -79,6 +137,13 @@ describe("OnboardingPage", () => {
 
     inputByLabel("DeepSeek 官方 API Key", "sk-deepseek-remember-this-key");
     clickButton("想使用自定义 API key?");
+    expect(host.querySelector(".onboarding-official-meta")).toBeNull();
+    expect(host.querySelector(".onboarding-custom-fields")).not.toBeNull();
+    expect(host.querySelector(".onboarding-custom-fields .onboarding-validation")).not.toBeNull();
+    expect(host.querySelector(".onboarding-actions")?.classList.contains("onboarding-actions--official")).toBe(false);
+    expect(onboardingCss).not.toMatch(
+      /\.onboarding-custom-fields\s*\{[^}]*(?:height|min-height):/s,
+    );
     inputByLabel("API 地址(Base URL)", "https://example.com/v1");
     clickButton("Kimi");
     clickButton("DeepSeek");
@@ -100,6 +165,9 @@ describe("OnboardingPage", () => {
     });
     expect(host.textContent).toContain("密钥可用");
     expect(host.querySelector(".onboarding-validation.is-ok svg")).not.toBeNull();
+    expect(onboardingCss).toMatch(
+      /\.onboarding-validation\s*\{[^}]*height:\s*36px;[^}]*min-height:\s*36px/s,
+    );
     expect(host.textContent).not.toContain("✓");
     expect(start.disabled).toBe(false);
 

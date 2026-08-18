@@ -101,6 +101,8 @@ export interface ChatInputProps {
   /** 未配置模型 key:发送按钮置灰 + hover 引导去配置。 */
   noModelKey?: boolean;
   modelKeyGate?: ModelKeyGateSnapshot;
+  /** editor-input coach 未读时先让教学提示完成，避免两个相邻纸签重叠。 */
+  suppressModelKeyTip?: boolean;
   onConfigureModel?: (provider: ModelProvider) => void;
 }
 
@@ -136,6 +138,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     openMaterialSignal = 0,
     noModelKey: legacyNoModelKey = false,
     modelKeyGate,
+    suppressModelKeyTip = false,
     onConfigureModel,
   },
   ref,
@@ -1297,6 +1300,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             <NoKeyTip
               gate={modelKeyGate}
               forced={keyTipForced}
+              suppressed={suppressModelKeyTip}
               onConfigure={(provider) => onConfigureModel?.(provider)}
             >
               <Button

@@ -10,9 +10,9 @@ import { isBypassEnabled } from "../security/bypassMode.js";
 import {
   BUILTIN_SKILLS_DIR,
   MAX_EXTERNAL_USER_SKILLS,
+  SKILL_DISCOVERY_SOURCE_ROOTS,
   USER_SKILLS_DIR,
   USER_SKILL_SOURCE_DIRS,
-  classifyUserSkillSource,
 } from "../skills/paths.js";
 import {
   acquireSessionWorkspace,
@@ -159,8 +159,6 @@ function trackQingagentModel<T extends object>(model: T, requestContext?: Reques
   });
 }
 
-const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;
-
 /**
  * 把技能目录路径规范成正斜杠。@mastra/core 的 Workspace 加载技能时,用 lastIndexOf("/")/
  * split("/") 这类 POSIX 字符串操作取目录名做「技能名==目录名」校验(私有 #getParentPath);
@@ -181,17 +179,16 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
     });
     return [];
   }
-  const roots = [
-    ...BUILTIN_SKILL_CATEGORIES.map((category) => join(BUILTIN_SKILLS_DIR, category)),
-    // 用户技能可能装在我们自己的目录,也可能被第三方安装器放进外部 agent 目录。
-    ...USER_SKILL_SOURCE_DIRS,
-  ];
-  return resolveEnabledSkillDirsFromRoots(roots, disabled, {
-    externalRoots: USER_SKILL_SOURCE_DIRS.filter((root) =>
-      classifyUserSkillSource(root).startsWith("external-")
-    ),
-    logger: console,
-  });
+  return resolveEnabledSkillDirsFromRoots(
+    SKILL_DISCOVERY_SOURCE_ROOTS.map((root) => root.path),
+    disabled,
+    {
+      externalRoots: SKILL_DISCOVERY_SOURCE_ROOTS
+        .filter((root) => root.external)
+        .map((root) => root.path),
+      logger: console,
+    },
+  );
 }
 
 export interface ResolveEnabledSkillDirsOptions {

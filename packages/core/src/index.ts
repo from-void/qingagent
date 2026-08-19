@@ -271,11 +271,14 @@ export {
 export { clearQuestionBranch } from "./services/genService.js";
 export {
   BUILTIN_SKILLS_DIR,
+  SKILL_DISCOVERY_SOURCE_ROOTS,
   MAX_EXTERNAL_USER_SKILLS,
   SKILLS_INSTALL_DIR,
   USER_SKILL_SOURCE_DIRS,
   USER_SKILLS_DIR,
   classifyUserSkillSource,
+  type SkillDiscoverySource,
+  type SkillDiscoverySourceRoot,
   checkCredentialPath,
   ensureCredentialPathExists,
   selectEffectiveCredentialPaths,

@@ -14,14 +14,13 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
-  BUILTIN_SKILLS_DIR,
   MAX_EXTERNAL_USER_SKILLS,
   SKILLS_INSTALL_DIR,
+  SKILL_DISCOVERY_SOURCE_ROOTS,
   USER_SKILL_SOURCE_DIRS,
   USER_SKILLS_DIR,
   getQingagentSkills,
   listChildSkills,
-  classifyUserSkillSource,
   parseSkillFrontmatter,
   readDisabledSet,
   setEnabled,
@@ -856,19 +855,10 @@ async function resolveSkillMutationFilePath(
 }
 
 async function collectAllSkillDirs(): Promise<Array<{ path: string; source: SkillSourceLabel; mtimeMs: number }>> {
-  const roots: Array<{ path: string; source: SkillSourceLabel }> = [
-    { path: join(BUILTIN_SKILLS_DIR, "capability"), source: "builtin" },
-    { path: join(BUILTIN_SKILLS_DIR, "native"), source: "builtin" },
-    { path: join(BUILTIN_SKILLS_DIR, "style"), source: "builtin" },
-    ...USER_SKILL_SOURCE_DIRS.map((path) => ({
-      path,
-      source: classifyUserSkillSource(path),
-    })),
-  ];
   const sources = await resolveSkillSourcesFromRoots(
-    roots.map((root) => ({
+    SKILL_DISCOVERY_SOURCE_ROOTS.map((root) => ({
       path: root.path,
-      external: root.source.startsWith("external-"),
+      external: root.external,
     })),
     {
       maxExternalSkills: MAX_EXTERNAL_USER_SKILLS,
@@ -876,10 +866,10 @@ async function collectAllSkillDirs(): Promise<Array<{ path: string; source: Skil
     },
   );
   return sources.map(({ skill, rootIndex }) => ({
-      path: skill.path,
-      source: roots[rootIndex]!.source,
-      mtimeMs: skill.mtimeMs,
-    }));
+    path: skill.path,
+    source: SKILL_DISCOVERY_SOURCE_ROOTS[rootIndex]!.source,
+    mtimeMs: skill.mtimeMs,
+  }));
 }
 
 function compareSkillItems(a: SkillListItem, b: SkillListItem): number {
@@ -896,8 +886,8 @@ function compareSkillItems(a: SkillListItem, b: SkillListItem): number {
 
 function skillSourceOrder(source: SkillSourceLabel): number {
   return [
-    "builtin",
     "installed",
+    "builtin",
     "external-claude",
     "external-codex",
     "external-shared",

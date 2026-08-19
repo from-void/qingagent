@@ -18,6 +18,8 @@ export const USER_SKILLS_DIR = process.env.QINGAGENT_USER_SKILLS_DIR
 
 export const SKILLS_INSTALL_DIR = USER_SKILLS_DIR;
 
+export const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;
+
 /**
  * 第三方技能安装器普遍会同时覆盖 Claude 与 Codex 的技能目录；
  * `~/.agents/skills` 作为共享来源。这里采用**只增不搬**:
@@ -31,7 +33,7 @@ export const DEFAULT_EXTRA_USER_SKILL_SOURCES = [
 ];
 
 /** 外部目录最多注入的顶层技能数，避免第三方目录无限膨胀提示词。 */
-export const MAX_EXTERNAL_USER_SKILLS = 30;
+export const MAX_EXTERNAL_USER_SKILLS = 60;
 
 export type UserSkillSource =
   | "installed"
@@ -67,6 +69,32 @@ export const USER_SKILL_SOURCE_DIRS: readonly string[] = [
     USER_SKILLS_DIR,
     ...parseExtraUserSkillSources(),
   ]),
+];
+
+export type SkillDiscoverySource = "builtin" | UserSkillSource;
+
+export interface SkillDiscoverySourceRoot {
+  path: string;
+  source: SkillDiscoverySource;
+  external: boolean;
+}
+
+/**
+ * 产品技能发现的唯一来源顺序。安装目录优先于内置技能；外部来源保持
+ * Claude > Codex > Agents > 环境追加目录，供 Agent 注入与管理列表共同消费。
+ */
+export const SKILL_DISCOVERY_SOURCE_ROOTS: readonly SkillDiscoverySourceRoot[] = [
+  { path: USER_SKILLS_DIR, source: "installed", external: false },
+  ...BUILTIN_SKILL_CATEGORIES.map((category) => ({
+    path: resolve(BUILTIN_SKILLS_DIR, category),
+    source: "builtin" as const,
+    external: false,
+  })),
+  ...USER_SKILL_SOURCE_DIRS.slice(1).map((path) => ({
+    path,
+    source: classifyUserSkillSource(path),
+    external: true,
+  })),
 ];
 
 export function classifyUserSkillSource(sourceDir: string): UserSkillSource {

@@ -198,8 +198,8 @@ export async function listChildSkills(skillDirectory: string): Promise<Discovere
 }
 
 /**
- * 按根目录顺序发现并去重顶层技能；外部来源在去重后按 SKILL.md mtime 取最新若干条。
- * 返回顺序仍保持来源优先级，mtime 只参与超限取舍，避免改变正常加载顺序。
+ * 按根目录顺序发现并去重顶层技能；外部来源在去重后按相同来源顺序截断。
+ * 安装目录与内置目录不受外部技能上限影响。
  */
 export async function resolveSkillSourcesFromRoots(
   roots: readonly SkillDiscoveryRoot[],
@@ -235,18 +235,11 @@ export async function resolveSkillSourcesFromRoots(
   const external = unique.filter((entry) => entry.root.external);
   if (external.length <= maxExternalSkills) return unique;
 
-  const newest = [...external].sort((left, right) => {
-    if (left.skill.mtimeMs !== right.skill.mtimeMs) {
-      return right.skill.mtimeMs - left.skill.mtimeMs;
-    }
-    if (left.rootIndex !== right.rootIndex) return left.rootIndex - right.rootIndex;
-    return left.skill.metadata.name.localeCompare(right.skill.metadata.name);
-  });
   const keptPaths = new Set(
-    newest.slice(0, maxExternalSkills).map((entry) => entry.skill.path),
+    external.slice(0, maxExternalSkills).map((entry) => entry.skill.path),
   );
-  const dropped = newest.slice(maxExternalSkills);
-  (options.logger ?? console).warn("[skills] 外部技能数量超过上限，已按更新时间截断", {
+  const dropped = external.slice(maxExternalSkills);
+  (options.logger ?? console).warn("[skills] 外部技能数量超过上限，已按来源优先级截断", {
     droppedCount: dropped.length,
     droppedNames: dropped.map((entry) => entry.skill.metadata.name),
   });

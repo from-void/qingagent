@@ -16,6 +16,7 @@ describe("bridgeHandler facade", () => {
       "findSessionByReviewBatchId",
       "forgetSession",
       "getOrRestoreSession",
+      "getOrRestoreSessionForVersionedRead",
       "getSession",
       "handleCommand",
       "normalizeClientTraceId",

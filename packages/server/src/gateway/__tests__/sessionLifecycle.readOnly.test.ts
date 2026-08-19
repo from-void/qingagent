@@ -57,6 +57,28 @@ describe("只读会话恢复", () => {
     expect(lifecycle.getSession("exists-session")).toBeUndefined();
   });
 
+  it("带版本令牌的读取走 activate 并注册同一实例，避免与后续写入分账", async () => {
+    const lifecycle = await loadLifecycle();
+    const { createSession } = await import("@qingagent/core");
+    const sessionId = "versioned-read-session";
+    restoreImpl = (id, options) => {
+      const restored = createSession(id);
+      restored.docVersion = options?.mode === "snapshot" ? 1 : 2;
+      return restored;
+    };
+
+    const transient = await lifecycle.getOrRestoreSessionReadOnly(sessionId);
+    const authoritative = await lifecycle.getOrRestoreSessionForVersionedRead(sessionId);
+
+    expect(transient?.docVersion).toBe(1);
+    expect(authoritative?.docVersion).toBe(2);
+    expect(lifecycle.getSession(sessionId)).toBe(authoritative);
+    expect(loadSessionFromThread).toHaveBeenNthCalledWith(1, sessionId, {
+      mode: "snapshot",
+    });
+    expect(loadSessionFromThread).toHaveBeenNthCalledWith(2, sessionId);
+  });
+
   it("cached 缺 runId 时只合并恢复挂起字段，保留未持久化聊天与正文状态", async () => {
     const lifecycle = await loadLifecycle();
     const { createSession } = await import("@qingagent/core");

@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SKILL_NAME_RE, stripSkillSourceBom } from "./frontmatter.js";
@@ -56,6 +57,13 @@ export interface ResolveSkillSourcesOptions {
   logger?: SkillDiscoveryLogger;
 }
 
+const CODEX_SYSTEM_SKILLS_MARKER = ".codex-system-skills.marker";
+
+interface ScanSkillHierarchyOptions {
+  /** 外部来源不得吸收宿主工具自己的隐藏目录与系统技能目录。 */
+  external?: boolean;
+}
+
 type FrontmatterValue = string | boolean | string[];
 
 /**
@@ -107,7 +115,10 @@ export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | 
  * references/、assets/ 等目录即使被遍历，也只有自身带合法 SKILL.md 时才会成为技能；
  * 非法 frontmatter 等同于没有 SKILL.md，不做文件名或目录名猜测兼容。
  */
-export async function scanSkillHierarchy(root: string): Promise<DiscoveredSkill[]> {
+export async function scanSkillHierarchy(
+  root: string,
+  options: ScanSkillHierarchyOptions = {},
+): Promise<DiscoveredSkill[]> {
   const absoluteRoot = resolve(root);
   const result: DiscoveredSkill[] = [];
 
@@ -116,6 +127,19 @@ export async function scanSkillHierarchy(root: string): Promise<DiscoveredSkill[
     nearestParentPath: string | null,
     isRoot: boolean,
   ): Promise<void> => {
+    let entries: Dirent[] | null = null;
+    // Codex 把系统技能放在带 marker 的目录层。外部来源若直接指向该层，或 marker
+    // 位于一个非隐藏容器中，也必须整棵跳过；安装目录与项目内置目录不走此规则。
+    if (options.external === true) {
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if (isRoot) throw error;
+        return;
+      }
+      if (entries.some((entry) => entry.name === CODEX_SYSTEM_SKILLS_MARKER)) return;
+    }
+
     const skillMdPath = join(directory, "SKILL.md");
     const metadata = await readSkillMetadata(skillMdPath);
     let nextParentPath = nearestParentPath;
@@ -131,15 +155,19 @@ export async function scanSkillHierarchy(root: string): Promise<DiscoveredSkill[
       nextParentPath = directory;
     }
 
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if (isRoot) throw error;
-      return;
+    if (!entries) {
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if (isRoot) throw error;
+        return;
+      }
     }
     const childDirectories = entries
-      .filter((entry) => entry.isDirectory())
+      .filter((entry) =>
+        entry.isDirectory()
+        && (options.external !== true || !entry.name.startsWith("."))
+      )
       .sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of childDirectories) {
       await visit(join(directory, entry.name), nextParentPath, false);
@@ -180,7 +208,11 @@ export async function resolveSkillSourcesFromRoots(
   const groups = await Promise.all(
     roots.map(async (root, rootIndex) => {
       try {
-        return (await listTopLevelSkills(root.path)).map((skill) => ({
+        const skills = root.external
+          ? (await scanSkillHierarchy(root.path, { external: true }))
+              .filter((skill) => skill.parentPath === null)
+          : await listTopLevelSkills(root.path);
+        return skills.map((skill) => ({
           skill,
           root,
           rootIndex,

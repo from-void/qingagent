@@ -4,7 +4,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { markdownToPm } from "@qingagent/pm-schema";
 import { app } from "../app";
-import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
+import {
+  forgetSession,
+  getOrRestoreSession,
+  getSession,
+  sessionManager,
+} from "../gateway/bridgeHandler";
 import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import {
   getExternalToken,
@@ -164,6 +169,31 @@ describe("external review", () => {
     expect(
       committedFrames.some((entry) => entry.frame.kind === "docCommitted"),
     ).toBe(true);
+  });
+
+  it("冷会话 doc 读取注册权威实例，返回版本可直接用于 commit", async () => {
+    const { sessionId } = await createPendingReview();
+    expect(forgetSession(sessionId)).toBe(true);
+    expect(getSession(sessionId)).toBeUndefined();
+
+    const read = await request(`/sessions/${sessionId}/doc?lines=1`);
+    expect(read.status).toBe(200);
+    const snapshot = await read.json() as { docVersion: number };
+    expect(getSession(sessionId)?.docVersion).toBe(snapshot.docVersion);
+
+    const committed = await request(`/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: snapshot.docVersion,
+        action: "accept_all",
+      }),
+    });
+
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: snapshot.docVersion + 1,
+    });
   });
 
   it("review 三路由在租约期仅放行匹配 turnId，无 turnId 被拦且异主返回 LOCK_LOST", async () => {

@@ -192,6 +192,17 @@ export async function getOrRestoreSessionReadOnly(
 }
 
 /**
+ * 会把 docVersion 交给后续写请求的读取必须复用可写路径的已注册 SessionState。
+ * 纯 snapshot 恢复刻意不注册，而且会跳过激活期恢复动作；若版本令牌来自临时对象，
+ * review/commit 随后在 Actor 内激活另一对象，就可能形成永久无法自愈的两本版本账。
+ */
+export async function getOrRestoreSessionForVersionedRead(
+  sessionId: string,
+): Promise<SessionState | undefined> {
+  return getOrRestoreSession(sessionId);
+}
+
+/**
  * 会话是否已存在(内存命中或持久层可恢复)。供 /commands 的 startSession(new) 覆写防护
  * 预检使用。预检是只读路径，冷恢复不得把历史会话写入常驻注册表。
  */

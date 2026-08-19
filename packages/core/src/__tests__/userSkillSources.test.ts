@@ -122,6 +122,43 @@ describe("用户技能的多来源目录", () => {
     expect(dirs.some((dir) => dir.endsWith("external-cli-guide"))).toBe(true);
   });
 
+  it("外部来源跳过隐藏目录与 Codex 系统 marker，且被跳过项不占 30 个上限", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-external-system-skills-"));
+    roots.push(root);
+    const installDir = join(root, ".qingagent", "skills");
+    const codexDir = join(root, ".codex", "skills");
+    await mkdir(installDir, { recursive: true });
+
+    for (let index = 0; index < 30; index += 1) {
+      await writeSkill(codexDir, `normal-external-${String(index).padStart(2, "0")}`);
+    }
+    const hiddenSystemDir = join(codexDir, ".system");
+    await writeSkill(hiddenSystemDir, "imagegen");
+    await writeFile(join(hiddenSystemDir, ".codex-system-skills.marker"), "", "utf8");
+    await writeSkill(join(codexDir, ".private"), "review-agent");
+    const visibleSystemLayer = join(codexDir, "system-managed");
+    await writeSkill(visibleSystemLayer, "openai-docs");
+    await writeFile(
+      join(visibleSystemLayer, ".codex-system-skills.marker"),
+      "",
+      "utf8",
+    );
+    const logger = { warn: vi.fn() };
+
+    const dirs = await resolveEnabledSkillDirsFromRoots(
+      [installDir, codexDir],
+      new Set<string>(),
+      { externalRoots: [codexDir], logger },
+    );
+
+    expect(dirs).toHaveLength(30);
+    expect(dirs.every((dir) => dir.includes("normal-external-"))).toBe(true);
+    expect(dirs.some((dir) => dir.endsWith("imagegen"))).toBe(false);
+    expect(dirs.some((dir) => dir.endsWith("review-agent"))).toBe(false);
+    expect(dirs.some((dir) => dir.endsWith("openai-docs"))).toBe(false);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it("31 个外部技能只保留最新 30 个并记录丢弃数量与名字", async () => {
     const root = await mkdtemp(join(tmpdir(), "example-external-skill-limit-"));
     roots.push(root);

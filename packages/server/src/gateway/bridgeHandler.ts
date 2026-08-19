@@ -28,6 +28,7 @@ export {
   findSessionByReviewBatchId,
   forgetSession,
   getOrRestoreSession,
+  getOrRestoreSessionForVersionedRead,
   getSession,
   sessionExists,
   sessionManager,

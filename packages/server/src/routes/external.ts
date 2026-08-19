@@ -59,6 +59,7 @@ import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import {
   getOrRestoreSession,
+  getOrRestoreSessionForVersionedRead,
   handleCommand,
   sessionExists,
   sessionManager,
@@ -513,7 +514,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
       "读取文档时请移除 format，或改用 format=qingml / format=pm 后重试",
     );
   }
-  const session = await getOrRestoreSessionReadOnly(sessionId);
+  const session = await getOrRestoreSessionForVersionedRead(sessionId);
   if (!session) {
     externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
@@ -669,7 +670,7 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
       "读取审阅摘要时请移除 format，或改用 format=render-model",
     );
   }
-  const session = await getOrRestoreSessionReadOnly(sessionId);
+  const session = await getOrRestoreSessionForVersionedRead(sessionId);
   if (!session) {
     externalLog("review_list", {
       sessionId,

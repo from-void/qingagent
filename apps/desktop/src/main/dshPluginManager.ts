@@ -23,6 +23,11 @@ export interface DshInstallInvocation {
   options: SpawnOptions & { shell: false };
 }
 
+export interface NpxSpawnInvocation {
+  command: string;
+  prefixArgs: string[];
+}
+
 interface NpxLookupOptions {
   encoding: "utf8";
   shell: false;
@@ -39,14 +44,14 @@ export interface NpxExecutableResolutionOptions {
 }
 
 export interface DshDetectionRuntimeOptions {
-  resolveNpx?: () => string | null;
+  resolveNpx?: () => NpxSpawnInvocation | null;
 }
 
 export interface DshInstallRuntimeOptions {
   homeDir?: string;
   timeoutMs?: number;
   spawnProcess?: typeof spawn;
-  resolveNpx?: () => string | null;
+  resolveNpx?: () => NpxSpawnInvocation | null;
 }
 
 let installRunning = false;
@@ -85,17 +90,18 @@ export function detectDshInstallation(
 export function buildDshInstallInvocation(
   profile: string,
   detectedProfiles: readonly string[],
-  npxExecutable: string,
+  npxInvocation: NpxSpawnInvocation,
 ): DshInstallInvocation {
   if (!PROFILE_NAME_PATTERN.test(profile) || !detectedProfiles.includes(profile)) {
     throw new Error("Invalid DSH profile");
   }
-  if (!isAbsoluteNpxExecutable(npxExecutable)) {
-    throw new Error("Invalid npx executable");
+  if (!isSafeNpxInvocation(npxInvocation)) {
+    throw new Error("Invalid npx invocation");
   }
   return {
-    command: npxExecutable,
+    command: npxInvocation.command,
     args: [
+      ...npxInvocation.prefixArgs,
       "@deepseek-ai/dsh",
       "plugin",
       "--profile",
@@ -122,14 +128,13 @@ export function formatDshInstallCommand(profile: string): string {
  */
 export function resolveNpxExecutable(
   options: NpxExecutableResolutionOptions = {},
-): string | null {
+): NpxSpawnInvocation | null {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? os.homedir();
   const lookup = options.lookup ?? defaultExecutableLookup;
   const fileExists = options.isFile ?? isFile;
   const readDirectory = options.readDirectory ?? readDirectoryNames;
-  const pathApi = platform === "win32" ? path.win32 : path.posix;
 
   const lookupRequests = platform === "win32"
     ? ["npx", "npx.cmd"].map((name) => ({
@@ -153,21 +158,23 @@ export function resolveNpxExecutable(
     }
     for (const line of output.split(/\r?\n/u)) {
       const candidate = line.trim().replace(/^"|"$/gu, "");
-      if (isUsableNpxPath(candidate, platform, fileExists)) return candidate;
+      const directory = npxLookupResultDirectory(candidate, platform);
+      if (!directory) continue;
+      const invocation = resolveNpxFromDirectory(directory, platform, env, fileExists);
+      if (invocation) return invocation;
     }
   }
 
   if (platform === "win32") {
     for (const directory of windowsRegistryPathDirectories(env, lookup)) {
-      for (const executable of ["npx.cmd", "npx.exe", "npx"] as const) {
-        const candidate = path.win32.join(directory, executable);
-        if (isUsableNpxPath(candidate, platform, fileExists)) return candidate;
-      }
+      const invocation = resolveNpxFromDirectory(directory, platform, env, fileExists);
+      if (invocation) return invocation;
     }
   }
 
-  for (const candidate of commonNpxCandidates(platform, homeDir, env, readDirectory)) {
-    if (pathApi.isAbsolute(candidate) && fileExists(candidate)) return candidate;
+  for (const directory of commonNpxDirectories(platform, homeDir, env, readDirectory)) {
+    const invocation = resolveNpxFromDirectory(directory, platform, env, fileExists);
+    if (invocation) return invocation;
   }
   return null;
 }
@@ -183,8 +190,8 @@ export async function installDshPlugin(
 
   const detection = detectDshInstallation(runtime.homeDir, { resolveNpx: () => null });
   const resolveNpx = runtime.resolveNpx ?? (() => resolveNpxExecutable({ homeDir: runtime.homeDir }));
-  const npxExecutable = safeResolveNpx(resolveNpx);
-  if (!npxExecutable) {
+  const npxInvocation = safeResolveNpx(resolveNpx);
+  if (!npxInvocation) {
     return failure(
       profile,
       command,
@@ -197,7 +204,7 @@ export async function installDshPlugin(
     invocation = buildDshInstallInvocation(
       profile,
       detection.profiles.map((item) => item.name),
-      npxExecutable,
+      npxInvocation,
     );
   } catch {
     return failure(profile, command, "invalid-profile", "所选 profile 不在本机检测列表中");
@@ -214,20 +221,69 @@ export async function installDshPlugin(
   }
 }
 
-function safeResolveNpx(resolveNpx: () => string | null): string | null {
+function safeResolveNpx(
+  resolveNpx: () => NpxSpawnInvocation | null,
+): NpxSpawnInvocation | null {
   try {
-    const executable = resolveNpx();
-    return executable && isAbsoluteNpxExecutable(executable) ? executable : null;
+    const invocation = resolveNpx();
+    return invocation && isSafeNpxInvocation(invocation) ? invocation : null;
   } catch {
     return null;
   }
 }
 
-function isAbsoluteNpxExecutable(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/gu, "/");
-  const filename = normalized.slice(normalized.lastIndexOf("/") + 1);
-  return (path.posix.isAbsolute(filePath) || path.win32.isAbsolute(filePath))
-    && /^npx(?:\.cmd|\.exe)?$/iu.test(filename);
+function isSafeNpxInvocation(value: NpxSpawnInvocation): boolean {
+  if (!value || typeof value.command !== "string" || !Array.isArray(value.prefixArgs)) {
+    return false;
+  }
+  if (!value.prefixArgs.every((argument) => typeof argument === "string")) return false;
+
+  const isWindowsCommand = isWindowsAbsolutePath(value.command);
+  const isPosixCommand = !isWindowsCommand && path.posix.isAbsolute(value.command);
+  if (!isWindowsCommand && !isPosixCommand) return false;
+
+  if (value.prefixArgs.length === 0) {
+    return isWindowsCommand
+      ? path.win32.basename(value.command).toLocaleLowerCase("en-US") === "npx.exe"
+      : path.posix.basename(value.command) === "npx";
+  }
+
+  const commandName = isWindowsCommand
+    ? path.win32.basename(value.command).toLocaleLowerCase("en-US")
+    : path.posix.basename(value.command);
+  if (commandName === (isWindowsCommand ? "node.exe" : "node")) {
+    const cliPath = value.prefixArgs[0] ?? "";
+    return value.prefixArgs.length === 1
+      && (isWindowsCommand ? isWindowsAbsolutePath(cliPath) : path.posix.isAbsolute(cliPath))
+      && /(?:^|[\\/])npx-cli\.js$/u.test(cliPath);
+  }
+
+  return isWindowsCommand
+    && commandName === "cmd.exe"
+    && value.prefixArgs.length === 4
+    && value.prefixArgs[0] === "/d"
+    && value.prefixArgs[1] === "/s"
+    && value.prefixArgs[2] === "/c"
+    && isWindowsAbsolutePath(value.prefixArgs[3] ?? "")
+    && path.win32.basename(value.prefixArgs[3] ?? "").toLocaleLowerCase("en-US") === "npx.cmd";
+}
+
+function isWindowsAbsolutePath(filePath: string): boolean {
+  return path.win32.isAbsolute(filePath) && /^(?:[A-Za-z]:[\\/]|\\\\)/u.test(filePath);
+}
+
+function isAbsoluteNpxExecutable(
+  filePath: string,
+  platform: NodeJS.Platform,
+): boolean {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (platform === "win32" ? !isWindowsAbsolutePath(filePath) : !pathApi.isAbsolute(filePath)) {
+    return false;
+  }
+  const filename = pathApi.basename(filePath);
+  return platform === "win32"
+    ? /^npx\.(?:cmd|exe)$/iu.test(filename)
+    : filename === "npx";
 }
 
 function isUsableNpxPath(
@@ -235,8 +291,69 @@ function isUsableNpxPath(
   platform: NodeJS.Platform,
   fileExists: (filePath: string) => boolean,
 ): boolean {
+  return isAbsoluteNpxExecutable(filePath, platform) && fileExists(filePath);
+}
+
+function npxLookupResultDirectory(
+  filePath: string,
+  platform: NodeJS.Platform,
+): string | null {
   const pathApi = platform === "win32" ? path.win32 : path.posix;
-  return pathApi.isAbsolute(filePath) && isAbsoluteNpxExecutable(filePath) && fileExists(filePath);
+  if (platform === "win32" ? !isWindowsAbsolutePath(filePath) : !pathApi.isAbsolute(filePath)) {
+    return null;
+  }
+  const filename = pathApi.basename(filePath);
+  const isNpxLookupResult = platform === "win32"
+    ? /^npx(?:\.cmd|\.exe)?$/iu.test(filename)
+    : filename === "npx";
+  if (!isNpxLookupResult) return null;
+
+  // Windows 的无扩展名 npx 仅可作为 where.exe 提供的目录线索，绝不作为可执行调用返回。
+  return pathApi.dirname(filePath);
+}
+
+function resolveNpxFromDirectory(
+  directory: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  fileExists: (filePath: string) => boolean,
+): NpxSpawnInvocation | null {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (platform === "win32" ? !isWindowsAbsolutePath(directory) : !pathApi.isAbsolute(directory)) {
+    return null;
+  }
+
+  const nodeExecutable = pathApi.join(directory, platform === "win32" ? "node.exe" : "node");
+  const cliCandidates = platform === "win32"
+    ? [path.win32.join(directory, "node_modules", "npm", "bin", "npx-cli.js")]
+    : [
+        path.posix.join(directory, "..", "lib", "node_modules", "npm", "bin", "npx-cli.js"),
+        path.posix.join(directory, "node_modules", "npm", "bin", "npx-cli.js"),
+      ];
+  if (fileExists(nodeExecutable)) {
+    const npxCli = cliCandidates.find((candidate) => fileExists(candidate));
+    if (npxCli) return { command: nodeExecutable, prefixArgs: [npxCli] };
+  }
+
+  const nativeNpx = pathApi.join(directory, platform === "win32" ? "npx.exe" : "npx");
+  if (isUsableNpxPath(nativeNpx, platform, fileExists)) {
+    return { command: nativeNpx, prefixArgs: [] };
+  }
+
+  if (platform !== "win32") return null;
+  const npxCmd = path.win32.join(directory, "npx.cmd");
+  const systemRoot = env.SystemRoot ?? env.WINDIR;
+  if (!systemRoot || !isWindowsAbsolutePath(systemRoot)
+    || !isUsableNpxPath(npxCmd, platform, fileExists)) {
+    return null;
+  }
+
+  // Node 20.12+/22 无法在 shell:false 下直接 spawn .cmd；显式调用系统 cmd.exe，
+  // 仍使用参数数组与 shell:false，避免退回字符串命令行或启用 shell。
+  return {
+    command: path.win32.join(systemRoot, "System32", "cmd.exe"),
+    prefixArgs: ["/d", "/s", "/c", npxCmd],
+  };
 }
 
 function defaultExecutableLookup(
@@ -326,35 +443,35 @@ function expandWindowsEnvironmentVariables(
   return expanded;
 }
 
-function commonNpxCandidates(
+function commonNpxDirectories(
   platform: NodeJS.Platform,
   homeDir: string,
   env: NodeJS.ProcessEnv,
   readDirectory: (directoryPath: string) => string[],
 ): string[] {
   return platform === "win32"
-    ? windowsNpxCandidates(homeDir, env, readDirectory)
-    : posixNpxCandidates(homeDir, env, readDirectory);
+    ? windowsNpxDirectories(homeDir, env, readDirectory)
+    : posixNpxDirectories(homeDir, env, readDirectory);
 }
 
-function windowsNpxCandidates(
+function windowsNpxDirectories(
   homeDir: string,
   env: NodeJS.ProcessEnv,
   readDirectory: (directoryPath: string) => string[],
 ): string[] {
-  const candidates: string[] = [];
+  const directories: string[] = [];
   const add = (root: string | undefined, ...parts: string[]): void => {
-    if (root) candidates.push(path.win32.join(root, ...parts));
+    if (root) directories.push(path.win32.join(root, ...parts));
   };
-  add(env.NVM_SYMLINK, "npx.cmd");
-  add(env.NVM_HOME, "npx.cmd");
-  add(env.VOLTA_HOME, "bin", "npx.cmd");
-  add(env.LOCALAPPDATA, "Volta", "bin", "npx.cmd");
-  add(env.FNM_MULTISHELL_PATH, "npx.cmd");
-  add(env.FNM_MULTISHELL_PATH, "bin", "npx.cmd");
-  add(env.APPDATA, "npm", "npx.cmd");
-  add(env.ProgramFiles, "nodejs", "npx.cmd");
-  add(homeDir, "AppData", "Local", "Volta", "bin", "npx.cmd");
+  add(env.NVM_SYMLINK);
+  add(env.NVM_HOME);
+  add(env.VOLTA_HOME, "bin");
+  add(env.LOCALAPPDATA, "Volta", "bin");
+  add(env.FNM_MULTISHELL_PATH);
+  add(env.FNM_MULTISHELL_PATH, "bin");
+  add(env.APPDATA, "npm");
+  add(env.ProgramFiles, "nodejs");
+  add(homeDir, "AppData", "Local", "Volta", "bin");
 
   const fnmRoots = [
     env.FNM_DIR ? path.win32.join(env.FNM_DIR, "node-versions") : null,
@@ -363,31 +480,31 @@ function windowsNpxCandidates(
   ].filter((root): root is string => Boolean(root));
   for (const root of fnmRoots) {
     for (const version of readDirectory(root)) {
-      candidates.push(path.win32.join(root, version, "installation", "npx.cmd"));
+      directories.push(path.win32.join(root, version, "installation"));
     }
   }
-  return candidates;
+  return directories;
 }
 
-function posixNpxCandidates(
+function posixNpxDirectories(
   homeDir: string,
   env: NodeJS.ProcessEnv,
   readDirectory: (directoryPath: string) => string[],
 ): string[] {
-  const candidates: string[] = [];
+  const directories: string[] = [];
   const add = (root: string | undefined, ...parts: string[]): void => {
-    if (root) candidates.push(path.posix.join(root, ...parts));
+    if (root) directories.push(path.posix.join(root, ...parts));
   };
-  add(env.NVM_BIN, "npx");
-  add(env.VOLTA_HOME, "bin", "npx");
-  add(homeDir, ".volta", "bin", "npx");
-  add(env.FNM_MULTISHELL_PATH, "npx");
-  add(env.FNM_MULTISHELL_PATH, "bin", "npx");
-  candidates.push("/usr/local/bin/npx", "/opt/homebrew/bin/npx");
+  add(env.NVM_BIN);
+  add(env.VOLTA_HOME, "bin");
+  add(homeDir, ".volta", "bin");
+  add(env.FNM_MULTISHELL_PATH);
+  add(env.FNM_MULTISHELL_PATH, "bin");
+  directories.push("/usr/local/bin", "/opt/homebrew/bin");
 
   const nvmRoot = path.posix.join(homeDir, ".nvm", "versions", "node");
   for (const version of readDirectory(nvmRoot)) {
-    candidates.push(path.posix.join(nvmRoot, version, "bin", "npx"));
+    directories.push(path.posix.join(nvmRoot, version, "bin"));
   }
   const fnmRoots = [
     env.FNM_DIR ? path.posix.join(env.FNM_DIR, "node-versions") : null,
@@ -397,10 +514,10 @@ function posixNpxCandidates(
   ].filter((root): root is string => Boolean(root));
   for (const root of fnmRoots) {
     for (const version of readDirectory(root)) {
-      candidates.push(path.posix.join(root, version, "installation", "bin", "npx"));
+      directories.push(path.posix.join(root, version, "installation", "bin"));
     }
   }
-  return candidates;
+  return directories;
 }
 
 function readProfile(profilesDir: string, name: string): DshProfileSnapshot | null {

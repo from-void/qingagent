@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -35,7 +35,7 @@ test("按 settings.yaml 与 profiles 目录枚举 DSH profile，并读取 bundle
     );
 
     assert.deepEqual(detectDshInstallation(homeDir, {
-      resolveNpx: () => "/usr/local/bin/npx",
+      resolveNpx: () => ({ command: "/usr/local/bin/npx", prefixArgs: [] }),
     }), {
       detected: true,
       profiles: [
@@ -73,19 +73,29 @@ test("缺少 settings.yaml 时不把残留 profiles 误判为已安装 DSH", () 
 test("安装命令拒绝路径穿越与未枚举 profile", () => {
   const detectedProfiles = ["web", "writer"];
   assert.throws(
-    () => buildDshInstallInvocation("../web", detectedProfiles, "/usr/local/bin/npx"),
+    () => buildDshInstallInvocation("../web", detectedProfiles, {
+      command: "/usr/local/bin/npx",
+      prefixArgs: [],
+    }),
     /profile/i,
   );
   assert.throws(
-    () => buildDshInstallInvocation("missing", detectedProfiles, "/usr/local/bin/npx"),
+    () => buildDshInstallInvocation("missing", detectedProfiles, {
+      command: "/usr/local/bin/npx",
+      prefixArgs: [],
+    }),
     /profile/i,
   );
 });
 
-test("安装命令使用解析后的绝对路径、精确参数数组并显式关闭 shell", () => {
-  const invocation = buildDshInstallInvocation("web", ["web", "writer"], "/usr/local/bin/npx");
-  assert.equal(invocation.command, "/usr/local/bin/npx");
+test("安装命令使用解析后的调用、把前缀拼到精确参数数组并显式关闭 shell", () => {
+  const invocation = buildDshInstallInvocation("web", ["web", "writer"], {
+    command: "/usr/local/bin/node",
+    prefixArgs: ["/usr/local/lib/node_modules/npm/bin/npx-cli.js"],
+  });
+  assert.equal(invocation.command, "/usr/local/bin/node");
   assert.deepEqual(invocation.args, [
+    "/usr/local/lib/node_modules/npm/bin/npx-cli.js",
     "@deepseek-ai/dsh",
     "plugin",
     "--profile",
@@ -96,7 +106,7 @@ test("安装命令使用解析后的绝对路径、精确参数数组并显式�
   assert.equal(invocation.options.shell, false);
 });
 
-test("posix 通过 which npx 解析真实路径，查询过程不启用 shell", () => {
+test("posix 通过 which npx 所在目录解析原生可执行，查询过程不启用 shell", () => {
   const calls: Array<{ command: string; args: readonly string[]; shell: boolean }> = [];
   const resolved = resolveNpxExecutable({
     platform: "linux",
@@ -110,29 +120,101 @@ test("posix 通过 which npx 解析真实路径，查询过程不启用 shell", 
     readDirectory: () => [],
   });
 
-  assert.equal(resolved, "/usr/local/bin/npx");
+  assert.deepEqual(resolved, { command: "/usr/local/bin/npx", prefixArgs: [] });
   assert.deepEqual(calls, [{ command: "which", args: ["npx"], shell: false }]);
 });
 
-test("Windows 依次用 where.exe 查 npx 与 npx.cmd，并返回带扩展名绝对路径", () => {
+test("posix 优先使用 node + npx-cli.js 调用", () => {
+  const files = new Set([
+    "/usr/local/bin/node",
+    "/usr/local/bin/npx",
+    "/usr/local/lib/node_modules/npm/bin/npx-cli.js",
+  ]);
+  const resolved = resolveNpxExecutable({
+    platform: "darwin",
+    homeDir: "/Users/qingjian",
+    env: {},
+    lookup: () => "/usr/local/bin/npx\n",
+    isFile: (filePath) => files.has(filePath),
+    readDirectory: () => [],
+  });
+
+  assert.deepEqual(resolved, {
+    command: "/usr/local/bin/node",
+    prefixArgs: ["/usr/local/lib/node_modules/npm/bin/npx-cli.js"],
+  });
+});
+
+test("Windows 忽略 where.exe 返回的无扩展名 npx，优先解析 node.exe + npx-cli.js", () => {
   const calls: Array<{ command: string; args: readonly string[]; shell: boolean }> = [];
+  const files = new Set([
+    "D:\\nodejs\\npx",
+    "D:\\nodejs\\node.exe",
+    "D:\\nodejs\\npx.cmd",
+    "D:\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+  ]);
   const resolved = resolveNpxExecutable({
     platform: "win32",
     homeDir: "C:\\Users\\qingjian",
     env: { SystemRoot: "C:\\Windows" },
     lookup(command, args, options) {
       calls.push({ command, args, shell: options.shell });
-      return args[0] === "npx.cmd" ? "C:\\Program Files\\nodejs\\npx.cmd\r\n" : "";
+      return args[0] === "npx" ? "D:\\nodejs\\npx\r\n" : "";
     },
-    isFile: (filePath) => filePath === "C:\\Program Files\\nodejs\\npx.cmd",
+    isFile: (filePath) => files.has(filePath),
     readDirectory: () => [],
   });
 
-  assert.equal(resolved, "C:\\Program Files\\nodejs\\npx.cmd");
+  assert.deepEqual(resolved, {
+    command: "D:\\nodejs\\node.exe",
+    prefixArgs: ["D:\\nodejs\\node_modules\\npm\\bin\\npx-cli.js"],
+  });
+  assert.notEqual(resolved?.command, "D:\\nodejs\\npx");
   assert.deepEqual(calls, [
     { command: "C:\\Windows\\System32\\where.exe", args: ["npx"], shell: false },
-    { command: "C:\\Windows\\System32\\where.exe", args: ["npx.cmd"], shell: false },
   ]);
+});
+
+test("Windows 只有 npx.cmd 时通过 cmd.exe 以参数数组调用", () => {
+  const resolved = resolveNpxExecutable({
+    platform: "win32",
+    homeDir: "C:\\Users\\qingjian",
+    env: { SystemRoot: "C:\\Windows" },
+    lookup: (_command, args) => args[0] === "npx" ? "D:\\nodejs\\npx.cmd\r\n" : "",
+    isFile: (filePath) => filePath === "D:\\nodejs\\npx.cmd",
+    readDirectory: () => [],
+  });
+
+  assert.deepEqual(resolved, {
+    command: "C:\\Windows\\System32\\cmd.exe",
+    prefixArgs: ["/d", "/s", "/c", "D:\\nodejs\\npx.cmd"],
+  });
+});
+
+test("Windows 只有 npx.exe 时直接使用原生可执行", () => {
+  const resolved = resolveNpxExecutable({
+    platform: "win32",
+    homeDir: "C:\\Users\\qingjian",
+    env: { SystemRoot: "C:\\Windows" },
+    lookup: (_command, args) => args[0] === "npx" ? "D:\\nodejs\\npx.exe\r\n" : "",
+    isFile: (filePath) => filePath === "D:\\nodejs\\npx.exe",
+    readDirectory: () => [],
+  });
+
+  assert.deepEqual(resolved, { command: "D:\\nodejs\\npx.exe", prefixArgs: [] });
+});
+
+test("Windows 只有无扩展名 npx 时不把它当作可执行调用", () => {
+  const resolved = resolveNpxExecutable({
+    platform: "win32",
+    homeDir: "C:\\Users\\qingjian",
+    env: { SystemRoot: "C:\\Windows" },
+    lookup: (_command, args) => args[0] === "npx" ? "D:\\nodejs\\npx\r\n" : "",
+    isFile: (filePath) => filePath === "D:\\nodejs\\npx",
+    readDirectory: () => [],
+  });
+
+  assert.equal(resolved, null);
 });
 
 test("Windows 从系统注册表 PATH 解析自定义盘符 npx，并展开环境变量", () => {
@@ -160,13 +242,13 @@ test("Windows 从系统注册表 PATH 解析自定义盘符 npx，并展开环�
     },
     isFile(filePath) {
       probedPaths.push(filePath);
-      return filePath === "D:\\nodejs\\npx.cmd";
+      return filePath === "D:\\nodejs\\npx.exe";
     },
     readDirectory: () => [],
   });
 
-  assert.equal(resolved, "D:\\nodejs\\npx.cmd");
-  assert.ok(probedPaths.includes("C:\\Windows\\System32\\npx.cmd"));
+  assert.deepEqual(resolved, { command: "D:\\nodejs\\npx.exe", prefixArgs: [] });
+  assert.ok(probedPaths.includes("C:\\Windows\\System32\\npx.exe"));
   assert.ok(calls.some(({ args }) => args[1]?.startsWith("HKLM")));
   assert.ok(calls.some(({ args }) => args[1]?.startsWith("HKCU")));
   assert.ok(calls.every(({ shell }) => shell === false));
@@ -191,7 +273,15 @@ test("Windows 注册表查询失败或空输出时回落常见位置，全程不
     readDirectory: () => [],
   });
 
-  assert.equal(resolved, "C:\\Users\\qingjian\\AppData\\Roaming\\npm\\npx.cmd");
+  assert.deepEqual(resolved, {
+    command: "C:\\Windows\\System32\\cmd.exe",
+    prefixArgs: [
+      "/d",
+      "/s",
+      "/c",
+      "C:\\Users\\qingjian\\AppData\\Roaming\\npm\\npx.cmd",
+    ],
+  });
   assert.ok(calls.some(({ args }) => args[1]?.startsWith("HKLM")));
   assert.ok(calls.some(({ args }) => args[1]?.startsWith("HKCU")));
   assert.ok(calls.every(({ shell }) => shell === false));
@@ -208,19 +298,33 @@ test("查询失败时补查 nvm/volta/fnm 与 APPDATA 常见目录，仍找不�
     isFile: (filePath) => filePath.endsWith("/v20.19.0/bin/npx"),
     readDirectory: () => [],
   });
-  assert.equal(posix, "/Users/qingjian/.nvm/versions/node/v20.19.0/bin/npx");
+  assert.deepEqual(posix, {
+    command: "/Users/qingjian/.nvm/versions/node/v20.19.0/bin/npx",
+    prefixArgs: [],
+  });
 
   const windows = resolveNpxExecutable({
     platform: "win32",
     homeDir: "C:\\Users\\qingjian",
-    env: { APPDATA: "C:\\Users\\qingjian\\AppData\\Roaming" },
+    env: {
+      APPDATA: "C:\\Users\\qingjian\\AppData\\Roaming",
+      SystemRoot: "C:\\Windows",
+    },
     lookup: () => {
       throw new Error("where failed");
     },
     isFile: (filePath) => filePath.endsWith("AppData\\Roaming\\npm\\npx.cmd"),
     readDirectory: () => [],
   });
-  assert.equal(windows, "C:\\Users\\qingjian\\AppData\\Roaming\\npm\\npx.cmd");
+  assert.deepEqual(windows, {
+    command: "C:\\Windows\\System32\\cmd.exe",
+    prefixArgs: [
+      "/d",
+      "/s",
+      "/c",
+      "C:\\Users\\qingjian\\AppData\\Roaming\\npm\\npx.cmd",
+    ],
+  });
 
   const missing = resolveNpxExecutable({
     platform: "linux",
@@ -231,6 +335,11 @@ test("查询失败时补查 nvm/volta/fnm 与 APPDATA 常见目录，仍找不�
     readDirectory: () => [],
   });
   assert.equal(missing, null);
+});
+
+test("DSH 插件安装实现禁止 shell:true", () => {
+  const source = readFileSync(new URL("./dshPluginManager.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /shell\s*:\s*true/u);
 });
 
 test("解析不到 npx 时不触发 spawn，也不把 ENOENT 当执行失败", async () => {

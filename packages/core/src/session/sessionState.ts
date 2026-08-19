@@ -124,6 +124,12 @@ export interface SessionState {
   /** 仅成功创建新文档版本时推进；首页按此字段排序。 */
   lastContentEditedAt: string | null;
   streamId: string | null;
+  /** Runtime-only：外部 agent 回合触稿后持有的编辑租约；重启时恒恢复为 null。 */
+  externalBusyLease: {
+    turnId: string;
+    principalId: string;
+    expiresAt: number;
+  } | null;
   runId: string | null;
   toolCallId: string | null;
   previousDocState: DocState | null;
@@ -326,6 +332,7 @@ export function createSession(
     modelKnownDocVersion: null,
     lastContentEditedAt: createdAt,
     streamId: null,
+    externalBusyLease: null,
     runId: null,
     toolCallId: null,
     previousDocState: null,

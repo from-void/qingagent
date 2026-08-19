@@ -23,6 +23,7 @@ export {
   collectRestoreFrames,
   disposeAllSessionsForShutdown,
   drainActiveTurnsForShutdown,
+  EXTERNAL_BUSY_LEASE_TTL_MS,
   findSessionByPatch,
   findSessionByReviewBatchId,
   forgetSession,
@@ -30,4 +31,5 @@ export {
   getSession,
   sessionExists,
   sessionManager,
+  signalExternalBusyLease,
 } from "./sessionLifecycle";

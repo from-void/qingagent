@@ -5,6 +5,7 @@ describe("bridgeHandler facade", () => {
   it("保留拆分前的运行时导出", () => {
     const expectedExports = [
       "DEFAULT_USER_VERSION_WINDOW_MS",
+      "EXTERNAL_BUSY_LEASE_TTL_MS",
       "USER_VERSION_WINDOW_MS",
       "collectRestoreFrames",
       "disposeAllSessionsForShutdown",
@@ -25,6 +26,7 @@ describe("bridgeHandler facade", () => {
       "resolveCommandSessionId",
       "sessionExists",
       "sessionManager",
+      "signalExternalBusyLease",
     ] as const;
 
     for (const name of expectedExports) {

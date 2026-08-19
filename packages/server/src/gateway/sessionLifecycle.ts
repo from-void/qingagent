@@ -2,6 +2,8 @@ import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import {
   clearQuestionBranch,
   clearSessionSnapshot,
+  deriveAgentBusy,
+  emitProjectedDocState,
   invalidateSessionWorkspace,
   terminateSessionBackgroundCommands,
   loadSessionFromThread,
@@ -201,6 +203,7 @@ export function forgetSession(sessionId: string): boolean {
   session?._abortController?.abort();
   if (session) confirmService.clearSession(session);
   clearSessionConfirmTimeouts(sessionId);
+  clearExternalBusyLeaseTimer(sessionId);
   const deleted = sessions.delete(sessionId);
   forgetFolderSourceOperationQueue(sessionId);
   unregisterSessionFolderSources(sessionId);
@@ -274,7 +277,147 @@ export const sessionManager = new SessionManager({
     const session = sessions.get(sessionId);
     return hasProtectedSessionWork(session, activeCommand);
   },
+  hasRuntimeBusy: (sessionId) => {
+    const session = sessions.get(sessionId);
+    return session ? deriveAgentBusy(session) : false;
+  },
 });
+
+export const EXTERNAL_BUSY_LEASE_TTL_MS = 60_000;
+
+export type ExternalTurnSignalAction = "begin" | "end" | "heartbeat";
+
+export interface ExternalTurnSignalResult {
+  found: boolean;
+  active: boolean;
+  expiresAt: number | null;
+}
+
+interface ExternalBusyLeaseTimerEntry {
+  principalId: string;
+  turnId: string;
+  expiresAt: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const externalBusyLeaseTimers = new Map<string, ExternalBusyLeaseTimerEntry>();
+
+/** 所有租约变更都通过会话 Actor 串行化；HTTP handler 不直接写 SessionState。 */
+export async function signalExternalBusyLease(input: {
+  sessionId: string;
+  principalId: string;
+  turnId: string;
+  action: ExternalTurnSignalAction;
+}): Promise<ExternalTurnSignalResult> {
+  let found = false;
+  let active = false;
+  let expiresAt: number | null = null;
+
+  await sessionManager.runExclusive(input.sessionId, async function* () {
+    const session = await getOrRestoreSession(input.sessionId);
+    if (!session) return;
+    found = true;
+    const now = Date.now();
+    const current = session.externalBusyLease;
+    const sameOwner = current !== null
+      && current.principalId === input.principalId
+      && current.turnId === input.turnId;
+
+    if (input.action === "end") {
+      if (sameOwner) {
+        session.externalBusyLease = null;
+        clearExternalBusyLeaseTimer(input.sessionId);
+        yield* emitProjectedDocState(session, "external_busy_lease_ended");
+      }
+    } else if (input.action === "begin" || sameOwner) {
+      session.externalBusyLease = {
+        principalId: input.principalId,
+        turnId: input.turnId,
+        expiresAt: now + EXTERNAL_BUSY_LEASE_TTL_MS,
+      };
+      armExternalBusyLeaseTimer(session);
+      yield* emitProjectedDocState(
+        session,
+        input.action === "begin"
+          ? "external_busy_lease_began"
+          : "external_busy_lease_heartbeat",
+      );
+    }
+
+    const next = session.externalBusyLease;
+    active = next !== null
+      && next.expiresAt > now
+      && next.principalId === input.principalId
+      && next.turnId === input.turnId;
+    expiresAt = active ? next!.expiresAt : null;
+  });
+
+  return { found, active, expiresAt };
+}
+
+function armExternalBusyLeaseTimer(session: SessionState): void {
+  const lease = session.externalBusyLease;
+  if (!lease) {
+    clearExternalBusyLeaseTimer(session.sessionId);
+    return;
+  }
+  clearExternalBusyLeaseTimer(session.sessionId);
+  const entry = {
+    principalId: lease.principalId,
+    turnId: lease.turnId,
+    expiresAt: lease.expiresAt,
+    timer: undefined as unknown as ReturnType<typeof setTimeout>,
+  } satisfies ExternalBusyLeaseTimerEntry;
+  entry.timer = setTimeout(
+    () => expireExternalBusyLease(session.sessionId, entry),
+    Math.max(0, lease.expiresAt - Date.now()),
+  );
+  entry.timer.unref?.();
+  externalBusyLeaseTimers.set(session.sessionId, entry);
+}
+
+async function expireExternalBusyLease(
+  sessionId: string,
+  expected: ExternalBusyLeaseTimerEntry,
+): Promise<void> {
+  try {
+    await sessionManager.runExclusive(sessionId, async function* () {
+      const session = await getOrRestoreSession(sessionId);
+      if (!session) return;
+      const lease = session.externalBusyLease;
+      if (
+        !lease
+        || lease.principalId !== expected.principalId
+        || lease.turnId !== expected.turnId
+        || lease.expiresAt !== expected.expiresAt
+      ) {
+        return;
+      }
+      if (lease.expiresAt > Date.now()) {
+        armExternalBusyLeaseTimer(session);
+        return;
+      }
+      session.externalBusyLease = null;
+      if (externalBusyLeaseTimers.get(sessionId) === expected) {
+        externalBusyLeaseTimers.delete(sessionId);
+      }
+      yield* emitProjectedDocState(session, "external_busy_lease_expired");
+    });
+  } catch {
+    // 会话删除/关闭与到期竞态时无需复活运行态；引擎重启本来也要求全解锁。
+  } finally {
+    if (externalBusyLeaseTimers.get(sessionId) === expected) {
+      externalBusyLeaseTimers.delete(sessionId);
+    }
+  }
+}
+
+function clearExternalBusyLeaseTimer(sessionId: string): void {
+  const entry = externalBusyLeaseTimers.get(sessionId);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  externalBusyLeaseTimers.delete(sessionId);
+}
 
 interface ConfirmTimerEntry {
   expiresAt: string;

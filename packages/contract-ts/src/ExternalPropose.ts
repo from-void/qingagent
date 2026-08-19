@@ -4,6 +4,8 @@ export interface ExternalPropose {
   sessionId: string;
   expectedDocVersion: number;
   clientMutationId?: string;
+  /** 外部回合租约标识；仅与服务端鉴权主体共同匹配时可豁免自身租约。 */
+  turnId?: string;
   /** 结构操作的请求级幂等键；同一 opId 只能对应同一请求体。 */
   opId?: string;
   ops: ExternalProposeOp[];

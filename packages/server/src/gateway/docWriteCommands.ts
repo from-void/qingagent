@@ -52,6 +52,7 @@ import {
   transitionDocState,
   MAX_TITLE_CHARS,
   truncateTitleWithNotice,
+  type SessionState,
 } from "./bridgeCore";
 import { documentDraftRepo, persistMappedAnnotationGroups } from "@qingagent/db";
 import { bindClientTraceId } from "./commandTracing";
@@ -488,6 +489,19 @@ function rememberExternalStructuralOp(
 
 type DocWriteCommand = Extract<Command, { kind: "updateDoc" | "externalPropose" }>;
 
+export function isExternalBusyLeaseHolder(
+  session: SessionState,
+  owner: CommandExecutionContext["externalLeaseOwner"],
+  now = Date.now(),
+): boolean {
+  const lease = session.externalBusyLease;
+  return owner !== undefined
+    && lease !== null
+    && lease.expiresAt > now
+    && lease.principalId === owner.principalId
+    && lease.turnId === owner.turnId;
+}
+
 export async function* handleDocWriteCommand(
   command: DocWriteCommand,
   context: CommandExecutionContext,
@@ -693,7 +707,12 @@ export async function* handleDocWriteCommand(
       const titleOp = command.data.ops.find((op) => op.kind === "setTitle");
       const titleResult = truncateTitleWithNotice(titleOp?.title ?? null);
 
-      if (deriveAgentBusy(session) || deriveActiveOverlay(session) !== null) {
+      const holderOwnsOnlyBusyLease = session.streamId === null
+        && isExternalBusyLeaseHolder(session, context.externalLeaseOwner);
+      if (
+        (deriveAgentBusy(session) && !holderOwnsOnlyBusyLease)
+        || deriveActiveOverlay(session) !== null
+      ) {
         yield docWriteReason(clientMutationId, "agent_busy");
         return;
       }

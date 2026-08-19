@@ -1,6 +1,6 @@
 import type { ModelOverrides } from "./bridgeCore";
 import type { Origin } from "./commandTracing";
-import type { TurnPreemptionReason } from "./sessionActor";
+import type { ExternalLeaseOwner, TurnPreemptionReason } from "./sessionActor";
 
 export interface CommandExecutionContext {
   /** SessionActor 的路由键；无 sessionId 的 review 命令靠它做冷恢复。 */
@@ -13,4 +13,6 @@ export interface CommandExecutionContext {
   commandAbortSignal: AbortSignal | undefined;
   /** Actor 已直接抢占旧轮时的原因；下一队列项据此走确定性清理。 */
   preemptionReason?: TurnPreemptionReason;
+  /** 鉴权入口绑定的外部租约身份；principalId 绝不取自请求体。 */
+  externalLeaseOwner?: ExternalLeaseOwner;
 }

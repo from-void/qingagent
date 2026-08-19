@@ -407,6 +407,7 @@ const externalProposeDataSchema = z
     sessionId: z.string().min(1),
     expectedDocVersion: z.number().int().nonnegative(),
     clientMutationId: z.string().min(1).optional(),
+    turnId: boundedNonEmptyString(MAX_ID_LENGTH).optional(),
     opId: boundedNonEmptyString(MAX_ID_LENGTH).optional(),
     ops: z.array(externalProposeOpSchema).min(1).max(50),
   })

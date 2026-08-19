@@ -78,6 +78,7 @@ export const ATTACH_DATA_ROUTE_TEMPLATES = [
   ["GET", "/api/v1/files/:fileId/:filename"],
   ["GET", "/api/v1/materials/:materialId/text"],
   ["GET", "/api/v1/export/:sessionId"],
+  ["POST", "/api/v1/external/sessions/:id/turn-signal"],
   ["GET", "/api/v1/skills"],
   ["GET", "/api/v1/capabilities"],
   ["GET", "/api/v1/settings/security"],

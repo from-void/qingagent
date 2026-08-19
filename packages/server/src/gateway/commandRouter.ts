@@ -9,7 +9,7 @@ import {
   type Origin,
 } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
-import type { TurnPreemptionReason } from "./sessionActor";
+import type { ExternalLeaseOwner, TurnPreemptionReason } from "./sessionActor";
 import { getSession } from "./sessionRegistry";
 import { handleTurnCommand } from "./turnOrchestration";
 
@@ -22,6 +22,7 @@ export async function* handleCommand(
   routedSessionId?: string,
   commandAbortSignal?: AbortSignal,
   preemptionReason?: TurnPreemptionReason,
+  externalLeaseOwner?: ExternalLeaseOwner,
 ): AsyncGenerator<BridgeFrame> {
   // Actor 的 keyed route 是权威 sessionId。commitReviewGroups 本身不携带 sessionId，
   // /commit 冷恢复必须沿用 REST body 的路由键，不能依赖重启后不存在的 patch 内存索引。
@@ -43,6 +44,7 @@ export async function* handleCommand(
     client,
     commandAbortSignal,
     preemptionReason,
+    externalLeaseOwner,
   };
 
   let failure: { reason: string; failureKind: string } | null = null;

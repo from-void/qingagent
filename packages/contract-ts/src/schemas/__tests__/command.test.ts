@@ -41,6 +41,23 @@ function selectionChip(tableSelection: unknown): unknown {
  * 本身的接受/拒绝与消毒行为,不依赖 server。
  */
 describe("commandSchema", () => {
+  it("externalPropose 保留外部回合 turnId 供持约人豁免", () => {
+    const parsed = commandSchema.safeParse({
+      kind: "externalPropose",
+      data: {
+        sessionId: "session-turn",
+        expectedDocVersion: 0,
+        turnId: "turn-holder",
+        ops: [{ kind: "appendSection", markdown: "新增内容" }],
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.kind === "externalPropose") {
+      expect(parsed.data.data.turnId).toBe("turn-holder");
+    }
+  });
+
   it("externalPropose 接受 setTitle 局部操作，并禁止整稿与任何其它操作混用", () => {
     const base = {
       kind: "externalPropose",

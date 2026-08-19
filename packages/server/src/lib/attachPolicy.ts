@@ -114,6 +114,7 @@ export const SERVER_ROUTE_CATALOG = [
   ["GET", "/api/v1/external/health"],
   ["GET", "/api/v1/external/sessions"],
   ["POST", "/api/v1/external/sessions"],
+  ["POST", "/api/v1/external/sessions/:id/turn-signal"],
   ["GET", "/api/v1/external/sessions/:id/doc"],
   ["PUT", "/api/v1/external/sessions/:id/doc"],
   ["GET", "/api/v1/external/sessions/:id/review"],
@@ -194,6 +195,11 @@ export const ATTACH_ROUTE_POLICY = [
   route("GET", "/api/v1/export/:sessionId", {
     capability: "documentExport",
     params: { sessionId: ID },
+  }),
+  route("POST", "/api/v1/external/sessions/:id/turn-signal", {
+    capability: "docEditing",
+    bodyLimit: 16 * 1024,
+    params: { id: ID },
   }),
   route("GET", "/api/v1/skills"),
   route("GET", "/api/v1/capabilities"),
@@ -321,9 +327,16 @@ export function routeAuthorizationDecision(
       : "deny";
   }
   if (pathname.startsWith("/api/v1/external/")) {
-    return principal.kind === "externalInstance" && catalogContains(method, pathname, true)
-      ? "allow"
-      : "deny";
+    if (principal.kind === "externalInstance") {
+      return catalogContains(method, pathname, true) ? "allow" : "deny";
+    }
+    if (principal.kind === "attachSession") {
+      const policy = findAttachRoutePolicy(method, pathname);
+      return policy && attachSessionHasCapability(principal.session, policy.requiredCapability)
+        ? "allow"
+        : "deny";
+    }
+    return "deny";
   }
   if (principal.kind === "attachSession") {
     const policy = findAttachRoutePolicy(method, pathname);
@@ -364,7 +377,7 @@ export const attachRouteAuthorizationMiddleware: MiddlewareHandler = async (c, n
 
   if (pathname.startsWith("/api/v1/external/")) {
     if (decision !== "allow") {
-      if (principal.kind !== "externalInstance") {
+      if (principal.kind !== "externalInstance" && principal.kind !== "attachSession") {
         return externalError(c, 401, "AUTH_FAILED", "unauthorized");
       }
       return c.json({ error: "forbidden" }, 403);

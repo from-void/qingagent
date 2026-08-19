@@ -1124,6 +1124,11 @@ describe("thread persistence", () => {
     state.doc = pmDocFromText("第一段", "第二段");
     state.docVersion = 3;
     state.modelKnownDocVersion = 3;
+    state.externalBusyLease = {
+      turnId: "turn-runtime-only",
+      principalId: "external:runtime-only",
+      expiresAt: Date.now() + 60_000,
+    };
     addSuggestion(state);
     state.patchVerdicts.set("patch-1", "accepted");
     state.externalStructuralOpDigests.set("external-op-1", "a".repeat(64));
@@ -1161,9 +1166,13 @@ describe("thread persistence", () => {
     expect(threads.get(state.sessionId)?.metadata).not.toHaveProperty(
       "modelKnownDocVersion",
     );
+    expect(threads.get(state.sessionId)?.metadata).not.toHaveProperty(
+      "externalBusyLease",
+    );
     const restored = await loadSessionFromThread(state.sessionId);
 
     expectRestoredStableFields(restored, state);
+    expect(restored?.externalBusyLease).toBeNull();
   });
 
   it("恢复时消费终态墓碑且保留审计降级记账，不复活已结束确认", async () => {

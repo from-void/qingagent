@@ -29,6 +29,7 @@ import type {
   ExternalReviewPatchDetail,
   ExternalReviewPatchSummary,
   ExternalReviewVerdictRequest,
+  ExternalTurnSignalRequest,
   ExternalValidationDiagnostic,
 } from "../../../contract-ts/src/ExternalApi";
 import {
@@ -60,6 +61,7 @@ import {
   handleCommand,
   sessionExists,
   sessionManager,
+  signalExternalBusyLease,
 } from "../gateway/bridgeHandler";
 import { sessions as loadedSessionRegistry } from "../gateway/sessionRegistry";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
@@ -88,6 +90,7 @@ import {
   resolveUploadedFileForRead,
   streamResolvedUploadedFile,
 } from "../lib/uploadServing";
+import { getRequestPrincipal } from "../lib/principal";
 
 export const externalRoutes = new Hono();
 
@@ -102,6 +105,7 @@ const SESSION_SNAPSHOT_CURSOR_START = "start";
 const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
 const MAX_SESSION_SNAPSHOT_CURSORS = 32;
 const MAX_SESSION_SNAPSHOT_ITEMS = 50_000;
+const MAX_EXTERNAL_TURN_ID_LENGTH = 256;
 const externalAssetMaxBytes = resolveUploadMaxBytes();
 const EXTERNAL_ASSET_BODY_OVERHEAD_BYTES = 64 * 1024;
 const externalAssetMaxRequestBytes = Math.max(
@@ -429,6 +433,43 @@ externalRoutes.post("/sessions", async (c) => {
     sessionId,
     seq: maxSeq(frames),
   });
+});
+
+externalRoutes.post("/sessions/:id/turn-signal", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as
+    Partial<Record<keyof ExternalTurnSignalRequest, unknown>> | null;
+  const action = body?.action;
+  const turnId = typeof body?.turnId === "string" ? body.turnId : "";
+  if (
+    (action !== "begin" && action !== "end" && action !== "heartbeat")
+    || turnId.trim().length === 0
+    || turnId.length > MAX_EXTERNAL_TURN_ID_LENGTH
+  ) {
+    return externalError(c, 400, "VALIDATION", "回合信号不合法");
+  }
+  const principalId = externalLeasePrincipalId(c);
+  if (!principalId) return externalError(c, 401, "AUTH_FAILED", "unauthorized");
+
+  try {
+    const result = await signalExternalBusyLease({
+      sessionId,
+      principalId,
+      turnId,
+      action,
+    });
+    if (!result.found) return externalError(c, 404, "SESSION_NOT_FOUND");
+    return c.json({
+      ok: true,
+      active: result.active,
+      expiresAt: result.expiresAt,
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
 });
 
 externalRoutes.get("/sessions/:id/doc", async (c) => {
@@ -1286,6 +1327,7 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
     externalLog("propose", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION", hunks: 0 });
     return externalError(c, 400, "VALIDATION", "提案不合法");
   }
+  const principalId = externalLeasePrincipalId(c);
   let frames: LoggedFrame[];
   try {
     frames = await sessionManager.submit(sessionId, {
@@ -1293,6 +1335,14 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
       origin: "external",
       client,
       modelOverrides: await resolveRequestModelOverrides({}),
+      ...(principalId && parsed.data.data.turnId
+        ? {
+            externalLeaseOwner: {
+              principalId,
+              turnId: parsed.data.data.turnId,
+            },
+          }
+        : {}),
     });
   } catch (error) {
     if (error instanceof SessionActorQueueFullError) {
@@ -1305,6 +1355,17 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
   externalLog("propose", { sessionId, ms: elapsed(startedAt), result: summary.logResult, hunks: summary.hunks });
   return proposalResponse(c, summary);
 });
+
+function externalLeasePrincipalId(c: Context): string | null {
+  const principal = getRequestPrincipal(c);
+  if (principal.kind === "externalInstance") {
+    return `external:${principal.instanceId}`;
+  }
+  if (principal.kind === "attachSession") {
+    return `attach:${principal.session.id}`;
+  }
+  return null;
+}
 
 function parseExternalClient(value: string | undefined): ExternalClient {
   if (value === "claudecode" || value === "codex" || value === "deepseek") return value;

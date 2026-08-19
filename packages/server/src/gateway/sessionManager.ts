@@ -10,6 +10,7 @@ import { InMemoryFrameLog, type FrameLog, type LoggedFrame } from "./frameLog";
 import {
   SessionActor,
   type CommandOrigin,
+  type ExternalLeaseOwner,
   type HandleCommandFn,
   type TurnPreemptionReason,
 } from "./sessionActor";
@@ -40,6 +41,8 @@ export interface SessionManagerOptions {
    * 返回 true 时,新消息抢占必须放行等它自己收口。
    */
   hasProtectedWork?: (sessionId: string, activeCommand?: Command) => boolean;
+  /** Actor 真态之外的会话内运行态（当前为外部触稿租约）。 */
+  hasRuntimeBusy?: (sessionId: string) => boolean;
 }
 
 export interface SessionDeletionStoreRecord {
@@ -64,6 +67,7 @@ export interface SubmitCommandInput {
   client?: string;
   modelOverrides?: ModelOverrides;
   abortSignal?: AbortSignal;
+  externalLeaseOwner?: ExternalLeaseOwner;
 }
 
 export interface QueuedSubmission {
@@ -272,7 +276,8 @@ export class SessionManager {
 
   /** 会话读接口使用 Actor 真态，避免持久化/只读快照把在途命令误报为空闲。 */
   isSessionBusy(sessionId: string): boolean {
-    return this.actors.get(sessionId)?.actor.isBusy ?? false;
+    return (this.actors.get(sessionId)?.actor.isBusy ?? false)
+      || this.options.hasRuntimeBusy?.(sessionId) === true;
   }
 
   listSessionIds(limit = 20): string[] {

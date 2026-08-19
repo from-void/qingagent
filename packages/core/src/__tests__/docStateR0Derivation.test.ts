@@ -249,6 +249,59 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
     });
   });
 
+  it("DC-5b 按可注入时钟派生外部租约，并保持 suspension/confirm 前置解锁", () => {
+    const now = 1_000;
+    const lease = {
+      turnId: "turn-lease",
+      principalId: "external:principal",
+      expiresAt: now + 60_000,
+    };
+    const active = makeState("busy-external-active", (state) => {
+      state.externalBusyLease = lease;
+    });
+    const expired = makeState("busy-external-expired", (state) => {
+      state.externalBusyLease = { ...lease, expiresAt: now };
+    });
+    const suspended = makeState("busy-external-suspended", (state) => {
+      state.externalBusyLease = lease;
+      addToolCall(state, "askUser", running(), "ask-lease");
+      recordToolSuspension(state, "askUser", "ask-lease");
+    });
+    const confirming = makeState("busy-external-confirming", (state) => {
+      state.externalBusyLease = lease;
+      state.pendingConfirms.set("confirm-tool", {
+        confirmId: "confirm-lease",
+        runId: "run-confirm-lease",
+        toolCallId: "confirm-tool",
+        toolName: "executeCommand",
+        commandDigest: "digest",
+        spec: {
+          id: "confirm-lease",
+          kind: "command",
+          title: "确认执行",
+          say: "测试确认",
+          primaryLabel: "执行",
+          secondaryLabel: "取消",
+        },
+        requestedAt: "2026-08-19T00:00:00.000Z",
+        expiresAt: "2026-08-19T00:01:00.000Z",
+        status: "pending",
+      });
+    });
+
+    expect({
+      active: deriveAgentBusy(active, now),
+      expired: deriveAgentBusy(expired, now),
+      suspended: deriveAgentBusy(suspended, now),
+      pendingConfirm: deriveAgentBusy(confirming, now),
+    }).toEqual({
+      active: true,
+      expired: false,
+      suspended: false,
+      pendingConfirm: false,
+    });
+  });
+
   it("ES-1 derives the 4-state editor model with locked aggregation and resume unlock", () => {
     const lockedAskUser = makeState("editor-ask", (s) => {
       seedDoc(s);

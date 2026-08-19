@@ -48,12 +48,19 @@ export function deriveContentState(state: SessionState): ContentDocState {
   return { kind: "empty" };
 }
 
-export function deriveAgentBusy(state: SessionState): boolean {
+export function deriveAgentBusy(
+  state: SessionState,
+  now = Date.now(),
+): boolean {
   if (hasActiveSuspension(state) || state.pendingConfirms.size > 0) {
     return false;
   }
 
-  return state.streamId !== null;
+  return state.streamId !== null
+    || (
+      state.externalBusyLease !== null
+      && state.externalBusyLease.expiresAt > now
+    );
 }
 
 export function deriveActiveOverlay(state: SessionState): ActiveOverlay {

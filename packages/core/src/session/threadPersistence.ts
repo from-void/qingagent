@@ -2033,6 +2033,8 @@ export async function loadSessionFromThread(
     lastContentEditedAt:
       parseValidTimestamp(meta.lastContentEditedAt) ?? frozenUpdatedAt,
     streamId: null,
+    // 外部编辑租约只属于当前进程；服务重启必须立即解锁。
+    externalBusyLease: null,
     runId: restoredSuspensionOwner?.runId ?? null,
     toolCallId: restoredSuspensionOwner?.toolCallId ?? null,
     previousDocState: null,

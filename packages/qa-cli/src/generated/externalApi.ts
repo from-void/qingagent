@@ -67,6 +67,17 @@ export interface ExternalSessionsListResponse {
 export interface ExternalSessionCreateRequest {}
 export interface ExternalSessionCreateResponse { sessionId: string; seq: number | null }
 
+export type ExternalTurnSignalAction = "begin" | "end" | "heartbeat";
+export interface ExternalTurnSignalRequest {
+  action: ExternalTurnSignalAction;
+  turnId: string;
+}
+export interface ExternalTurnSignalResponse {
+  ok: true;
+  active: boolean;
+  expiresAt: number | null;
+}
+
 export interface ExternalDocReadResponse {
   sessionId: string;
   docVersion: number;
@@ -220,6 +231,8 @@ export type ExternalProposeOp =
 export interface ExternalProposalRequest {
   expectedDocVersion: number;
   clientMutationId?: string;
+  /** 外部回合租约标识；持约人提交提案时必须原样携带。 */
+  turnId?: string;
   /** 结构操作的请求级幂等键；同一 opId 只能对应同一请求体。 */
   opId?: string;
   ops: ExternalProposeOp[];

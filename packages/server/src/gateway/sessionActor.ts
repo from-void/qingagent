@@ -7,6 +7,11 @@ export type SessionActorState = "idle" | "running" | "cancelling" | "disposed";
 export type CommandOrigin = "manual" | "agent" | "e2e" | "external";
 export type TurnPreemptionReason = "preemptedByNewMessage" | "globalStop";
 
+export interface ExternalLeaseOwner {
+  principalId: string;
+  turnId: string;
+}
+
 export interface ActorCommand {
   command: Command;
   clientTraceId?: string;
@@ -14,6 +19,7 @@ export interface ActorCommand {
   client?: string;
   modelOverrides?: ModelOverrides;
   abortSignal?: AbortSignal;
+  externalLeaseOwner?: ExternalLeaseOwner;
 }
 
 export type HandleCommandFn = (
@@ -25,6 +31,7 @@ export type HandleCommandFn = (
   routedSessionId?: string,
   abortSignal?: AbortSignal,
   preemptionReason?: TurnPreemptionReason,
+  externalLeaseOwner?: ExternalLeaseOwner,
 ) => AsyncGenerator<BridgeFrame>;
 
 export class SessionActorCommandError extends Error {
@@ -246,6 +253,7 @@ export class SessionActor {
               this.options.sessionId,
               item.input!.abortSignal,
               item.preemptionReason,
+              item.input!.externalLeaseOwner,
             );
         for await (const frame of frames) {
           // dispose 后继续消费 generator 到 done，但绝不 append。只调用一次 return()

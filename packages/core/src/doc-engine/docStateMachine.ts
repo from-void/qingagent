@@ -52,15 +52,18 @@ export function deriveAgentBusy(
   state: SessionState,
   now = Date.now(),
 ): boolean {
+  // external lease 是跨进程写所有权，优先级高于原生挂起态的 UI 豁免。
+  if (
+    state.externalBusyLease !== null
+    && state.externalBusyLease.expiresAt > now
+  ) {
+    return true;
+  }
   if (hasActiveSuspension(state) || state.pendingConfirms.size > 0) {
     return false;
   }
 
-  return state.streamId !== null
-    || (
-      state.externalBusyLease !== null
-      && state.externalBusyLease.expiresAt > now
-    );
+  return state.streamId !== null;
 }
 
 export function deriveActiveOverlay(state: SessionState): ActiveOverlay {

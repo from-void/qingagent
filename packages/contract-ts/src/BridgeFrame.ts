@@ -43,6 +43,13 @@ export type BridgeFrame =
   | { kind: "lexiconEntriesListed"; data: { resourceId: string; entries: LexiconEntrySummary[] } }
   | { kind: "restoreReset"; data: { epoch: number; snapshotSeq: number } }
   | { kind: "sessionRestoreCompleted"; data: { sessionId: string } }
+  | {
+      kind: "turn-rejected";
+      data: {
+        reason: "external_lease_held";
+        message: string;
+      };
+    }
   | { kind: "sessionMeta"; data: { title: string; sessionId: string; notice?: { kind: "title_truncated"; maxChars: number } } }
   | { kind: "chatMessageAdded"; data: { message: ChatMessage; appendSeq?: number } }
   | { kind: "chatMessageAppended"; data: { messageId: string; seq: number; part: MessagePart } }
@@ -79,7 +86,7 @@ export type BridgeFrame =
           /** 本次写入是否真实创建了新文档版本。 */
           createdNewVersion?: boolean;
         }
-      | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error"; diagnostic?: WriteDraftFailureDiagnostic; validationMessage?: string }
+      | { ok: false; clientMutationId: string; reason: "agent_busy" | "lock_lost" | "not_editable" | "not_found" | "validation_error"; diagnostic?: WriteDraftFailureDiagnostic; validationMessage?: string }
       | { ok: false; clientMutationId: string; conflict: { expectedDocumentSnapshot: number; actualDocumentSnapshot: number } } }
   | {
       kind: "docStateChanged";

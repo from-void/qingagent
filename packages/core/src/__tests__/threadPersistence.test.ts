@@ -1128,6 +1128,8 @@ describe("thread persistence", () => {
       turnId: "turn-runtime-only",
       principalId: "external:runtime-only",
       expiresAt: Date.now() + 60_000,
+      startedFromEmpty: true,
+      directCommitCount: 2,
     };
     addSuggestion(state);
     state.patchVerdicts.set("patch-1", "accepted");

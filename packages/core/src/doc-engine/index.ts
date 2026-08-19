@@ -4,6 +4,7 @@ export {
   clonePmDoc,
   currentPmDoc,
   ensureDraftCandidateDoc,
+  hasNonEmptyCanonicalBase,
   replaceDraftCandidateDoc,
 } from "./draftScratch.js";
 

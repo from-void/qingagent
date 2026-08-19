@@ -21,6 +21,7 @@ import {
 } from "@qingagent/db";
 import type {
   ExternalAnnotation,
+  ExternalAnnotationIgnoreRequest,
   ExternalBridgeFrame,
   ExternalDocReplaceRequest,
   ExternalErrorCode,
@@ -67,7 +68,12 @@ import { sessions as loadedSessionRegistry } from "../gateway/sessionRegistry";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
-import { SessionActorQueueFullError } from "../gateway/sessionActor";
+import {
+  SessionActorNativeBusyError,
+  SessionActorQueueFullError,
+  type ExternalLeaseOwner,
+} from "../gateway/sessionActor";
+import { isExternalBusyLeaseHolder } from "../gateway/docWriteCommands";
 import { BoundedSsePump } from "../lib/boundedSsePump";
 import { allowOversizedSseFrame } from "../lib/terminalDocumentFrame";
 import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
@@ -106,6 +112,7 @@ const SESSION_SNAPSHOT_TTL_MS = 5 * 60_000;
 const MAX_SESSION_SNAPSHOT_CURSORS = 32;
 const MAX_SESSION_SNAPSHOT_ITEMS = 50_000;
 const MAX_EXTERNAL_TURN_ID_LENGTH = 256;
+const EXTERNAL_TURN_SIGNAL_DEADLINE_MS = 10_000;
 const externalAssetMaxBytes = resolveUploadMaxBytes();
 const EXTERNAL_ASSET_BODY_OVERHEAD_BYTES = 64 * 1024;
 const externalAssetMaxRequestBytes = Math.max(
@@ -457,14 +464,29 @@ externalRoutes.post("/sessions/:id/turn-signal", async (c) => {
       principalId,
       turnId,
       action,
+      ...(action === "begin"
+        ? {
+            deadline: Date.now() + EXTERNAL_TURN_SIGNAL_DEADLINE_MS,
+            signal: c.req.raw.signal,
+          }
+        : {}),
     });
+    if (result.cancelled) {
+      return externalError(c, 409, "BUSY_NATIVE", "回合信号已过期，未授予编辑锁");
+    }
     if (!result.found) return externalError(c, 404, "SESSION_NOT_FOUND");
+    if (result.errorCode) {
+      return externalError(c, 409, result.errorCode);
+    }
     return c.json({
       ok: true,
       active: result.active,
       expiresAt: result.expiresAt,
     });
   } catch (error) {
+    if (error instanceof SessionActorNativeBusyError) {
+      return externalError(c, 409, "BUSY_NATIVE");
+    }
     if (error instanceof SessionActorQueueFullError) {
       return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
     }
@@ -790,6 +812,7 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
     !isDocumentVersion(body.expectedDocVersion) ||
     typeof body.patchId !== "string" ||
     body.patchId.length === 0 ||
+    !isOptionalExternalTurnId(body.turnId) ||
     (body.verdict !== "accepted" && body.verdict !== "rejected")
   ) {
     externalLog("review_verdict", {
@@ -803,15 +826,18 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
     expectedDocVersion,
     patchId,
     verdict,
+    turnId,
   } = body as ExternalReviewVerdictRequest;
   const command: Command = verdict === "accepted"
     ? { kind: "acceptPatch", data: { id: patchId } }
     : { kind: "rejectPatch", data: { id: patchId } };
   const client = parseExternalClient(c.req.header("x-qa-client"));
   const modelOverrides = await resolveRequestModelOverrides({});
+  const leaseOwner = externalLeaseOwnerForTurn(c, turnId);
   type AtomicResult =
     | { kind: "session_not_found" }
     | { kind: "agent_busy" }
+    | { kind: "lock_lost" }
     | { kind: "version_conflict"; actual: number }
     | { kind: "no_pending_review" }
     | { kind: "patch_not_found" }
@@ -832,8 +858,9 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
         atomic.result = { kind: "session_not_found" };
         return;
       }
-      if (deriveAgentBusy(session)) {
-        atomic.result = { kind: "agent_busy" };
+      const leaseConflict = externalReviewLeaseConflict(session, leaseOwner);
+      if (leaseConflict) {
+        atomic.result = { kind: leaseConflict };
         return;
       }
       if (session.docVersion !== expectedDocVersion) {
@@ -856,6 +883,9 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
         modelOverrides,
         client,
         sessionId,
+        undefined,
+        undefined,
+        leaseOwner,
       );
       const updated = session.suggestions.get(patchId);
       atomic.result = {
@@ -877,6 +907,9 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
   }
   if (atomicResult.kind === "agent_busy") {
     return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (atomicResult.kind === "lock_lost") {
+    return externalError(c, 409, "LOCK_LOST");
   }
   if (atomicResult.kind === "version_conflict") {
     return reviewVersionConflict(c, expectedDocVersion, atomicResult.actual, maxSeq(frames));
@@ -932,6 +965,7 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
   if (
     !body ||
     !isDocumentVersion(body.expectedDocVersion) ||
+    !isOptionalExternalTurnId(body.turnId) ||
     (body.action !== "commit" &&
       body.action !== "accept_all" &&
       body.action !== "reject_all")
@@ -943,42 +977,78 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
     });
     return externalError(c, 400, "VALIDATION", "expectedDocVersion 或 action 不合法");
   }
-  const session = await getOrRestoreSession(sessionId);
-  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
-  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
-  }
-  if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
-    return externalError(
-      c,
-      409,
-      "VALIDATION",
-      "当前没有待审查修改",
-      "用 `qa review list -s <id>` 对账；如已离开 pendingReview，直接继续后续工作",
-    );
-  }
-
-  const suggestions = [...session.suggestions.values()].map((record) => record.suggestion);
-  const decisions = reviewDecisions(suggestions, body.action);
-  const outcome = reviewOutcome(suggestions, decisions.rejectedBatchIds);
-  const command: Command = {
-    kind: "commitReviewGroups",
-    data: {
-      acceptReviewBatchIds: decisions.acceptedBatchIds,
-      rejectReviewBatchIds: decisions.rejectedBatchIds,
-      keepPendingReviewBatchIds: [],
-    },
-  };
+  const request = body as ExternalReviewCommitRequest;
   const modelOverrides = await resolveRequestModelOverrides({});
   const client = parseExternalClient(c.req.header("x-qa-client"));
+  const leaseOwner = externalLeaseOwnerForTurn(c, request.turnId);
+  type AtomicResult =
+    | { kind: "session_not_found" }
+    | { kind: "agent_busy" }
+    | { kind: "lock_lost" }
+    | { kind: "version_conflict"; actual: number }
+    | { kind: "no_pending_review" }
+    | { kind: "incomplete" }
+    | {
+        kind: "reviewed";
+        docVersion: number;
+        remainingCount: number;
+        outcome: ReviewOutcome;
+      };
+  const atomic = { result: { kind: "session_not_found" } as AtomicResult };
   let frames: LoggedFrame[];
   try {
-    frames = await sessionManager.submit(sessionId, {
-      command,
-      origin: "external",
-      client,
-      modelOverrides,
+    frames = await sessionManager.runExclusive(sessionId, async function* () {
+      const session = await getOrRestoreSession(sessionId);
+      if (!session) return;
+      const leaseConflict = externalReviewLeaseConflict(session, leaseOwner);
+      if (leaseConflict) {
+        atomic.result = { kind: leaseConflict };
+        return;
+      }
+      if (session.docVersion !== request.expectedDocVersion) {
+        atomic.result = { kind: "version_conflict", actual: session.docVersion };
+        return;
+      }
+      if (
+        deriveContentState(session).kind !== "pendingReview"
+        || session.suggestions.size === 0
+      ) {
+        atomic.result = { kind: "no_pending_review" };
+        return;
+      }
+      const suggestions = [...session.suggestions.values()]
+        .map((record) => record.suggestion);
+      const decisions = reviewDecisions(suggestions, request.action);
+      const outcome = reviewOutcome(suggestions, decisions.rejectedBatchIds);
+      const command: Command = {
+        kind: "commitReviewGroups",
+        data: {
+          acceptReviewBatchIds: decisions.acceptedBatchIds,
+          rejectReviewBatchIds: decisions.rejectedBatchIds,
+          keepPendingReviewBatchIds: [],
+        },
+      };
+      yield* handleCommand(
+        command,
+        undefined,
+        "external",
+        modelOverrides,
+        client,
+        sessionId,
+        undefined,
+        undefined,
+        leaseOwner,
+      );
+      if (session.suggestions.size > 0) {
+        atomic.result = { kind: "incomplete" };
+        return;
+      }
+      atomic.result = {
+        kind: "reviewed",
+        docVersion: session.docVersion,
+        remainingCount: session.suggestions.size,
+        outcome,
+      };
     });
   } catch (error) {
     if (error instanceof SessionActorQueueFullError) {
@@ -987,10 +1057,34 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
     throw error;
   }
   const seq = maxSeq(frames);
-  if (session.docVersion !== body.expectedDocVersion && !hasFrame(frames, "docCommitted")) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, seq);
+  const atomicResult = atomic.result;
+  if (atomicResult.kind === "session_not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
   }
-  if (session.suggestions.size > 0) {
+  if (atomicResult.kind === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (atomicResult.kind === "lock_lost") {
+    return externalError(c, 409, "LOCK_LOST");
+  }
+  if (atomicResult.kind === "version_conflict") {
+    return reviewVersionConflict(
+      c,
+      request.expectedDocVersion,
+      atomicResult.actual,
+      seq,
+    );
+  }
+  if (atomicResult.kind === "no_pending_review") {
+    return externalError(
+      c,
+      409,
+      "VALIDATION",
+      "当前没有待审查修改",
+      "用 `qa review list -s <id>` 对账；如已离开 pendingReview，直接继续后续工作",
+    );
+  }
+  if (atomicResult.kind === "incomplete") {
     return externalError(
       c,
       409,
@@ -1007,17 +1101,17 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
     sessionId,
     ms: elapsed(startedAt),
     result: "reviewed",
-    accepted: outcome.acceptedCount,
-    rejected: outcome.rejectedCount,
+    accepted: atomicResult.outcome.acceptedCount,
+    rejected: atomicResult.outcome.rejectedCount,
   });
   return c.json({
     status: "reviewed" as const,
-    docVersion: session.docVersion,
-    acceptedCount: outcome.acceptedCount,
-    rejectedCount: outcome.rejectedCount,
-    remainingCount: session.suggestions.size,
+    docVersion: atomicResult.docVersion,
+    acceptedCount: atomicResult.outcome.acceptedCount,
+    rejectedCount: atomicResult.outcome.rejectedCount,
+    remainingCount: atomicResult.remainingCount,
     outcomeQueued,
-    outcome,
+    outcome: atomicResult.outcome,
     seq,
   });
 });
@@ -1025,13 +1119,12 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
 externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
   const startedAt = Date.now();
   const sessionId = c.req.param("id");
-  const body = await c.req.json().catch(() => null) as {
-    expectedDocVersion?: unknown;
-    annotationIds?: unknown;
-  } | null;
+  const body = await c.req.json().catch(() => null) as
+    Partial<ExternalAnnotationIgnoreRequest> | null;
   if (
     !body ||
     !isDocumentVersion(body.expectedDocVersion) ||
+    !isOptionalExternalTurnId(body.turnId) ||
     !Array.isArray(body.annotationIds) ||
     body.annotationIds.length === 0 ||
     body.annotationIds.some((id) => typeof id !== "string" || id.length === 0)
@@ -1043,23 +1136,8 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
     });
     return externalError(c, 400, "VALIDATION", "expectedDocVersion 或 annotationIds 不合法");
   }
-  const session = await getOrRestoreSession(sessionId);
-  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
-  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
-  }
+  const request = body as ExternalAnnotationIgnoreRequest;
   const annotationIds = [...new Set(body.annotationIds as string[])];
-  const existingIds = new Set(session.annotationGroups.map((group) => group.id));
-  if (annotationIds.some((id) => !existingIds.has(id))) {
-    return externalError(
-      c,
-      404,
-      "NOT_FOUND",
-      "批注不存在",
-      "用 `qa review list -s <id>` 重读批注列表",
-    );
-  }
   const parsed = commandSchema.safeParse({
     kind: "ignoreAnnotationGroups",
     data: {
@@ -1071,13 +1149,55 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
   if (!parsed.success || parsed.data.kind !== "ignoreAnnotationGroups") {
     return externalError(c, 400, "VALIDATION", "批注忽略请求不合法");
   }
+  const client = parseExternalClient(c.req.header("x-qa-client"));
+  const modelOverrides = await resolveRequestModelOverrides({});
+  const leaseOwner = externalLeaseOwnerForTurn(c, request.turnId);
+  type AtomicResult =
+    | { kind: "session_not_found" }
+    | { kind: "agent_busy" }
+    | { kind: "lock_lost" }
+    | { kind: "version_conflict"; actual: number }
+    | { kind: "annotation_not_found" }
+    | { kind: "ignored"; remainingAnnotationCount: number };
+  const atomic = { result: { kind: "session_not_found" } as AtomicResult };
   let frames: LoggedFrame[];
   try {
-    frames = await sessionManager.submit(sessionId, {
-      command: parsed.data,
-      origin: "external",
-      client: parseExternalClient(c.req.header("x-qa-client")),
-      modelOverrides: await resolveRequestModelOverrides({}),
+    frames = await sessionManager.runExclusive(sessionId, async function* () {
+      const session = await getOrRestoreSession(sessionId);
+      if (!session) return;
+      const leaseConflict = externalReviewLeaseConflict(session, leaseOwner);
+      if (leaseConflict) {
+        atomic.result = { kind: leaseConflict };
+        return;
+      }
+      if (session.docVersion !== request.expectedDocVersion) {
+        atomic.result = { kind: "version_conflict", actual: session.docVersion };
+        return;
+      }
+      const existingIds = new Set(
+        session.annotationGroups.map((group) => group.id),
+      );
+      if (annotationIds.some((id) => !existingIds.has(id))) {
+        atomic.result = { kind: "annotation_not_found" };
+        return;
+      }
+      yield* handleCommand(
+        parsed.data,
+        undefined,
+        "external",
+        modelOverrides,
+        client,
+        sessionId,
+        undefined,
+        undefined,
+        leaseOwner,
+      );
+      atomic.result = {
+        kind: "ignored",
+        remainingAnnotationCount: session.annotationGroups.filter(
+          (group) => group.status === "reviewing",
+        ).length,
+      };
     });
   } catch (error) {
     if (error instanceof SessionActorQueueFullError) {
@@ -1085,10 +1205,34 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
     }
     throw error;
   }
-  if (session.docVersion !== body.expectedDocVersion) {
-    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
-  }
   const seq = maxSeq(frames);
+  const atomicResult = atomic.result;
+  if (atomicResult.kind === "session_not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  if (atomicResult.kind === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (atomicResult.kind === "lock_lost") {
+    return externalError(c, 409, "LOCK_LOST");
+  }
+  if (atomicResult.kind === "version_conflict") {
+    return reviewVersionConflict(
+      c,
+      request.expectedDocVersion,
+      atomicResult.actual,
+      seq,
+    );
+  }
+  if (atomicResult.kind === "annotation_not_found") {
+    return externalError(
+      c,
+      404,
+      "NOT_FOUND",
+      "批注不存在",
+      "用 `qa review list -s <id>` 重读批注列表",
+    );
+  }
   externalLog("annotation_ignore", {
     sessionId,
     ms: elapsed(startedAt),
@@ -1098,9 +1242,7 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
   return c.json({
     status: "ignored" as const,
     annotationIds,
-    remainingAnnotationCount: session.annotationGroups.filter(
-      (group) => group.status === "reviewing",
-    ).length,
+    remainingAnnotationCount: atomicResult.remainingAnnotationCount,
     seq,
   });
 });
@@ -1365,6 +1507,38 @@ function externalLeasePrincipalId(c: Context): string | null {
     return `attach:${principal.session.id}`;
   }
   return null;
+}
+
+function isOptionalExternalTurnId(value: unknown): value is string | undefined {
+  return value === undefined || (
+    typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= MAX_EXTERNAL_TURN_ID_LENGTH
+  );
+}
+
+function externalLeaseOwnerForTurn(
+  c: Context,
+  turnId: string | undefined,
+): ExternalLeaseOwner | undefined {
+  if (!turnId) return undefined;
+  const principalId = externalLeasePrincipalId(c);
+  return principalId ? { principalId, turnId } : undefined;
+}
+
+function externalReviewLeaseConflict(
+  session: SessionState,
+  owner: ExternalLeaseOwner | undefined,
+): "agent_busy" | "lock_lost" | null {
+  const holderOwnsLease = isExternalBusyLeaseHolder(session, owner);
+  if (owner && !holderOwnsLease) return "lock_lost";
+  const holderOwnsOnlyBusyLease = session.streamId === null && holderOwnsLease;
+  return (
+    (deriveAgentBusy(session) && !holderOwnsOnlyBusyLease)
+    || deriveActiveOverlay(session) !== null
+  )
+    ? "agent_busy"
+    : null;
 }
 
 function parseExternalClient(value: string | undefined): ExternalClient {
@@ -1723,6 +1897,7 @@ function proposalSummary(entries: LoggedFrame[], session: SessionState | null = 
       };
     }
     if (write.data.reason === "agent_busy") return errorSummary(409, "AGENT_BUSY", undefined, seq);
+    if (write.data.reason === "lock_lost") return errorSummary(409, "LOCK_LOST", undefined, seq);
     if (write.data.reason === "not_editable") return errorSummary(409, "REVIEW_PENDING", undefined, seq);
     if (write.data.reason === "not_found") return errorSummary(404, "SESSION_NOT_FOUND", undefined, seq);
     return errorSummary(
@@ -1789,6 +1964,7 @@ function withSeq<T extends Record<string, unknown>>(body: T, seq: number | null)
 
 const EXTERNAL_FRAME_KIND_ALLOWLIST = {
   restoreReset: true,
+  "turn-rejected": true,
   sessionMeta: true,
   chatMessageAdded: true,
   chatMessageAppended: true,

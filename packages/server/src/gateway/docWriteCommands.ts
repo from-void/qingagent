@@ -54,7 +54,11 @@ import {
   truncateTitleWithNotice,
   type SessionState,
 } from "./bridgeCore";
-import { documentDraftRepo, persistMappedAnnotationGroups } from "@qingagent/db";
+import {
+  documentDraftRepo,
+  findOpByIdempotencyKey,
+  persistMappedAnnotationGroups,
+} from "@qingagent/db";
 import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { USER_VERSION_WINDOW_MS } from "./docWriteConfig";
@@ -62,7 +66,7 @@ import { getOrRestoreSession } from "./sessionLifecycle";
 
 function docWriteReason(
   clientMutationId: string,
-  reason: "agent_busy" | "not_editable" | "not_found" | "validation_error",
+  reason: "agent_busy" | "lock_lost" | "not_editable" | "not_found" | "validation_error",
   diagnostic?: WriteDraftFailureDiagnostic,
   validationMessage?: string,
 ): BridgeFrame {
@@ -701,14 +705,20 @@ export async function* handleDocWriteCommand(
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
       const structuralOpIdentity = externalStructuralOpIdentity(command.data);
       const structuralOpSource = structuralOpIdentity?.source ?? null;
-      const firstOp = command.data.ops[0];
-      const fullDraftOp = firstOp?.kind === "fullDraft" ? firstOp : null;
-      const qingmlDraftOp = firstOp?.kind === "qingmlDraft" ? firstOp : null;
+      const fullDraftOp = command.data.ops.find((op) => op.kind === "fullDraft") ?? null;
+      const qingmlDraftOp = command.data.ops.find((op) => op.kind === "qingmlDraft") ?? null;
       const titleOp = command.data.ops.find((op) => op.kind === "setTitle");
       const titleResult = truncateTitleWithNotice(titleOp?.title ?? null);
 
-      const holderOwnsOnlyBusyLease = session.streamId === null
-        && isExternalBusyLeaseHolder(session, context.externalLeaseOwner);
+      const holderOwnsLease = isExternalBusyLeaseHolder(
+        session,
+        context.externalLeaseOwner,
+      );
+      if (context.externalLeaseOwner && !holderOwnsLease) {
+        yield docWriteReason(clientMutationId, "lock_lost");
+        return;
+      }
+      const holderOwnsOnlyBusyLease = session.streamId === null && holderOwnsLease;
       if (
         (deriveAgentBusy(session) && !holderOwnsOnlyBusyLease)
         || deriveActiveOverlay(session) !== null
@@ -717,7 +727,11 @@ export async function* handleDocWriteCommand(
         return;
       }
       const contentState = deriveContentState(session);
-      if (structuralOpIdentity) {
+      const directCommitLease = holderOwnsLease
+        && session.externalBusyLease?.startedFromEmpty === true
+          ? session.externalBusyLease
+          : null;
+      if (structuralOpIdentity && !directCommitLease) {
         const recordedDigest = session.externalStructuralOpDigests.get(
           structuralOpIdentity.opId,
         );
@@ -740,7 +754,7 @@ export async function* handleDocWriteCommand(
           return;
         }
       }
-      if (contentState.kind === "pendingReview") {
+      if (contentState.kind === "pendingReview" && !directCommitLease) {
         if (structuralOpIdentity) {
           const pending = await documentDraftRepo.load(session.docId).catch(() => null);
           if (pending?.sourceToolCallId === structuralOpSource && session.suggestions.size > 0) {
@@ -789,6 +803,26 @@ export async function* handleDocWriteCommand(
         }
         yield docWriteReason(clientMutationId, "not_editable");
         return;
+      }
+      if (directCommitLease) {
+        const replay = await findOpByIdempotencyKey({
+          docId: session.docId ?? session.sessionId,
+          clientMutationId,
+        });
+        if (replay) {
+          // 直落幂等只认 clientMutationId；不重做内存 op、不记 digest、也不消耗段内次数。
+          yield {
+            kind: "docWriteResult",
+            data: {
+              ok: true,
+              clientMutationId,
+              docVersion: session.docVersion,
+              contentHash: getPmContentHash(currentPmDoc(session)),
+              createdNewVersion: false,
+            },
+          };
+          return;
+        }
       }
       if (session.docVersion !== command.data.expectedDocVersion) {
         yield {
@@ -853,17 +887,64 @@ export async function* handleDocWriteCommand(
         };
         return;
       }
-      if (contentState.kind === "empty") {
-        if ((!fullDraftOp && !qingmlDraft) || command.data.ops.length !== 1) {
+      if (directCommitLease || contentState.kind === "empty") {
+        const legacyEmptyWrite = directCommitLease === null;
+        if (
+          legacyEmptyWrite
+          && ((!fullDraftOp && !qingmlDraft) || command.data.ops.length !== 1)
+        ) {
           yield docWriteReason(clientMutationId, "validation_error");
           return;
         }
-        const submittedDoc = qingmlDraft
-          ? qingmlDraft.doc
-          : normalizePmDoc(markdownToPm(fullDraftOp!.markdown));
+        if (
+          (fullDraftOp || qingmlDraft)
+          && contentOps.length !== 1
+        ) {
+          yield docWriteReason(clientMutationId, "validation_error");
+          return;
+        }
+        if (directCommitLease?.directCommitCount !== undefined
+          && directCommitLease.directCommitCount >= 3) {
+          yield docWriteReason(
+            clientMutationId,
+            "validation_error",
+            undefined,
+            "空白回合最多直落 3 次，请在下一回合继续写入",
+          );
+          return;
+        }
+        let submittedDoc: PmDoc;
+        if (qingmlDraft) {
+          submittedDoc = qingmlDraft.doc;
+        } else if (fullDraftOp) {
+          submittedDoc = normalizePmDoc(markdownToPm(fullDraftOp.markdown));
+        } else {
+          const applied = await applyExternalProposalOps(
+            clonePmDoc(currentPmDoc(session)),
+            contentOps,
+          );
+          if (!applied.ok) {
+            yield docWriteReason(
+              clientMutationId,
+              "validation_error",
+              undefined,
+              applied.error,
+            );
+            return;
+          }
+          submittedDoc = applied.doc;
+        }
         const submittedTitle = qingmlDraft?.title ?? null;
         const previousDocVersion = session.docVersion;
-        const result = await commitDocumentOp({
+        const previousDoc = currentPmDoc(session);
+        type PendingAnnotationMapping = {
+          mapped: ReturnType<typeof mapAnnotationGroupsThroughSteps>;
+          replacedOrigins: string[];
+        };
+        const transactionAnnotationMapping = {
+          current: null as PendingAnnotationMapping | null,
+        };
+        const commitInput = {
           docId: session.docId ?? session.sessionId,
           threadId: session.threadId ?? session.sessionId,
           resourceId: session.resourceId,
@@ -871,14 +952,50 @@ export async function* handleDocWriteCommand(
           clientMutationId,
           opKind: "replace_doc",
           actorType: "agent",
-          createIfMissing: {
-            title: submittedTitle ?? session.title,
-            docState: "editing",
-            lastSyncedVersion: 0,
-          },
-          summary: "外部工具首写文档",
+          ...(!hasCanonicalDoc(session)
+            ? {
+                createIfMissing: {
+                  title: submittedTitle ?? titleResult.title ?? session.title,
+                  docState: "editing",
+                  lastSyncedVersion: 0,
+                },
+              }
+            : {}),
+          summary: directCommitLease
+            ? "外部空白回合直落文档"
+            : "外部工具首写文档",
           apply: () => ({ nextDoc: submittedDoc }),
-        });
+        } as const;
+        const commitOptions: Parameters<typeof commitDocumentOp>[1] =
+          session.annotationGroups.length > 0
+          ? {
+              transactionalEffect: async ({
+                client: transactionClient,
+                result: committed,
+              }) => {
+                if (committed.docVersion < previousDocVersion) return;
+                const replacedOrigins = [
+                  ...new Set(session.annotationGroups.map((group) => group.origin)),
+                ];
+                const mapped = mapAnnotationGroupsThroughSteps(
+                  session.annotationGroups,
+                  buildAnnotationMappingSteps(previousDoc, committed.doc),
+                  committed.doc,
+                );
+                await persistMappedAnnotationGroups(
+                  session.docId,
+                  mapped.groups,
+                  mapped.survivingAnchorIndexes,
+                  transactionClient,
+                );
+                transactionAnnotationMapping.current = { mapped, replacedOrigins };
+              },
+            }
+          : undefined;
+        const result = await commitDocumentOp(
+          commitInput,
+          ...(commitOptions ? [commitOptions] as const : []),
+        );
         if (result.status === "conflict") {
           yield {
             kind: "docWriteResult",
@@ -898,34 +1015,74 @@ export async function* handleDocWriteCommand(
           return;
         }
         advanceLastContentEditedAt(session, result, previousDocVersion);
-        session.doc = result.doc;
-        session.docVersion = result.docVersion;
-        session._directionChangeAskedSinceLastWrite = false;
-        transitionDocState(session, deriveContentState(session), "user_doc_write", { mode: "normalize" });
-        const nextTitle = session.titlePinned
-          ? null
-          : submittedTitle ?? deriveTitleFromDoc(session.doc);
-        if (nextTitle && (nextTitle !== session.title || qingmlDraft?.titleTruncated)) {
+        if (result.docVersion >= session.docVersion) {
+          session.doc = result.doc;
+          session.docVersion = result.docVersion;
+          if (transactionAnnotationMapping.current) {
+            session.annotationGroups = transactionAnnotationMapping.current.mapped.groups;
+          }
+          await invalidateDraftStateAfterCanonicalWrite(session);
+          session._directionChangeAskedSinceLastWrite = false;
+          transitionDocState(session, deriveContentState(session), "user_doc_write", {
+            mode: "normalize",
+          });
+        }
+        let nextTitle: string | null = null;
+        let titleTruncated = false;
+        if (titleOp) {
+          nextTitle = titleResult.title;
+          titleTruncated = titleResult.truncated;
+          session.titlePinned = true;
+        } else if (!session.titlePinned) {
+          nextTitle = submittedTitle ?? deriveTitleFromDoc(session.doc);
+          titleTruncated = qingmlDraft?.titleTruncated === true;
+        }
+        if (nextTitle && (nextTitle !== session.title || titleTruncated)) {
           session.title = nextTitle;
           yield {
             kind: "sessionMeta",
             data: {
               sessionId: session.sessionId,
               title: session.title,
-              ...(qingmlDraft?.titleTruncated
+              ...(titleTruncated
                 ? { notice: { kind: "title_truncated" as const, maxChars: MAX_TITLE_CHARS } }
                 : {}),
             },
           };
         }
+        const activeLease = session.externalBusyLease;
+        if (
+          result.createdNewVersion
+          && activeLease
+          && context.externalLeaseOwner
+          && activeLease.principalId === context.externalLeaseOwner.principalId
+          && activeLease.turnId === context.externalLeaseOwner.turnId
+        ) {
+          activeLease.directCommitCount += 1;
+        }
         await persistSessionMetadata(session);
         yield* emitProjectedDocState(session, qingmlDraft ? "external_qingml_draft" : "external_full_draft");
+        if (transactionAnnotationMapping.current) {
+          yield {
+            kind: "annotationGroupsReady",
+            data: {
+              groups: transactionAnnotationMapping.current.mapped.groups,
+              replacedOrigins: transactionAnnotationMapping.current.replacedOrigins,
+              ...(transactionAnnotationMapping.current.mapped.invalidatedAnchorCount > 0
+                ? {
+                    invalidatedAnchorCount:
+                      transactionAnnotationMapping.current.mapped.invalidatedAnchorCount,
+                  }
+                : {}),
+            },
+          };
+        }
         yield {
           kind: "docWriteResult",
           data: {
             ok: true,
             clientMutationId,
-            docVersion: session.docVersion,
+            docVersion: Math.max(result.docVersion, session.docVersion),
             contentHash: getPmContentHash(currentPmDoc(session)),
             createdNewVersion: result.createdNewVersion,
           },

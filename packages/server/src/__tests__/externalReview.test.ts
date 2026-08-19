@@ -166,6 +166,93 @@ describe("external review", () => {
     ).toBe(true);
   });
 
+  it("review 三路由在租约期仅放行匹配 turnId，无 turnId 被拦且异主返回 LOCK_LOST", async () => {
+    const { sessionId, patchIds } = await createPendingReview();
+    const patchId = patchIds[0]!;
+    expect((await signal(sessionId, "begin", "turn-review")).status).toBe(200);
+    const session = await getOrRestoreSession(sessionId);
+    session!.annotationGroups = [{
+      id: "annotation-holder",
+      summary: "持约批注",
+      note: "仅用于验证 holder 路由",
+      origin: "source-check",
+      suggestion: "忽略",
+      severity: "info",
+      status: "reviewing",
+      anchors: [],
+    }];
+    const routes = [
+      {
+        path: `/sessions/${sessionId}/review/verdicts`,
+        body: { expectedDocVersion: 1, patchId, verdict: "accepted" },
+      },
+      {
+        path: `/sessions/${sessionId}/review/commit`,
+        body: { expectedDocVersion: 1, action: "commit" },
+      },
+      {
+        path: `/sessions/${sessionId}/review/annotations/ignore`,
+        body: {
+          expectedDocVersion: 1,
+          annotationIds: ["annotation-holder"],
+        },
+      },
+    ];
+    for (const route of routes) {
+      const noTurn = await request(route.path, {
+        method: "POST",
+        body: JSON.stringify(route.body),
+      });
+      expect(noTurn.status).toBe(409);
+      expect(await noTurn.json()).toMatchObject({ code: "AGENT_BUSY" });
+
+      const wrongTurn = await request(route.path, {
+        method: "POST",
+        body: JSON.stringify({ ...route.body, turnId: "turn-other" }),
+      });
+      expect(wrongTurn.status).toBe(409);
+      expect(await wrongTurn.json()).toMatchObject({ code: "LOCK_LOST" });
+    }
+
+    const marked = await request(`/sessions/${sessionId}/review/verdicts`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: 1,
+        patchId,
+        verdict: "accepted",
+        turnId: "turn-review",
+      }),
+    });
+    expect(marked.status).toBe(200);
+
+    const ignored = await request(
+      `/sessions/${sessionId}/review/annotations/ignore`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expectedDocVersion: 1,
+          annotationIds: ["annotation-holder"],
+          turnId: "turn-review",
+        }),
+      },
+    );
+    expect(ignored.status).toBe(200);
+
+    const committed = await request(`/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: 1,
+        action: "commit",
+        turnId: "turn-review",
+      }),
+    });
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 2,
+    });
+  });
+
   it.each(["commit", "accept_all", "reject_all"] as const)(
     "%s 只做审阅结算，返回后会话空闲且可立即写入",
     async (action) => {
@@ -367,6 +454,46 @@ describe("external review", () => {
     expect(session!.patchVerdicts.has(patchId)).toBe(false);
   });
 
+  it("review verdict 在排队后租约出现时于临界区复查并拒绝", async () => {
+    const { sessionId, patchIds } = await createPendingReview();
+    const patchId = patchIds[0]!;
+    const session = await getOrRestoreSession(sessionId);
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { markWriteStarted = resolve; });
+    const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    const queuedWrite = sessionManager.runExclusive(sessionId, async function* () {
+      markWriteStarted();
+      await writeGate;
+    });
+    await writeStarted;
+
+    const runExclusive = vi.spyOn(sessionManager, "runExclusive");
+    const verdictResponse = request(`/sessions/${sessionId}/review/verdicts`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: 1,
+        patchId,
+        verdict: "accepted",
+      }),
+    });
+    await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(1));
+    session!.externalBusyLease = {
+      principalId: "external:test-instance",
+      turnId: "turn-arrived-while-queued",
+      expiresAt: Date.now() + 60_000,
+      startedFromEmpty: false,
+      directCommitCount: 0,
+    };
+    releaseWrite();
+    await queuedWrite;
+
+    const response = await verdictResponse;
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AGENT_BUSY" });
+    expect(session!.suggestions.get(patchId)?.suggestion.status).toBe("reviewing");
+  });
+
   it("读取并忽略批注，事件 allowlist 保留 annotationGroupsReady", async () => {
     const sessionId = await createDocument();
     const session = await getOrRestoreSession(sessionId);
@@ -542,5 +669,16 @@ async function request(pathName: string, init: RequestInit = {}): Promise<Respon
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers ?? {}),
     },
+  });
+}
+
+function signal(
+  sessionId: string,
+  action: "begin" | "end" | "heartbeat",
+  turnId: string,
+): Promise<Response> {
+  return request(`/sessions/${sessionId}/turn-signal`, {
+    method: "POST",
+    body: JSON.stringify({ action, turnId }),
   });
 }

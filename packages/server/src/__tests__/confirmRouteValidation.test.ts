@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { BridgeFrame } from "@qingagent/contract-ts";
 import { createSession } from "@qingagent/core";
 import { ConfirmDecisionError } from "@qingagent/core/confirm";
 import { confirmRoutes, createConfirmRoutes } from "../routes/confirms";
@@ -146,5 +147,59 @@ describe("confirm decision route 入站防护", () => {
     expect(await response.json()).toEqual({
       error: "确认提交异常，命令执行状态未能确认；请先查看命令卡，不要重复提交。",
     });
+  });
+
+  it("确认续跑任务以 agentTurnDispatch 标记进入 SessionActor", async () => {
+    const session = createSession("session-confirm-dispatch-marker");
+    session.pendingConfirms.set("tool-confirm-dispatch-marker", {
+      confirmId: "confirm-dispatch-marker",
+      runId: "run-confirm-dispatch-marker",
+      toolCallId: "tool-confirm-dispatch-marker",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-confirm-dispatch-marker",
+      spec: {
+        id: "confirm-dispatch-marker",
+        kind: "command",
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "echo safe",
+        primaryLabel: "确认执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending",
+    });
+    const runExclusive = vi.fn(async (
+      _sessionId: string,
+      task: () => AsyncGenerator<BridgeFrame>,
+      _options?: { agentTurnDispatch?: boolean },
+    ) => {
+      for await (const _frame of task()) { /* 完整消费 */ }
+    });
+    const markedApp = new Hono();
+    markedApp.route("/api/v1", createConfirmRoutes({
+      getSession: async () => session,
+      runExclusive,
+      handleDecision: async function* () {},
+    }));
+
+    const response = await markedApp.request("/api/v1/confirms/decision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.sessionId,
+        toolCallId: "tool-confirm-dispatch-marker",
+        decisionId: "decision-confirm-dispatch-marker",
+        decision: { id: "confirm-dispatch-marker", accepted: true },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(runExclusive).toHaveBeenCalledWith(
+      session.sessionId,
+      expect.any(Function),
+      { agentTurnDispatch: true },
+    );
   });
 });

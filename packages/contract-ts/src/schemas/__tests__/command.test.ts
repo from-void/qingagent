@@ -58,7 +58,7 @@ describe("commandSchema", () => {
     }
   });
 
-  it("externalPropose 接受 setTitle 局部操作，并禁止整稿与任何其它操作混用", () => {
+  it("externalPropose 接受 setTitle 局部操作，整稿仅允许与单个 setTitle 混用", () => {
     const base = {
       kind: "externalPropose",
       data: { sessionId: "s", expectedDocVersion: 0, clientMutationId: "m" },
@@ -130,7 +130,7 @@ describe("commandSchema", () => {
           { kind: "setTitle", title: "新标题" },
         ],
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it("externalPropose markText 使用 kind 判别并只接受受控色板", () => {

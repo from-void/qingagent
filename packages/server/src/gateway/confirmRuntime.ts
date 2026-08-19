@@ -392,6 +392,13 @@ export async function* handleConfirmDecision(
     CONFIRM_PERSIST_TIMEOUT_MS;
   const session = await (dependencies.getSession ?? defaultGetSession)(submission.sessionId);
   if (!session) throw new ConfirmDecisionError("not_found", "没有可处理的确认请求");
+  if (
+    session.externalBusyLease !== null
+    && session.externalBusyLease.expiresAt > Date.now()
+  ) {
+    // G1 二查：即使绕过路由/Actor 准入直调 runtime，也绝不在 external lease 内续跑模型。
+    throw new ConfirmDecisionError("conflict", "Agent 正在编辑，稍后再试");
+  }
 
   // beginDecision 会先把确认持久化为 resuming；记忆授权也可能访问外部存储。
   // controller 必须在这些等待之前挂到 session，才能让 stop/删除打断 Actor。

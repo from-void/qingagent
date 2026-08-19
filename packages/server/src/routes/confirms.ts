@@ -20,7 +20,12 @@ import {
   sessionManager,
 } from "../gateway/bridgeHandler";
 import { handleConfirmDecision } from "../gateway/confirmRuntime";
-import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
+import {
+  SessionActorCommandError,
+  SessionActorExternalLeaseHeldError,
+  SessionActorQueueFullError,
+  type EnqueueTaskOptions,
+} from "../gateway/sessionActor";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import {
   createConfirmGrantCanonical,
@@ -122,6 +127,7 @@ interface ConfirmRoutesDependencies {
   runExclusive?: (
     sessionId: string,
     task: () => AsyncGenerator<BridgeFrame>,
+    options?: EnqueueTaskOptions,
   ) => Promise<unknown>;
   handleDecision?: typeof handleConfirmDecision;
   service?: ConfirmService;
@@ -142,7 +148,8 @@ export function createConfirmRoutes(
   const routes = new Hono();
   const getSession = dependencies.getSession ?? getOrRestoreSession;
   const runExclusive = dependencies.runExclusive
-    ?? ((sessionId, task) => sessionManager.runExclusive(sessionId, task));
+    ?? ((sessionId, task, options) =>
+      sessionManager.runExclusive(sessionId, task, options));
   const decide = dependencies.handleDecision ?? handleConfirmDecision;
   const service = dependencies.service ?? confirmService;
   const consumeUiGrant = dependencies.consumeUiGrant ?? consumeConfirmUiGrant;
@@ -326,7 +333,7 @@ export function createConfirmRoutes(
             },
           }
         : {}),
-    }));
+    }), { agentTurnDispatch: true });
     // 决策已经落定后才切换全局开关:本次命令仍按用户刚刚看到的那张卡执行,
     // 从下一条命令起不再询问、不再隔离。切换会让已有会话立即换形态。
     let bypassEnabled = false;
@@ -349,6 +356,12 @@ export function createConfirmRoutes(
     service.discardSecret(session, parsed.decision.id);
     if (error instanceof SessionActorQueueFullError) {
       return c.json({ error: "会话命令队列已满" }, 429);
+    }
+    if (error instanceof SessionActorExternalLeaseHeldError) {
+      return c.json({
+        error: "Agent 正在编辑，稍后再试",
+        reason: "external_lease_held",
+      }, 409);
     }
     const known = decisionError(error);
     if (known) return c.json({ error: presentDecisionError(known) }, errorStatus(known.code));

@@ -744,6 +744,7 @@ const L1_FRAME_RULES = {
   enabledLexiconsSet: { requestId: "structural", lexicons: "redactedDeep" },
   lexiconEntriesListed: { resourceId: "structural", entries: "redactedDeep" },
   restoreReset: { epoch: "structural", snapshotSeq: "structural" },
+  "turn-rejected": { reason: "structural", message: "redacted" },
   sessionRestoreCompleted: { sessionId: "structural" },
   sessionMeta: { title: "redacted", sessionId: "structural" },
   chatMessageAdded: { message: "redactedDeep", appendSeq: "structural" },

@@ -15,7 +15,11 @@ import {
   sessionExists,
 } from "../gateway/bridgeHandler";
 import type { LoggedFrame } from "../gateway/frameLog";
-import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
+import {
+  SessionActorCommandError,
+  SessionActorExternalLeaseHeldError,
+  SessionActorQueueFullError,
+} from "../gateway/sessionActor";
 import {
   SessionDeletedError,
   SessionDeletionInProgressError,
@@ -327,6 +331,12 @@ async function handleCommandPost(c: Context) {
     if (error instanceof SessionActorQueueFullError) {
       return c.json({ error: "Session command queue is full" }, 429);
     }
+    if (error instanceof SessionActorExternalLeaseHeldError) {
+      return c.json({
+        error: "Agent 正在编辑，稍后再试",
+        reason: "external_lease_held",
+      }, 409);
+    }
     throw error;
   }
   if (clientMessageClaim) {
@@ -356,6 +366,12 @@ async function handleCommandPost(c: Context) {
     console.error("[commands] command failed:", redactStreamErrorForLog(error));
     const deletionResponse = sessionDeletionErrorResponse(c, error);
     if (deletionResponse) return deletionResponse;
+    if (error instanceof SessionActorExternalLeaseHeldError) {
+      return c.json({
+        error: "Agent 正在编辑，稍后再试",
+        reason: "external_lease_held",
+      }, 409);
+    }
     if (error instanceof SessionActorCommandError) {
       return c.json(commandFailedResponse(prepared.command, error), 422);
     }

@@ -17,6 +17,9 @@ export type ExternalClient = "claudecode" | "codex" | "agent";
 export type ExternalErrorCode =
   | "AUTH_FAILED"
   | "AGENT_BUSY"
+  | "BUSY_NATIVE"
+  | "LEASE_HELD"
+  | "LOCK_LOST"
   | "REVIEW_PENDING"
   | "CONFLICT"
   | "VERSION_CONFLICT"
@@ -365,6 +368,7 @@ export interface ExternalReviewVerdictRequest {
   expectedDocVersion: number;
   patchId: string;
   verdict: "accepted" | "rejected";
+  turnId?: string;
 }
 
 export interface ExternalReviewVerdictResponse {
@@ -379,6 +383,7 @@ export interface ExternalReviewVerdictResponse {
 export interface ExternalReviewCommitRequest {
   expectedDocVersion: number;
   action: "commit" | "accept_all" | "reject_all";
+  turnId?: string;
 }
 
 export interface ExternalReviewOutcomeHunk {
@@ -408,6 +413,7 @@ export interface ExternalReviewCommitResponse {
 export interface ExternalAnnotationIgnoreRequest {
   expectedDocVersion: number;
   annotationIds: string[];
+  turnId?: string;
 }
 
 export interface ExternalAnnotationIgnoreResponse {
@@ -506,7 +512,7 @@ export interface ExternalSkillMutationResponse {
 export interface ExternalEventsMeta { epoch: number; minSeq: number; nextSeq: number; gap: boolean }
 
 export type ExternalBridgeFrameKind =
-  | "restoreReset" | "sessionMeta" | "chatMessageAdded" | "chatMessageAppended"
+  | "restoreReset" | "turn-rejected" | "sessionMeta" | "chatMessageAdded" | "chatMessageAppended"
   | "toolCallUpdated" | "documentSnapshotWritten" | "docGenerationEvent" | "docCommitted"
   | "docDiffReady" | "docWriteResult" | "docStateChanged" | "todosChanged"
   | "resourceUpserted" | "resourceUpdated" | "resourceRemoved" | "folderSourcesChanged"

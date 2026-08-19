@@ -56,9 +56,35 @@ export class SessionActorQueueFullError extends Error {
   }
 }
 
+export class SessionActorNativeBusyError extends Error {
+  readonly statusCode = 409;
+
+  constructor() {
+    super("Native agent turn is active or queued");
+    this.name = "SessionActorNativeBusyError";
+  }
+}
+
+export class SessionActorExternalLeaseHeldError extends Error {
+  readonly statusCode = 409;
+
+  constructor() {
+    super("External editing lease is active");
+    this.name = "SessionActorExternalLeaseHeldError";
+  }
+}
+
+export interface EnqueueTaskOptions {
+  /** 该任务会启动或续跑 agent；H1 要求普通命令与 confirm task 使用同一队列身份。 */
+  agentTurnDispatch?: boolean;
+  /** begin 专用：入队瞬间若已有起轮任务则原子拒绝，不排到其后等待。 */
+  rejectIfAgentTurnDispatchPending?: boolean;
+}
+
 interface QueueItem {
   input: ActorCommand | null;
   task?: () => AsyncGenerator<BridgeFrame>;
+  agentTurnDispatch: boolean;
   preemptionReason?: TurnPreemptionReason;
   resolve: (frames: LoggedFrame[]) => void;
   reject: (error: unknown) => void;
@@ -73,6 +99,8 @@ export interface SessionActorOptions {
   maxQueueSize?: number;
   /** 用户已确认且正在执行的命令等"不能被系统悄悄丢掉"的工作。 */
   hasProtectedWork?: (sessionId: string, activeCommand?: Command) => boolean;
+  /** 只读取当前进程内未过期的 external lease；Actor 准入与执行二查共用。 */
+  hasExternalBusyLease?: (sessionId: string) => boolean;
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
@@ -115,6 +143,10 @@ export class SessionActor {
 
   enqueue(input: ActorCommand): Promise<LoggedFrame[]> {
     if (this.stateValue === "disposed") return Promise.reject(DISPOSED_ERROR);
+    const agentTurnDispatch = isAgentTurnDispatchCommand(input.command);
+    if (agentTurnDispatch && this.hasExternalBusyLease()) {
+      throw new SessionActorExternalLeaseHeldError();
+    }
     let preemptionReason: TurnPreemptionReason | undefined;
     if (input.command.kind === "cancelStream") {
       // cancel 是当前用户 turn 的终止屏障：除 abort 正在跑的项外，还要丢弃在它之前
@@ -140,19 +172,50 @@ export class SessionActor {
     }
 
     return new Promise<LoggedFrame[]>((resolve, reject) => {
-      this.queue.push({ input, preemptionReason, resolve, reject });
+      this.queue.push({ input, agentTurnDispatch, preemptionReason, resolve, reject });
       this.startDrainLoop();
     });
   }
 
   /** 专用上行通道进入同一会话串行队列，避免把 secret/决策塞进通用 Command。 */
-  enqueueTask(task: () => AsyncGenerator<BridgeFrame>): Promise<LoggedFrame[]> {
+  enqueueTask(
+    task: () => AsyncGenerator<BridgeFrame>,
+    options: EnqueueTaskOptions = {},
+  ): Promise<LoggedFrame[]> {
     if (this.stateValue === "disposed") return Promise.reject(DISPOSED_ERROR);
+    if (
+      options.rejectIfAgentTurnDispatchPending === true
+      && this.hasAgentTurnDispatchPending()
+    ) {
+      throw new SessionActorNativeBusyError();
+    }
+    if (options.agentTurnDispatch === true && this.hasExternalBusyLease()) {
+      throw new SessionActorExternalLeaseHeldError();
+    }
     this.assertQueueCapacity();
     return new Promise<LoggedFrame[]>((resolve, reject) => {
-      this.queue.push({ input: null, task, resolve, reject });
+      this.queue.push({
+        input: null,
+        task,
+        agentTurnDispatch: options.agentTurnDispatch === true,
+        resolve,
+        reject,
+      });
       this.startDrainLoop();
     });
+  }
+
+  private hasAgentTurnDispatchPending(): boolean {
+    return this.current?.agentTurnDispatch === true
+      || this.queue.some((item) => item.agentTurnDispatch);
+  }
+
+  private hasExternalBusyLease(): boolean {
+    try {
+      return this.options.hasExternalBusyLease?.(this.options.sessionId) === true;
+    } catch {
+      return false;
+    }
   }
 
   private assertQueueCapacity(): void {
@@ -188,7 +251,7 @@ export class SessionActor {
   private cancelQueuedTurnDispatches(): void {
     for (let index = this.queue.length - 1; index >= 0; index -= 1) {
       const item = this.queue[index];
-      if (!item?.input || !isAgentTurnDispatchCommand(item.input.command)) continue;
+      if (!item?.agentTurnDispatch || !item.input) continue;
       this.queue.splice(index, 1);
       // /commands 对模型命令本就是 accepted 后台语义；被同 turn 的停止屏障消费时
       // 不制造伪错误帧，但内部 completion 必须失败，幂等层才能释放本次 claim。
@@ -242,6 +305,24 @@ export class SessionActor {
       this.stateValue = "running";
 
       try {
+        if (item.agentTurnDispatch && this.hasExternalBusyLease()) {
+          const rejectedFrame = externalLeaseTurnRejectedFrame();
+          const seq = this.options.frameLog.append(
+            this.options.sessionId,
+            rejectedFrame,
+            { generation, delivery },
+          );
+          if (seq !== null) {
+            produced.push({
+              seq,
+              epoch: this.options.frameLog.getEpoch(this.options.sessionId),
+              generation,
+              frame: rejectedFrame,
+            });
+          }
+          item.reject(new SessionActorExternalLeaseHeldError());
+          continue;
+        }
         const frames = item.task
           ? item.task()
           : this.options.handleCommand(
@@ -349,6 +430,16 @@ function commandErrorFrame(_commandKind: Command["kind"]): BridgeFrame {
         reason,
         retriable: true,
       },
+    },
+  };
+}
+
+function externalLeaseTurnRejectedFrame(): BridgeFrame {
+  return {
+    kind: "turn-rejected",
+    data: {
+      reason: "external_lease_held",
+      message: "Agent 正在编辑，稍后再试",
     },
   };
 }

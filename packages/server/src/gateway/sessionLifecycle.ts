@@ -2,9 +2,12 @@ import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import {
   clearQuestionBranch,
   clearSessionSnapshot,
+  currentPmDoc,
+  deriveActiveOverlay,
   deriveAgentBusy,
   emitProjectedDocState,
   invalidateSessionWorkspace,
+  hasNonEmptyCanonicalBase,
   terminateSessionBackgroundCommands,
   loadSessionFromThread,
   resolveSessionDocumentId,
@@ -281,6 +284,10 @@ export const sessionManager = new SessionManager({
     const session = sessions.get(sessionId);
     return session ? deriveAgentBusy(session) : false;
   },
+  hasExternalBusyLease: (sessionId) => {
+    const lease = sessions.get(sessionId)?.externalBusyLease;
+    return lease !== null && lease !== undefined && lease.expiresAt > Date.now();
+  },
 });
 
 export const EXTERNAL_BUSY_LEASE_TTL_MS = 60_000;
@@ -291,6 +298,8 @@ export interface ExternalTurnSignalResult {
   found: boolean;
   active: boolean;
   expiresAt: number | null;
+  errorCode?: "BUSY_NATIVE" | "LEASE_HELD";
+  cancelled?: boolean;
 }
 
 interface ExternalBusyLeaseTimerEntry {
@@ -308,12 +317,23 @@ export async function signalExternalBusyLease(input: {
   principalId: string;
   turnId: string;
   action: ExternalTurnSignalAction;
+  deadline?: number;
+  signal?: AbortSignal;
 }): Promise<ExternalTurnSignalResult> {
   let found = false;
   let active = false;
   let expiresAt: number | null = null;
+  let errorCode: ExternalTurnSignalResult["errorCode"];
+  let cancelled = false;
 
   await sessionManager.runExclusive(input.sessionId, async function* () {
+    if (
+      input.action === "begin"
+      && (input.signal?.aborted === true || Date.now() >= (input.deadline ?? Infinity))
+    ) {
+      cancelled = true;
+      return;
+    }
     const session = await getOrRestoreSession(input.sessionId);
     if (!session) return;
     found = true;
@@ -322,6 +342,8 @@ export async function signalExternalBusyLease(input: {
     const sameOwner = current !== null
       && current.principalId === input.principalId
       && current.turnId === input.turnId;
+    const currentIsActive = current !== null && current.expiresAt > now;
+    const sameActiveOwner = sameOwner && currentIsActive;
 
     if (input.action === "end") {
       if (sameOwner) {
@@ -329,19 +351,41 @@ export async function signalExternalBusyLease(input: {
         clearExternalBusyLeaseTimer(input.sessionId);
         yield* emitProjectedDocState(session, "external_busy_lease_ended");
       }
-    } else if (input.action === "begin" || sameOwner) {
-      session.externalBusyLease = {
-        principalId: input.principalId,
-        turnId: input.turnId,
-        expiresAt: now + EXTERNAL_BUSY_LEASE_TTL_MS,
-      };
-      armExternalBusyLeaseTimer(session);
-      yield* emitProjectedDocState(
-        session,
-        input.action === "begin"
-          ? "external_busy_lease_began"
-          : "external_busy_lease_heartbeat",
-      );
+    } else if (input.action === "begin") {
+      if (session.streamId !== null || deriveActiveOverlay(session) !== null) {
+        errorCode = "BUSY_NATIVE";
+      } else if (currentIsActive && !sameOwner) {
+        errorCode = "LEASE_HELD";
+      } else {
+        // A2 续期继承铁律：同主未过期 begin 只改 expiresAt；新段才重算空稿标志与计数。
+        session.externalBusyLease = sameActiveOwner
+          ? { ...current!, expiresAt: now + EXTERNAL_BUSY_LEASE_TTL_MS }
+          : {
+              principalId: input.principalId,
+              turnId: input.turnId,
+              expiresAt: now + EXTERNAL_BUSY_LEASE_TTL_MS,
+              startedFromEmpty: !hasNonEmptyCanonicalBase(session, currentPmDoc(session)),
+              directCommitCount: 0,
+            };
+        armExternalBusyLeaseTimer(session);
+        yield* emitProjectedDocState(session, "external_busy_lease_began");
+      }
+    } else if (input.action === "heartbeat") {
+      if (session.streamId !== null || deriveActiveOverlay(session) !== null) {
+        // F3/H3:心跳观察到原生回合时显式返回 BUSY_NATIVE，由客户端走 recovery begin。
+        errorCode = "BUSY_NATIVE";
+      } else if (currentIsActive && !sameOwner) {
+        // F3:异主心跳必须明确返回 LEASE_HELD，客户端据此把本段收为 lost。
+        errorCode = "LEASE_HELD";
+      } else if (sameActiveOwner) {
+        // heartbeat 同样只续 expiresAt，绝不刷新 startedFromEmpty/directCommitCount。
+        session.externalBusyLease = {
+          ...current!,
+          expiresAt: now + EXTERNAL_BUSY_LEASE_TTL_MS,
+        };
+        armExternalBusyLeaseTimer(session);
+        yield* emitProjectedDocState(session, "external_busy_lease_heartbeat");
+      }
     }
 
     const next = session.externalBusyLease;
@@ -350,9 +394,17 @@ export async function signalExternalBusyLease(input: {
       && next.principalId === input.principalId
       && next.turnId === input.turnId;
     expiresAt = active ? next!.expiresAt : null;
-  });
+  }, input.action === "begin"
+    ? { rejectIfAgentTurnDispatchPending: true }
+    : {});
 
-  return { found, active, expiresAt };
+  return {
+    found,
+    active,
+    expiresAt,
+    ...(errorCode ? { errorCode } : {}),
+    ...(cancelled ? { cancelled: true } : {}),
+  };
 }
 
 function armExternalBusyLeaseTimer(session: SessionState): void {

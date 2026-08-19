@@ -249,12 +249,14 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
     });
   });
 
-  it("DC-5b 按可注入时钟派生外部租约，并保持 suspension/confirm 前置解锁", () => {
+  it("DC-5b 按可注入时钟派生外部租约，租约优先于 suspension/confirm 豁免", () => {
     const now = 1_000;
     const lease = {
       turnId: "turn-lease",
       principalId: "external:principal",
       expiresAt: now + 60_000,
+      startedFromEmpty: false,
+      directCommitCount: 0,
     };
     const active = makeState("busy-external-active", (state) => {
       state.externalBusyLease = lease;
@@ -297,8 +299,8 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
     }).toEqual({
       active: true,
       expired: false,
-      suspended: false,
-      pendingConfirm: false,
+      suspended: true,
+      pendingConfirm: true,
     });
   });
 

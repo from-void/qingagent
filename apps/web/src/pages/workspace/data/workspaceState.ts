@@ -216,6 +216,17 @@ function workspaceReducerMut(
     case "sessionRestoreCompleted":
       // 仅供呈现层结束首批水合门控；业务 state 已由此前的恢复帧完整重建。
       return;
+    case "turn-rejected":
+      draft.streamError = {
+        kind: "draftingFailed",
+        reason: action.data.message,
+        retriable: true,
+      };
+      draft.streamErrorStreamId = null;
+      draft.streamActive = false;
+      draft.activeStreamIds = [];
+      terminalizeInFlightToolCallsMut(draft, "failed");
+      return;
     case "sessionMeta": {
       // Only reset session-scoped state when switching between two real
       // sessions (e.g. navigating from one existing session to another).
@@ -469,6 +480,8 @@ function workspaceReducerMut(
         reason:
           action.data.reason === "agent_busy"
             ? "正在写入内容，请稍后再编辑。"
+            : action.data.reason === "lock_lost"
+              ? "本回合编辑锁已失效，请稍后重新开始。"
             : action.data.reason === "not_editable"
               ? "当前文档状态不可编辑。"
               : action.data.reason === "validation_error"

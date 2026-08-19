@@ -620,7 +620,7 @@ function checkDocWriteResult(frame: Extract<BridgeFrame, { kind: "docWriteResult
     }
     return;
   }
-  if (!["agent_busy", "not_editable", "not_found", "validation_error"].includes(data.reason)) {
+  if (!["agent_busy", "lock_lost", "not_editable", "not_found", "validation_error"].includes(data.reason)) {
     fail(`DocWriteResult.reason is invalid`);
   }
 }
@@ -891,6 +891,14 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
     case "sessionRestoreCompleted":
       if (!frame.data.sessionId) {
         fail("SessionRestoreCompleted.sessionId must be non-empty");
+      }
+      return;
+    case "turn-rejected":
+      if (
+        frame.data.reason !== "external_lease_held"
+        || !frame.data.message.trim()
+      ) {
+        fail("turn-rejected.data is invalid");
       }
       return;
     case "sessionMeta":

@@ -92,6 +92,7 @@ export {
   getActiveSuspensionOwner,
   getDocumentVersionCommittedAt,
   hasCanonicalDoc,
+  hasNonEmptyCanonicalBase,
   hasActiveSuspension,
   hasVisibleAskUserAnswerMessage,
   invalidateDraftStateAfterCanonicalWrite,

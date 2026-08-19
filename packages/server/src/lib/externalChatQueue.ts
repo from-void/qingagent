@@ -3,7 +3,10 @@ import type { Context } from "hono";
 import type { ReviewContext } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
-import { SessionActorQueueFullError } from "../gateway/sessionActor";
+import {
+  SessionActorExternalLeaseHeldError,
+  SessionActorQueueFullError,
+} from "../gateway/sessionActor";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { externalError } from "./externalError";
 
@@ -60,6 +63,10 @@ export async function queueExternalChat(
     if (error instanceof SessionActorQueueFullError) {
       log(evt, client, input.sessionId, startedAt, "rejected:RATE_LIMITED");
       return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    if (error instanceof SessionActorExternalLeaseHeldError) {
+      log(evt, client, input.sessionId, startedAt, "rejected:LEASE_HELD");
+      return externalError(c, 409, "LEASE_HELD", "Agent 正在编辑，稍后再试");
     }
     throw error;
   }

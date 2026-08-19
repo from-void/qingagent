@@ -5,7 +5,11 @@ import type {
   ConfirmSpec,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
-import { ConfirmService, SecretLeaseStore } from "@qingagent/core/confirm";
+import {
+  ConfirmDecisionError,
+  ConfirmService,
+  SecretLeaseStore,
+} from "@qingagent/core/confirm";
 import { createSession } from "@qingagent/core";
 import { handleConfirmDecision, handleConfirmExpiry } from "../gateway/confirmRuntime";
 import { InMemoryFrameLog } from "../gateway/frameLog";
@@ -70,6 +74,42 @@ async function collect(generator: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
 }
 
 describe("confirm runtime", () => {
+  it("external lease 在 runtime 起轮前二查，确认状态与模型调用均保持不变", async () => {
+    const spec = commandConfirmSpec("confirm-external-lease-gate");
+    const { state, toolCallId } = setupPending(spec);
+    state.externalBusyLease = {
+      principalId: "external:test-instance",
+      turnId: "turn-external-lease-gate",
+      expiresAt: Date.now() + 60_000,
+      startedFromEmpty: false,
+      directCommitCount: 0,
+    };
+    const agent = {
+      approveToolCall: vi.fn(),
+      declineToolCall: vi.fn(),
+    };
+    const service = new ConfirmService({ persist: async () => undefined });
+
+    await expect(collect(handleConfirmDecision({
+      sessionId: state.sessionId,
+      toolCallId,
+      decisionId: "decision-external-lease-gate",
+      decision: { id: spec.id, accepted: true },
+      hasSecretValue: false,
+    }, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+    }))).rejects.toEqual(expect.objectContaining<Partial<ConfirmDecisionError>>({
+      code: "conflict",
+      message: "Agent 正在编辑，稍后再试",
+    }));
+
+    expect(state.pendingConfirms.get(toolCallId)?.status).toBe("pending");
+    expect(agent.approveToolCall).not.toHaveBeenCalled();
+    expect(agent.declineToolCall).not.toHaveBeenCalled();
+  });
+
   it("accepted 精确调用 approveToolCall，option/accepted/确认文案不进入模型恢复参数", async () => {
     const optionSentinel = "OPTION_SENTINEL_7ca1";
     const confirmCopySentinel = "CONFIRM_COPY_SENTINEL_7ca1";

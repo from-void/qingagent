@@ -4,6 +4,8 @@ import { InMemoryFrameLog } from "../frameLog";
 import {
   SessionActor,
   SessionActorCommandError,
+  SessionActorExternalLeaseHeldError,
+  SessionActorNativeBusyError,
   SessionActorQueueFullError,
   type HandleCommandFn,
 } from "../sessionActor";
@@ -51,11 +53,128 @@ function cancelStream(): Command {
   return { kind: "cancelStream", data: { sessionId: "s1" } };
 }
 
+function submitReviewOutcome(): Command {
+  return {
+    kind: "submitReviewOutcome",
+    data: {
+      sessionId: "s1",
+      outcome: { acceptedCount: 0, rejectedCount: 0, hunks: [] },
+    },
+  };
+}
+
+function resumeAskUser(): Command {
+  return {
+    kind: "resumeAskUser",
+    data: {
+      sessionId: "s1",
+      toolCallId: "ask-1",
+      answers: { q1: { chosen: [], freeText: "继续" } },
+    },
+  };
+}
+
 function meta(title: string): BridgeFrame {
   return { kind: "sessionMeta", data: { sessionId: "s1", title } };
 }
 
 describe("SessionActor", () => {
+  it("begin admission 同时扫描当前、排队命令与 H1 confirm task 标记", async () => {
+    const log = new InMemoryFrameLog();
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand: async function* () {},
+      abortSession: vi.fn(),
+    });
+
+    const current = actor.enqueueTask(async function* () {
+      started();
+      await gate;
+    }, { agentTurnDispatch: true });
+    await startedPromise;
+    expect(() => actor.enqueueTask(async function* () {}, {
+      rejectIfAgentTurnDispatchPending: true,
+    })).toThrow(SessionActorNativeBusyError);
+    release();
+    await current;
+
+    let releaseBlocker!: () => void;
+    let blockerStarted!: () => void;
+    const blockerGate = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+    const blockerStartedPromise = new Promise<void>((resolve) => { blockerStarted = resolve; });
+    const blocker = actor.enqueueTask(async function* () {
+      blockerStarted();
+      await blockerGate;
+    });
+    await blockerStartedPromise;
+    const queuedCommand = actor.enqueue({ command: sendMessage("queued") });
+    const queuedConfirm = actor.enqueueTask(async function* () {}, {
+      agentTurnDispatch: true,
+    });
+    expect(() => actor.enqueueTask(async function* () {}, {
+      rejectIfAgentTurnDispatchPending: true,
+    })).toThrow(SessionActorNativeBusyError);
+    releaseBlocker();
+    await Promise.all([blocker, queuedCommand, queuedConfirm]);
+  });
+
+  it.each([
+    ["sendMessage", sendMessage("blocked")],
+    ["submitReviewOutcome", submitReviewOutcome()],
+    ["resumeAskUser", resumeAskUser()],
+  ] as const)("external lease 入队快拒 %s", async (_name, command) => {
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: new InMemoryFrameLog(),
+      handleCommand: async function* () {},
+      abortSession: vi.fn(),
+      hasExternalBusyLease: () => true,
+    });
+
+    expect(() => actor.enqueue({ command }))
+      .toThrow(SessionActorExternalLeaseHeldError);
+  });
+
+  it("入队后才出现 external lease 时执行二查发 turn-rejected", async () => {
+    const log = new InMemoryFrameLog();
+    let leaseHeld = false;
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand: async function* () {
+        yield meta("不应执行");
+      },
+      abortSession: vi.fn(),
+      hasExternalBusyLease: () => leaseHeld,
+    });
+    const blocker = actor.enqueueTask(async function* () {
+      started();
+      await gate;
+    });
+    await startedPromise;
+    const queued = actor.enqueue({ command: sendMessage("accepted-before-lease") });
+    leaseHeld = true;
+    release();
+    await blocker;
+    await expect(queued).rejects.toThrow(SessionActorExternalLeaseHeldError);
+    expect(log.readFrom("s1", 0).frames.map((entry) => entry.frame)).toContainEqual({
+      kind: "turn-rejected",
+      data: {
+        reason: "external_lease_held",
+        message: "Agent 正在编辑，稍后再试",
+      },
+    });
+  });
+
   it("startSession(existing) 的整批恢复帧按 replay 投递，普通命令仍按 live 投递", async () => {
     const log = new InMemoryFrameLog();
     const deliveries: string[] = [];

@@ -129,6 +129,10 @@ export interface SessionState {
     turnId: string;
     principalId: string;
     expiresAt: number;
+    /** 仅在新租约授予时计算；same-owner begin/heartbeat 续期严禁重算。 */
+    startedFromEmpty: boolean;
+    /** 当前租约段内真正创建 canonical 新版本的直落次数。 */
+    directCommitCount: number;
   } | null;
   runId: string | null;
   toolCallId: string | null;

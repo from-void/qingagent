@@ -35,6 +35,8 @@ export function docWriteResultMessage(result: DocWriteResultData): string {
   switch (result.reason) {
     case "agent_busy":
       return "正在写入内容，刚才的手动编辑未保存。";
+    case "lock_lost":
+      return "本回合编辑锁已失效，刚才的编辑未保存。";
     case "not_editable":
       return "当前文档状态不可编辑，刚才的手动编辑未保存。";
     case "validation_error":

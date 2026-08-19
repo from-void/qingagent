@@ -147,6 +147,10 @@ export {
 } from "../doc-engine/docGenerator.js";
 
 export {
+  hasNonEmptyCanonicalBase,
+} from "../doc-engine/draftScratch.js";
+
+export {
   hasApplicableSuggestion,
   hasCanonicalDoc,
 } from "../doc-engine/docFacts.js";

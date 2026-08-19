@@ -11,6 +11,7 @@ import {
   SessionActor,
   type CommandOrigin,
   type ExternalLeaseOwner,
+  type EnqueueTaskOptions,
   type HandleCommandFn,
   type TurnPreemptionReason,
 } from "./sessionActor";
@@ -43,6 +44,8 @@ export interface SessionManagerOptions {
   hasProtectedWork?: (sessionId: string, activeCommand?: Command) => boolean;
   /** Actor 真态之外的会话内运行态（当前为外部触稿租约）。 */
   hasRuntimeBusy?: (sessionId: string) => boolean;
+  /** external lease 的精确判定，不含 stream/overlay。 */
+  hasExternalBusyLease?: (sessionId: string) => boolean;
 }
 
 export interface SessionDeletionStoreRecord {
@@ -125,12 +128,13 @@ export class SessionManager {
   async runExclusive(
     sessionId: string,
     task: () => AsyncGenerator<import("@qingagent/contract-ts").BridgeFrame>,
+    options: EnqueueTaskOptions = {},
   ): Promise<LoggedFrame[]> {
     await this.ensureDeletionStateRestored();
     await this.restoreDeletionStateForSession(sessionId);
     this.assertSessionAcceptsCommands(sessionId);
     const actor = this.getOrCreateActor(sessionId);
-    return actor.enqueueTask(task);
+    return actor.enqueueTask(task, options);
   }
 
   async disposeSession(sessionId: string): Promise<void> {
@@ -449,6 +453,8 @@ export class SessionManager {
       afterRun: this.options.afterRun,
       hasProtectedWork: (id, activeCommand) =>
         this.hasProtectedWork(id, activeCommand),
+      hasExternalBusyLease: (id) =>
+        this.options.hasExternalBusyLease?.(id) === true,
     });
     this.actors.set(sessionId, { actor, lastAccessAt: Date.now() });
     this.evictIdleActorsIfNeeded(sessionId);

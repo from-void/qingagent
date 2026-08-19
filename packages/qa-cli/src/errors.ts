@@ -4,6 +4,9 @@ export type QaErrorCode =
   | "EVENT_TARGET_NOT_REACHED"
   | "AUTH_FAILED"
   | "AGENT_BUSY"
+  | "BUSY_NATIVE"
+  | "LEASE_HELD"
+  | "LOCK_LOST"
   | "REVIEW_PENDING"
   | "CONFLICT"
   | "VERSION_CONFLICT"
@@ -19,6 +22,9 @@ export const NEXT_STEP: Record<QaErrorCode, string> = {
   REVIEW_PENDING: "用 `qa review list -s <id>` 查看待审修改,再用 `qa review accept|reject|commit` 完成审查",
   CONFLICT: "远端资源已变化,请重新读取最新版本后再提交",
   AGENT_BUSY: "青简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
+  BUSY_NATIVE: "青简客户端正在处理当前文稿,等待 2 秒后重试;仍忙则停止本回合写入",
+  LEASE_HELD: "当前文稿已由另一个外部回合持有,本回合停止写入并等待下一回合",
+  LOCK_LOST: "当前外部回合的编辑锁已失效,本回合停止写入,不要重放原请求",
   VERSION_CONFLICT: "文档已被改过,请 `qa doc read` 重读,基于新版本重做提案,绝不原样重发",
   AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
   NO_INSTANCE: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
@@ -124,6 +130,9 @@ function commonErrorHint(code: QaErrorCode): string | null {
     code === "INVALID_RESPONSE" ||
     code === "AUTH_FAILED" ||
     code === "AGENT_BUSY" ||
+    code === "BUSY_NATIVE" ||
+    code === "LEASE_HELD" ||
+    code === "LOCK_LOST" ||
     code === "REVIEW_PENDING" ||
     code === "VERSION_CONFLICT" ||
     code === "SESSION_NOT_FOUND" ||

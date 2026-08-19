@@ -415,8 +415,13 @@ const externalProposeDataSchema = z
     const wholeDraftCount = data.ops.filter(
       (op) => op.kind === "fullDraft" || op.kind === "qingmlDraft",
     ).length;
-    return wholeDraftCount === 0 || (wholeDraftCount === 1 && data.ops.length === 1);
-  }, "whole-document draft must not be mixed with other ops")
+    return wholeDraftCount === 0 || (
+      wholeDraftCount === 1
+      && data.ops.every((op) =>
+        op.kind === "fullDraft" || op.kind === "qingmlDraft" || op.kind === "setTitle"
+      )
+    );
+  }, "whole-document draft may only be mixed with setTitle")
   .refine(
     (data) => data.ops.filter((op) => op.kind === "setTitle").length <= 1,
     "setTitle must not be repeated",

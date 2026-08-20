@@ -1,30 +1,45 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { NtExecutable, NtExecutableResource, Resource } from "resedit";
+import { Data, NtExecutable, NtExecutableResource, Resource } from "resedit";
 
 import {
   parsePackageVersion,
+  readWinIconInfo,
   stampWinVersionInfo,
+  verifyWinIconInfo,
   verifyWinVersionInfo,
   WIN_VERSION_STRINGS,
 } from "./winVersionInfo.mjs";
 
-async function createExecutable(filePath, withElectronVersionInfo) {
+async function createExecutable(filePath, withElectronVersionInfo, withElectronIcon = false) {
   const executable = NtExecutable.createEmpty(false, false);
-  if (withElectronVersionInfo) {
+  if (withElectronVersionInfo || withElectronIcon) {
     const resources = NtExecutableResource.from(executable);
-    const versionInfo = Resource.VersionInfo.createEmpty();
-    versionInfo.setFileVersion("39.8.10", 0x0409);
-    versionInfo.setProductVersion("39.8.10", 0x0409);
-    versionInfo.setStringValues(
-      { lang: 0x0409, codepage: 1200 },
-      { ProductName: "Electron", FileDescription: "Electron", CompanyName: "Electron authors" },
-    );
-    versionInfo.outputToResourceEntries(resources.entries);
+    if (withElectronVersionInfo) {
+      const versionInfo = Resource.VersionInfo.createEmpty();
+      versionInfo.setFileVersion("39.8.10", 0x0409);
+      versionInfo.setProductVersion("39.8.10", 0x0409);
+      versionInfo.setStringValues(
+        { lang: 0x0409, codepage: 1200 },
+        { ProductName: "Electron", FileDescription: "Electron", CompanyName: "Electron authors" },
+      );
+      versionInfo.outputToResourceEntries(resources.entries);
+    }
+    if (withElectronIcon) {
+      const iconFile = Data.IconFile.from(
+        await readFile(new URL("./resources/icon.ico", import.meta.url)),
+      );
+      Resource.IconGroupEntry.replaceIconsForResource(
+        resources.entries,
+        7,
+        0,
+        [iconFile.icons.at(-1).data],
+      );
+    }
     resources.outputResource(executable);
   }
   await writeFile(filePath, Buffer.from(executable.generate()), { mode: 0o755 });
@@ -60,6 +75,12 @@ for (const withElectronVersionInfo of [false, true]) {
       );
       assert.equal(entries[0].strings[0].values.FileVersion, "0.1.4");
       assert.equal(entries[0].strings[0].values.ProductVersion, "0.1.4");
+      const iconGroups = await verifyWinIconInfo(executablePath);
+      assert.equal(iconGroups.length, 1);
+      assert.equal(iconGroups[0].id, 32512);
+      assert.equal(iconGroups[0].lang, 0x0409);
+      assert.equal(iconGroups[0].icons.length, 7);
+      assert.equal(iconGroups[0].embeddedIconCount, 7);
       assert.equal((await stat(executablePath)).mode & 0o111, 0o111);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -79,6 +100,39 @@ test("预发布 SemVer 保留完整字符串，固定版本不误用预发布序
     assert.deepEqual(entries[0].fixedProductVersion, [2, 3, 4, 0]);
     assert.equal(entries[0].strings[0].values.FileVersion, "2.3.4-beta.1");
     assert.equal(entries[0].strings[0].values.ProductVersion, "2.3.4-beta.1");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("未盖章的 exe 缺少图标资源时读回校验失败", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "qingagent-missing-icon-"));
+  const executablePath = path.join(directory, "qingagent.exe");
+  try {
+    await createExecutable(executablePath, true);
+    assert.deepEqual(await readWinIconInfo(executablePath), []);
+    await assert.rejects(verifyWinIconInfo(executablePath), /exe 中没有图标组资源/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("已有 Electron 图标组时原位替换为青简的完整多尺寸图标", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "qingagent-replace-icon-"));
+  const executablePath = path.join(directory, "qingagent.exe");
+  try {
+    await createExecutable(executablePath, true, true);
+    const before = await readWinIconInfo(executablePath);
+    assert.equal(before[0].id, 7);
+    assert.equal(before[0].lang, 0);
+    assert.equal(before[0].icons.length, 1);
+
+    await stampWinVersionInfo(executablePath, { version: parsePackageVersion("0.1.4") });
+    const after = await verifyWinIconInfo(executablePath);
+    assert.equal(after[0].id, 7);
+    assert.equal(after[0].lang, 0);
+    assert.equal(after[0].icons.length, 7);
+    assert.equal(after[0].embeddedIconCount, 7);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -29,11 +29,15 @@ function readTopLevelValue(name) {
 
 test("Windows NSIS 保持可选目录的每用户向导安装约定", () => {
   const nsis = readTopLevelBlock("nsis");
+  const win = readTopLevelBlock("win");
 
   assert.equal(readBoolean(nsis, "oneClick"), false);
   assert.equal(readBoolean(nsis, "allowToChangeInstallationDirectory"), true);
   assert.equal(readBoolean(nsis, "perMachine"), false);
   assert.equal(readBoolean(nsis, "differentialPackage"), false);
+  assert.match(nsis, /^  installerIcon:\s*resources\/icon\.ico\s*$/m);
+  assert.match(nsis, /^  uninstallerIcon:\s*resources\/icon\.ico\s*$/m);
+  assert.match(win, /^  signAndEditExecutable:\s*false\s*$/m);
 });
 
 test("macOS 应用名保持青简，跨平台可执行名与发布产物名保持既有约定", () => {

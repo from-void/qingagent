@@ -48,8 +48,8 @@ extraResources:
   # 首启真实会话 fixture：JSON 行数据与上传资源都在运行时读取，须放在 asar 外。
   - from: ../../packages/core/src/seed/fixtures
     to: seed-fixtures
-  # 窗口/任务栏运行时图标(win/linux BrowserWindow icon 用;exe 内嵌图标因
-  # signAndEditExecutable:false 不做,任务栏观感由这里兜底)。
+  # 窗口运行时图标(win/linux BrowserWindow icon 用);Windows exe 的 PE 图标由
+  # build-win.sh 调用 winVersionInfo.mjs 纯 JS 盖章,不依赖 signAndEditExecutable。
   - from: resources/icon-256.png
     to: icon.png
   # Pyodide 运行时:由 build.mjs 按 QINGAGENT_BUNDLE_PYODIDE 暂存到 build/pyodide。
@@ -119,6 +119,8 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
   # 关差分包:DEBUG 定位到 win nsis 卡死在 electron-builder 用 7za `-mx=9`(最高压)把
   # ~300MB app(electron+asar+node_modules)打成差分更新用的 app.7z,2 核 runner 30min+
   # 压不完(compression:store/自定义 SetCompressor 都不碰这一步,故此前无效)。差分包只为

@@ -755,6 +755,8 @@ externalRoutes.get("/sessions/:id/review", async (c) => {
       agentBusy: sessionManager.isSessionBusy(sessionId),
       baseVersion: session.suggestionBaseVersion ?? session.docVersion,
       suggestions,
+      // render-model 同步携带批注组:插件面板的下划线/hover 卡以此为数据源(与无 format 列表分支同源)。
+      annotations: session.annotationGroups.map(annotationForExternal),
       ...(isWholeDocumentSuggestionBatchId(suggestions[0]?.batchId)
         ? { wholeDocument: true }
         : {}),

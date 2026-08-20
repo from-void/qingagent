@@ -25,6 +25,7 @@ describe("external API 文档契约", () => {
       docVersion: 3,
       state: "pendingReview",
       agentBusy: false,
+      annotations: [],
       baseVersion: 3,
       suggestions: [],
       previewDoc: {

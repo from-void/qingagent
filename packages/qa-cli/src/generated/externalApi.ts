@@ -372,6 +372,8 @@ export type ExternalReviewRenderModelResponse = {
   docVersion: number;
   state: ExternalDocumentState;
   agentBusy: boolean;
+  /** 批注组随 render-model 同步下发(与 review 列表分支同源),外部面板据此渲染下划线与 hover 卡。 */
+  annotations: ExternalAnnotation[];
 } & DocDiffReady;
 
 export interface ExternalReviewPatchResponse {

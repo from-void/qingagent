@@ -339,7 +339,12 @@ describe("abortAndCleanupTurn", () => {
     });
     expect(frames).toContainEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: null,
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     expect(frames.at(-1)).toEqual({
       kind: "stream",
@@ -501,7 +506,12 @@ describe("abortAndCleanupTurn", () => {
     expect(state._activeTurnPromise).toBeNull();
     expect(frames).toContainEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: null,
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     expect(frames.at(-1)).toEqual({
       kind: "stream",

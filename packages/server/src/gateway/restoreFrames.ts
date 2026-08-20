@@ -12,6 +12,7 @@ import {
   deriveAgentBusy,
   deriveContentState,
   deriveDocStateFacts,
+  deriveExternalEditing,
   documentRepo,
   emitProjectedDocState,
   getActiveSuspensionOwner,
@@ -113,6 +114,7 @@ function* emitReadOnlyRestoreDocState(session: SessionState): Generator<BridgeFr
       state: deriveContentState(session),
       activeOverlay: deriveActiveOverlay(session),
       agentBusy: deriveAgentBusy(session),
+      externalEditing: deriveExternalEditing(session),
     },
   };
 }

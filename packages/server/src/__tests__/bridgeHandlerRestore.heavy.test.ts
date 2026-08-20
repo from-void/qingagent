@@ -167,7 +167,12 @@ describe("handleCommand existing-session restore", () => {
 
     expect(frames.find((frame) => frame.kind === "docStateChanged")).toEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: "askUser", agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: "askUser",
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     // R5e:无文档 → content 必为 empty(DC-1,纯 facts,无「活跃工作流→editing」旁路);
     // 出问卷的锁由 overlay=askUser 经 deriveEditorState 聚合为 locked,不进 content。
@@ -206,7 +211,12 @@ describe("handleCommand existing-session restore", () => {
 
     expect(frames.find((frame) => frame.kind === "docStateChanged")).toEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: null,
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     const restored = frames.find(
       (frame) =>
@@ -377,7 +387,7 @@ describe("handleCommand existing-session restore", () => {
       chips: null,
     }];
     bridge.sessionManager.frameLog.setActiveRunner(session.sessionId, true);
-    session._lastEmittedWireKind = "editing:none:idle";
+    session._lastEmittedWireKind = "editing:none:idle:native";
 
     const frames = await bridge.collectRestoreFrames(session.sessionId);
 
@@ -390,7 +400,7 @@ describe("handleCommand existing-session restore", () => {
     const originalPart = session.chatHistory[0]?.parts[0];
     if (originalPart?.kind !== "toolCall") throw new Error("missing original askUser");
     expect(originalPart.data.status.kind).toBe("running");
-    expect(session._lastEmittedWireKind).toBe("editing:none:idle");
+    expect(session._lastEmittedWireKind).toBe("editing:none:idle:native");
   });
 
   it("normalizes cached review with no suggestions to editing", async () => {
@@ -408,7 +418,12 @@ describe("handleCommand existing-session restore", () => {
 
     expect(frames.find((frame) => frame.kind === "docStateChanged")).toEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      data: {
+        state: { kind: "editing" },
+        activeOverlay: null,
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     expect(session.docState).toEqual({ kind: "editing" });
     expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);

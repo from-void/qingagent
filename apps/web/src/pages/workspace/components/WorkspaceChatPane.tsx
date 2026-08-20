@@ -124,7 +124,7 @@ export function WorkspaceChatPane({
             agentActive={agentActive}
             sendEnabledWhenDisabled={chatInputSendEnabledWhenDisabled}
             onSubmit={handleSubmitChat}
-            showStop={agentActive}
+            showStop={agentActive && !state.externalEditing}
             onStop={handleCancelActiveStream}
             onOpenSkillMenu={() => undefined}
             onPreviewMaterial={setPreviewSource}

@@ -94,6 +94,8 @@ export type BridgeFrame =
         state: ContentDocState;
         activeOverlay: WireActiveOverlay;
         agentBusy: boolean;
+        /** 当前编辑锁来自 externalInstance 租约，而非可由客户端停止的原生回合。 */
+        externalEditing?: boolean;
         /** 审阅目标已由其它请求结算；调用方不得把它当成本次写入成功。 */
         reviewCompletion?: "noop";
       };

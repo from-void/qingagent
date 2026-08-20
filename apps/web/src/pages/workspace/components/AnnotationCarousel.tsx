@@ -89,6 +89,7 @@ const REVIEW_ORIGIN_LABELS: Readonly<Record<string, string>> = {
   "source-check": "来源核查",
   "role-review": "角色审查",
   "custom-review": "自定义审查",
+  "external-plugin": "青简插件",
   "system-parse-error": "审查异常",
 };
 

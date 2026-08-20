@@ -130,6 +130,12 @@ function checkDocStateChanged(frame: Extract<BridgeFrame, { kind: "docStateChang
     fail("DocStateChanged.agentBusy must be a boolean");
   }
   if (
+    frame.data.externalEditing !== undefined &&
+    typeof frame.data.externalEditing !== "boolean"
+  ) {
+    fail("DocStateChanged.externalEditing must be a boolean when present");
+  }
+  if (
     frame.data.reviewCompletion !== undefined &&
     frame.data.reviewCompletion !== "noop"
   ) {

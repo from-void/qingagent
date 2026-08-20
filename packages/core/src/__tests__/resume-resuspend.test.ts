@@ -263,6 +263,7 @@ describe("processAgentStream resume re-suspend handling", () => {
         state: { kind: "editing" },
         activeOverlay: null,
         agentBusy: true,
+        externalEditing: false,
       },
     });
     expect(qingagentAgent.stream).not.toHaveBeenCalled();
@@ -278,6 +279,7 @@ describe("processAgentStream resume re-suspend handling", () => {
         state: { kind: "editing" },
         activeOverlay: null,
         agentBusy: false,
+        externalEditing: false,
       },
     });
   }, 10_000);

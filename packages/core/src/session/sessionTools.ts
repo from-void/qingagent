@@ -1,9 +1,4 @@
-import {
-  maskSensitiveAnnotationGroup,
-  normalizeAnnotationSuggestion,
-  type ReviewContext,
-  type SkillRef,
-} from "@qingagent/contract-ts";
+import { type ReviewContext, type SkillRef } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
 import { WORKSPACE_TOOLS, type Workspace } from "@mastra/core/workspace";
@@ -101,8 +96,6 @@ import {
 } from "../doc-engine/draftReadContext.js";
 import {
   collectTopLevelTextBlocks,
-  containsLiteralMatch,
-  findAnnotationQuoteMatches,
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
@@ -116,14 +109,8 @@ import {
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import {
   createAnnotationGroupsInputSchema,
-  reviewOrigin,
-  truncateAnnotationSummary,
-  type AnnotationGroupInput,
+  writeAnnotationGroups,
 } from "../tools/annotationGroups.js";
-import {
-  insertAnnotationGroups,
-  replaceAnnotationGroupsByOrigin,
-} from "@qingagent/db";
 import type { Material } from "../types/material.js";
 import {
   applyBlockEdits,
@@ -144,29 +131,6 @@ import {
 } from "@qingagent/pm-schema";
 
 const logger = mastra.getLogger();
-
-function annotationGroupSemanticErrors(source: AnnotationGroupInput, groupIndex: number): string[] {
-  const prefix = `第 ${groupIndex + 1} 组`;
-  const errors: string[] = [];
-  if (source.origin === "source-check") {
-    if (!source.judgment || !["口径漂移", "数字失真", "无据", "素材遗漏"].includes(source.judgment)) {
-      errors.push(`${prefix} judgment 字段必填，必须是“口径漂移”“数字失真”“无据”或“素材遗漏”`);
-    } else if (source.judgment !== "无据" && !source.materialQuote?.trim()) {
-      errors.push(`${prefix} materialQuote 字段必填：${source.judgment}必须逐字引用素材全文`);
-    } else if (source.judgment === "无据" && !source.checkedScope?.trim()) {
-      errors.push(`${prefix} checkedScope 字段必填：无据必须说明已核查的素材范围`);
-    }
-  }
-  if (source.origin === "consistency") {
-    if (!source.judgment || !["时间线", "数字", "称谓与术语", "论断"].includes(source.judgment)) {
-      errors.push(`${prefix} judgment 字段必填，必须是“时间线”“数字”“称谓与术语”或“论断”`);
-    }
-    if (!source.documentQuote?.trim()) {
-      errors.push(`${prefix} documentQuote 字段必填，且必须逐字来自当前文档全文`);
-    }
-  }
-  return errors;
-}
 
 // BB① 埋点用:按 turn(runId)累计 editDraft.execute 次数(模块级,跨同一 turn 内多次调用)。
 const editDraftExecuteCounts = new Map<string, number>();
@@ -726,7 +690,6 @@ export function createSessionScopedTools(
   const getWorkspace = state
     ? workspaceOptions.getWorkspace ?? (() => getQingagentSessionWorkspace(state.sessionId))
     : null;
-  let annotationGroupWriteQueue: Promise<void> = Promise.resolve();
   const readMaterial = createTool({
     id: "readMaterial",
     description:
@@ -835,118 +798,27 @@ export function createSessionScopedTools(
         return { ok: false, groupCount: 0, anchorCount: 0, errors: [input._parseFailure.message] };
       }
       if (!state?.doc || !writeGuard) return { ok: false, groupCount: 0, anchorCount: 0, errors: ["当前没有可批注文档"] };
-      const blocks = collectTopLevelTextBlocks(state.doc);
-      const documentText = blocks.map((block) => block.text).join("\n");
-      const materialTexts = [...materials.values()].map((material) => material.text);
-      const errors: string[] = [];
       const currentReviewContext = context?.requestContext?.get("reviewContext") as ReviewContext | null | undefined;
-      const forcedOrigin = reviewOrigin(currentReviewContext);
-      const groups = input.groups.flatMap((modelSource, groupIndex) => {
-        const normalizedModelSource = {
-          ...modelSource,
-          summary: truncateAnnotationSummary(modelSource.summary),
-        };
-        const source = forcedOrigin
-          ? { ...normalizedModelSource, origin: forcedOrigin }
-          : normalizedModelSource;
-        if (forcedOrigin && modelSource.origin !== forcedOrigin) {
+      const result = await writeAnnotationGroups({
+        state,
+        groups: input.groups,
+        reviewContext: currentReviewContext,
+        assertWriteAllowed: () => assertTurnWriteAllowed(state, writeGuard),
+        onOriginOverride: ({ groupIndex, modelOrigin, forcedOrigin }) => {
           logger.warn("[review] 覆写模型填写的批注 origin", {
             reviewType: currentReviewContext?.type,
             templateName: currentReviewContext?.templateName,
             groupIndex: groupIndex + 1,
-            modelOrigin: modelSource.origin,
+            modelOrigin,
             forcedOrigin,
           });
-        }
-        const semanticErrors = annotationGroupSemanticErrors(source, groupIndex);
-        if (semanticErrors.length > 0) {
-          errors.push(...semanticErrors);
-          return [];
-        }
-        if (
-          source.origin === "source-check"
-          && source.judgment !== "无据"
-          && !materialTexts.some((text) => containsLiteralMatch(text, source.materialQuote ?? ""))
-        ) {
-          errors.push(`第 ${groupIndex + 1} 组 materialQuote 字段无效：素材中未找到所引原句「${source.materialQuote ?? ""}」`);
-          return [];
-        }
-        if (
-          source.origin === "consistency"
-          && !containsLiteralMatch(documentText, source.documentQuote ?? "")
-        ) {
-          errors.push(`第 ${groupIndex + 1} 组 documentQuote 字段无效：当前文档中未找到冲突对端原句「${source.documentQuote ?? ""}」`);
-          return [];
-        }
-        const anchors = source.anchors.flatMap((spec, anchorIndex) => {
-          const matches = findAnnotationQuoteMatches(blocks, spec.find, spec.all === true);
-          if (matches.length === 0) errors.push(`第 ${groupIndex + 1} 组 anchors.${anchorIndex}.find 字段无效：当前文档中未找到精确文本「${spec.find}」`);
-          return matches.map((match) => ({
-            blockId: match.blockId,
-            pmFrom: match.pmFrom,
-            pmTo: match.pmTo,
-            quote: match.matchText,
-            textHash: crypto.createHash("sha256").update(match.matchText).digest("hex").slice(0, 24),
-          }));
-        });
-        if (anchors.length === 0) return [];
-        const evidence = source.origin === "source-check"
-          ? source.judgment === "无据"
-            ? `已核查范围：${source.checkedScope}`
-            : `素材原句：${source.materialQuote}`
-          : source.origin === "consistency"
-            ? `文内冲突原句：${source.documentQuote}`
-            : null;
-        const suggestion = normalizeAnnotationSuggestion(source.note, source.suggestion);
-        const group = maskSensitiveAnnotationGroup({
-          id: `annotation-${crypto.randomUUID()}`,
-          summary: source.summary,
-          note: evidence ? `${source.note}\n${evidence}` : source.note,
-          origin: source.origin,
-          ...(currentReviewContext?.templateId
-            ? { reviewTemplateId: currentReviewContext.templateId }
-            : {}),
-          ...(suggestion ? { suggestion } : {}),
-          severity: source.severity,
-          status: "reviewing" as const,
-          anchors,
-        });
-        return [group];
+        },
       });
-      if (groups.length) {
-        const write = annotationGroupWriteQueue.then(async () => {
-          const turnOrigins = state._annotationOriginsReplacedThisTurn ?? new Set<string>();
-          const origins = new Set(groups.map((group) => group.origin));
-          const originsToReplace = new Set(
-            [...origins].filter((origin) => !turnOrigins.has(origin)),
-          );
-          const replacing = groups.filter((group) => originsToReplace.has(group.origin));
-          const appending = groups.filter((group) => !originsToReplace.has(group.origin));
-          if (replacing.length > 0) {
-            assertTurnWriteAllowed(state, writeGuard);
-            await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, replacing);
-          }
-          if (appending.length > 0) {
-            assertTurnWriteAllowed(state, writeGuard);
-            await insertAnnotationGroups(state.docId, state.docVersion, appending);
-          }
-          assertTurnWriteAllowed(state, writeGuard);
-          state.annotationGroups = [
-            ...state.annotationGroups.filter((group) => !originsToReplace.has(group.origin)),
-            ...replacing,
-            ...appending,
-          ];
-          origins.forEach((origin) => turnOrigins.add(origin));
-          state._annotationOriginsReplacedThisTurn = turnOrigins;
-        });
-        annotationGroupWriteQueue = write.catch(() => undefined);
-        await write;
-      }
       return {
-        ok: groups.length > 0,
-        groupCount: groups.length,
-        anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0),
-        errors,
+        ok: result.ok,
+        groupCount: result.groupCount,
+        anchorCount: result.anchorCount,
+        errors: result.errors,
       };
     },
   });

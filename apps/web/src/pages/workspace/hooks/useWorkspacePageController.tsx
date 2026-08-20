@@ -1089,6 +1089,11 @@ export function useWorkspacePageController() {
     () =>
       sessionRestoreBlocked
         ? sessionRestoreChatInputBlockReason(sessionRestoreFailed)
+        : state.externalEditing
+          ? {
+              toast: "青简插件正在编辑",
+              placeholder: "青简插件正在编辑",
+            }
         : getChatInputBlockReason(
             dim,
             askUserInputDisabled,
@@ -1104,6 +1109,7 @@ export function useWorkspacePageController() {
       pendingReviewResolutionAvailable,
       sessionRestoreBlocked,
       sessionRestoreFailed,
+      state.externalEditing,
     ],
   );
   const chatInputBlockReasonRef = useRef(chatInputBlockReason);
@@ -1114,7 +1120,9 @@ export function useWorkspacePageController() {
   // 输入框一旦进入可用态就记住(用于 FLIP 区分交互出现 vs 刷新恢复,见 inputWasEverActiveRef)。
   if (!chatInputEditorDisabled) inputWasEverActiveRef.current = true;
   const chatInputSendEnabledWhenDisabled =
-    dim.content.kind === "pendingReview" && !askUserInputDisabled;
+    !state.externalEditing
+    && dim.content.kind === "pendingReview"
+    && !askUserInputDisabled;
   const pendingReviewPatches = useMemo(
     () =>
       allReviewPatches.filter((patch) => {

@@ -20,7 +20,23 @@ import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { attachOperationDenied, isAttachRequest } from "../lib/attachPolicy";
 
-type ExportFormat = "pdf" | "docx" | "txt" | "markdown" | "html";
+export type ExportFormat = "pdf" | "docx" | "txt" | "markdown" | "html";
+export type ExportFailureCode =
+  | "BROWSER_CAPABILITY_UNAVAILABLE"
+  | "EXPORT_BUSY"
+  | "EXPORT_DEADLINE_EXCEEDED"
+  | "EXPORT_RENDER_FAILED";
+
+export interface ExportDocumentSource {
+  document: PmDoc;
+  title: string;
+}
+
+export interface ExportResponseOptions {
+  format: ExportFormat;
+  loadSource: () => Promise<ExportDocumentSource | Response>;
+  onFailure?: (code: ExportFailureCode) => Response;
+}
 const warnedInvalidPublicOrigins = new Set<string>();
 const EXPORT_DEGRADATIONS_HEADER = "X-Qingagent-Export-Degradations";
 const SPECIALIZED_DIAGRAM_OVERLAY_DEGRADATION: ExportDegradation = {
@@ -59,25 +75,46 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   // 附录 B 之外的复用端点 discriminator：五种格式本期统一禁用，且必须早于
   // 浏览器能力探测、会话加载和渲染等任何副作用。
   if (isAttachRequest(c)) return attachOperationDenied(c);
+  return exportDocumentResponse(c, {
+    format,
+    loadSource: async () => {
+      const session = getSession(sessionId) ?? (await loadSessionFromThread(sessionId));
+      if (!session) {
+        return c.json({ error: `Session not found: ${sessionId}` }, 404);
+      }
+      if (!hasCanonicalDoc(session) || !session.doc) {
+        return c.json({ error: "当前会话没有可导出的文档" }, 409);
+      }
+      return {
+        document: session.doc,
+        title: session.title?.trim() || "青简导出",
+      };
+    },
+  });
+});
+
+/**
+ * 五格式导出的单一渲染管线。调用方只负责装载文档与选择错误外壳；浏览器能力门、
+ * 渲染、下载响应头、降级信息和渲染错误分类都在这里保持一致。
+ */
+export async function exportDocumentResponse(
+  c: Context,
+  options: ExportResponseOptions,
+): Promise<Response> {
+  const { format } = options;
+  const onFailure = options.onFailure ?? ((code) => defaultExportFailureResponse(c, code));
   if (
     format === "pdf" &&
     !hasHtmlToPdfRenderer() &&
     getBrowserCapabilityState().status === "unavailable"
   ) {
-    return browserCapabilityUnavailableResponse(c);
+    return onFailure("BROWSER_CAPABILITY_UNAVAILABLE");
   }
 
-  const session = getSession(sessionId) ?? (await loadSessionFromThread(sessionId));
-  if (!session) {
-    return c.json({ error: `Session not found: ${sessionId}` }, 404);
-  }
-  if (!hasCanonicalDoc(session) || !session.doc) {
-    return c.json({ error: "当前会话没有可导出的文档" }, 409);
-  }
-
-  const title = session.title?.trim() || "青简导出";
+  const source = await options.loadSource();
+  if (source instanceof Response) return source;
+  const { document, title } = source;
   const filename = `${safeFilename(title)}.${FILE_EXTENSIONS[format]}`;
-  const document = session.doc;
   const baseUrl = requestOrigin(c.req.url, {
     forwardedHost: c.req.header("x-forwarded-host"),
     forwardedProto: c.req.header("x-forwarded-proto"),
@@ -113,21 +150,21 @@ exportRoutes.get("/export/:sessionId", async (c) => {
       typeof err === "object" &&
       (err as { code?: unknown }).code === "BROWSER_CAPABILITY_UNAVAILABLE"
     ) {
-      return browserCapabilityUnavailableResponse(c);
+      return onFailure("BROWSER_CAPABILITY_UNAVAILABLE");
     }
     if (
       err &&
       typeof err === "object" &&
       (err as { code?: unknown }).code === "EXPORT_BUSY"
     ) {
-      return exportBusyResponse(c);
+      return onFailure("EXPORT_BUSY");
     }
     if (
       err &&
       typeof err === "object" &&
       (err as { code?: unknown }).code === "EXPORT_DEADLINE_EXCEEDED"
     ) {
-      return exportDeadlineExceededResponse(c);
+      return onFailure("EXPORT_DEADLINE_EXCEEDED");
     }
     const internalDetail = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error("[export] render failed", {
@@ -136,9 +173,22 @@ exportRoutes.get("/export/:sessionId", async (c) => {
         .replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/g, "sk-[REDACTED]")
         .slice(0, 4_000),
     });
-    return c.json({ error: "导出失败，请重试", code: "EXPORT_RENDER_FAILED" }, 500);
+    return onFailure("EXPORT_RENDER_FAILED");
   }
-});
+}
+
+function defaultExportFailureResponse(c: Context, code: ExportFailureCode): Response {
+  switch (code) {
+    case "BROWSER_CAPABILITY_UNAVAILABLE":
+      return browserCapabilityUnavailableResponse(c);
+    case "EXPORT_BUSY":
+      return exportBusyResponse(c);
+    case "EXPORT_DEADLINE_EXCEEDED":
+      return exportDeadlineExceededResponse(c);
+    case "EXPORT_RENDER_FAILED":
+      return c.json({ error: "导出失败，请重试", code }, 500);
+  }
+}
 
 function browserCapabilityUnavailableResponse(c: Context) {
   return c.json(
@@ -173,9 +223,12 @@ function exportDeadlineExceededResponse(c: Context) {
   );
 }
 
-function normalizeExportFormat(value: string | undefined): ExportFormat | null {
-  if (value === "md") return "markdown";
-  if (value === "htm") return "html";
+export function normalizeExportFormat(
+  value: string | undefined,
+  allowAliases = true,
+): ExportFormat | null {
+  if (allowAliases && value === "md") return "markdown";
+  if (allowAliases && value === "htm") return "html";
   if (value === "pdf" || value === "docx" || value === "txt" || value === "markdown" || value === "html") return value;
   return null;
 }

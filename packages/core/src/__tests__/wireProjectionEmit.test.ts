@@ -105,6 +105,46 @@ describe("modern wire projection", () => {
     expect(stateKinds(Array.from(emitProjectedDocState(state, "review")))).toEqual(["pendingReview"]);
   });
 
+  it("外部租约活跃、过期与结束都会进入投影键并按变化发帧", () => {
+    const state = createSession("external-editing-projection");
+    seedDoc(state);
+    const lease = {
+      turnId: "turn-external",
+      principalId: "external:plugin",
+      expiresAt: Date.now() + 60_000,
+      startedFromEmpty: false,
+      directCommitCount: 0,
+    };
+
+    state.externalBusyLease = lease;
+    const active = Array.from(emitProjectedDocState(state, "lease-active"));
+    expect(active).toEqual([
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: true,
+          externalEditing: true,
+        },
+      },
+    ]);
+    expect(state._lastEmittedWireKind).toContain(":external");
+    expect(Array.from(emitProjectedDocState(state, "lease-still-active"))).toEqual([]);
+
+    state.externalBusyLease = { ...lease, expiresAt: Date.now() - 1 };
+    const expired = Array.from(emitProjectedDocState(state, "lease-expired"));
+    expect(expired[0]?.kind === "docStateChanged" && expired[0].data.externalEditing).toBe(false);
+    expect(state._lastEmittedWireKind).toContain(":native");
+
+    state.externalBusyLease = lease;
+    expect(Array.from(emitProjectedDocState(state, "lease-renewed"))).toHaveLength(1);
+    state.externalBusyLease = null;
+    const ended = Array.from(emitProjectedDocState(state, "lease-ended"));
+    expect(ended[0]?.kind === "docStateChanged" && ended[0].data.externalEditing).toBe(false);
+    expect(state._lastEmittedWireKind).toContain(":native");
+  });
+
   it("EC-15 requires transitionDocState to stop emitting frames directly", () => {
     const result = transitionDocState(
       createSession("ec-15"),

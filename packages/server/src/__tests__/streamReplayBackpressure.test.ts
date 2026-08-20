@@ -495,6 +495,7 @@ describe("GET /api/v1/events 回放背压", () => {
           state: { kind: "editing" },
           activeOverlay: null,
           agentBusy: false,
+          externalEditing: false,
         },
       });
     expect(restored.at(-1)).toEqual({

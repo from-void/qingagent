@@ -66,6 +66,14 @@ export function deriveAgentBusy(
   return state.streamId !== null;
 }
 
+export function deriveExternalEditing(
+  state: SessionState,
+  now = Date.now(),
+): boolean {
+  return state.externalBusyLease !== null
+    && state.externalBusyLease.expiresAt > now;
+}
+
 export function deriveActiveOverlay(state: SessionState): ActiveOverlay {
   const owner = getActiveSuspensionOwner(state);
   // askUser overlay 两态都要:① 已 suspend 待答(owner);② 正在【流式产题】(running)——
@@ -118,7 +126,8 @@ export function* emitProjectedDocState(
   const stateForWire = deriveContentState(state);
   const activeOverlay = deriveActiveOverlay(state);
   const agentBusy = deriveAgentBusy(state);
-  const projectionKey = `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}`;
+  const externalEditing = deriveExternalEditing(state);
+  const projectionKey = `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}:${externalEditing ? "external" : "native"}`;
 
   if (projectionKey === state._lastEmittedWireKind) {
     return;
@@ -127,6 +136,6 @@ export function* emitProjectedDocState(
   state._lastEmittedWireKind = projectionKey;
   yield {
     kind: "docStateChanged",
-    data: { state: stateForWire, activeOverlay, agentBusy },
+    data: { state: stateForWire, activeOverlay, agentBusy, externalEditing },
   };
 }

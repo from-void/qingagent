@@ -52,6 +52,8 @@ export interface ChatInputSnapshot {
 export interface ChatInputHandle {
   /** Insert a chip at the current caret. */
   insertChip: (spec: ChatChipSpec) => boolean;
+  /** 追加一个 chip 到输入框末尾(不依赖光标位置);批注回填等「攒多条」场景用。 */
+  appendChip: (spec: ChatChipSpec, options?: { separateBlock?: boolean }) => boolean;
   /** 打开素材菜单，供文档区的“添加素材”等明确入口复用。 */
   openFileMenu: () => boolean;
   /** 按 snapshot 中的 chip 顺序移除一个 chip。 */

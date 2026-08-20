@@ -4754,12 +4754,16 @@ describe("WorkspacePage review controls", () => {
 
     expect(sendMessageCommands(stream)).toHaveLength(0);
     expect(editor.textContent).toContain("帮我把这段润色一下");
-    expect(editor.textContent).toContain("按批注修改：事实有误——改为五月发布（原文：『甲组』）");
+    expect(editor.textContent).not.toContain("按批注修改：");
     expect(host?.querySelector(".qa-toast")?.textContent).toContain(
       "已填入修改要求，请点击发送",
     );
     expect(editor.querySelectorAll("br")).toHaveLength(4);
-    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
+    const annotationChip = editor.querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(annotationChip?.querySelector(".c-label")?.textContent).toBe("批注·事实有误");
+    expect(annotationChip?.querySelector<HTMLTextAreaElement>(".annotation-chip-editor")?.value).toBe(
+      "按批注修改：事实有误——改为五月发布（原文：『甲组』）",
+    );
     expect(host?.querySelector(".annotation-hover-card")).toBeNull();
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-accepted")).toBe(false);
@@ -4774,11 +4778,125 @@ describe("WorkspacePage review controls", () => {
     expect(send.data.text).not.toContain("时间与资料不一致");
     expect(send.data.text).not.toContain("p-1");
     expect(send.data.text).not.toMatch(/\bPM\b/u);
-    expect(send.data.richText).toBeUndefined();
-    expect(send.data.chips ?? []).toEqual([]);
+    expect(send.data.richText).toBe("帮我把这段润色一下\n\n{{chip:0}}");
+    expect(send.data.chips ?? []).toEqual([
+      expect.objectContaining({
+        kind: { kind: "text" },
+        label: "批注·事实有误",
+        text: "按批注修改：事实有误——改为五月发布（原文：『甲组』）",
+      }),
+    ]);
     expect(sendMessageCommands(stream)).toHaveLength(1);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-accepted")).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("连续生成两条不同批注时保留两个 chip，用户发送的文本按插入顺序完整展开", async () => {
+    const groups: AnnotationGroup[] = [
+      {
+        id: "annotation-1",
+        summary: "事实有误",
+        note: "发布时间不一致",
+        origin: "source-check",
+        suggestion: "改为五月发布",
+        status: "reviewing",
+        anchors: [{ blockId: "p-1", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "hash-annotation-1" }],
+      },
+      {
+        id: "annotation-2",
+        summary: "口径冲突",
+        note: "金额口径不一致",
+        origin: "source-check",
+        suggestion: "统一为含税金额",
+        status: "reviewing",
+        anchors: [{ blockId: "p-2", pmFrom: 7, pmTo: 9, quote: "乙组", textHash: "hash-annotation-2" }],
+      },
+    ];
+    const stream = await renderWorkspaceWithAnnotations(
+      "reviewing",
+      undefined,
+      groups,
+      pmDoc([
+        pmParagraph("p-1", "甲组正文"),
+        pmParagraph("p-2", "乙组正文"),
+      ]),
+    );
+    const editor = getChatEditor();
+
+    vi.useFakeTimers();
+    for (const group of groups) {
+      await act(async () => {
+        host!.querySelector<HTMLElement>(`[data-annotation-group="${group.id}"]`)!
+          .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        vi.advanceTimersByTime(80);
+      });
+      await clickButton("生成修改");
+    }
+    await flushMicrotasks(5);
+
+    const instructions = [
+      "按批注修改：事实有误——改为五月发布（原文：『甲组』）",
+      "按批注修改：口径冲突——统一为含税金额（原文：『乙组』）",
+    ];
+    const chips = editor.querySelectorAll<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(chips).toHaveLength(2);
+    expect(Array.from(chips, (chip) => chip.querySelector(".c-label")?.textContent)).toEqual([
+      "批注·事实有误",
+      "批注·口径冲突",
+    ]);
+    expect(Array.from(chips, (chip) =>
+      chip.querySelector<HTMLTextAreaElement>(".annotation-chip-editor")?.value,
+    )).toEqual(instructions);
+    expect(editor.textContent).not.toContain("按批注修改：");
+    expect(sendMessageCommands(stream)).toHaveLength(0);
+
+    await clickButton("发送");
+    await flushMicrotasks(5);
+    const send = sendMessageCommands(stream)[0];
+    expect(send?.kind).toBe("sendMessage");
+    if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
+    expect(send.data.text).toBe(instructions.join("\n\n"));
+    expect(send.data.richText).toBe("{{chip:0}}\n\n{{chip:1}}");
+    expect(send.data.chips?.map((chip) => chip.text)).toEqual(instructions);
+    expect(sendMessageCommands(stream)).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  it("批注摘要为空时使用完整降级标签，发送仍展开原始修改指令", async () => {
+    const group: AnnotationGroup = {
+      id: "annotation-empty-summary",
+      summary: "   ",
+      note: "发布时间不一致",
+      origin: "source-check",
+      suggestion: "改为五月发布",
+      status: "reviewing",
+      anchors: [{ blockId: "p-1", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "hash-empty-summary" }],
+    };
+    const stream = await renderWorkspaceWithAnnotations("reviewing", undefined, [group]);
+
+    vi.useFakeTimers();
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[data-annotation-group="annotation-empty-summary"]')!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    await clickButton("生成修改");
+
+    const editor = getChatEditor();
+    const chip = editor.querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(chip?.querySelector(".c-label")?.textContent).toBe("批注修改");
+    expect(chip?.querySelector<HTMLTextAreaElement>(".annotation-chip-editor")?.value).toBe(
+      "按批注修改：改为五月发布（原文：『甲组』）",
+    );
+    expect(sendMessageCommands(stream)).toHaveLength(0);
+
+    await clickButton("发送");
+    await flushMicrotasks(5);
+    const send = sendMessageCommands(stream)[0];
+    expect(send?.kind).toBe("sendMessage");
+    if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
+    expect(send.data.text).toBe("按批注修改：改为五月发布（原文：『甲组』）");
     vi.useRealTimers();
   });
 
@@ -4799,8 +4917,12 @@ describe("WorkspacePage review controls", () => {
 
     const editor = getChatEditor();
     expect(sendMessageCommands(stream)).toHaveLength(1);
-    expect(editor.textContent).toContain("按批注修改：");
-    expect(editor.querySelector('.chat-chip[data-kind="annotation"]')).toBeNull();
+    expect(editor.textContent).not.toContain("按批注修改：");
+    const restoredChip = editor.querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(restoredChip).not.toBeNull();
+    expect(restoredChip?.querySelector<HTMLTextAreaElement>(".annotation-chip-editor")?.value).toBe(
+      "按批注修改：事实有误——改为四月发布（原文：『甲组』）",
+    );
     expect(host?.querySelector('[data-annotation-group="annotation-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
     expect(host?.querySelector(".qa-toast")?.textContent).toContain("发送失败，请重试");
     vi.useRealTimers();
@@ -8215,6 +8337,8 @@ async function renderWorkspaceWithReview(specs: ToolCallSpec[]): Promise<MockSer
 async function renderWorkspaceWithAnnotations(
   status: AnnotationGroup["status"] = "reviewing",
   setup?: (stream: MockServerStreamInstance) => void,
+  annotationGroups?: AnnotationGroup[],
+  doc: PmDoc = pmDoc([pmParagraph("p-1", "甲组正文")]),
 ): Promise<MockServerStreamInstance> {
   const { WorkspacePage } = await import("./WorkspacePage");
   await render(<WorkspacePage />);
@@ -8231,9 +8355,9 @@ async function renderWorkspaceWithAnnotations(
   };
   await emitFrames(stream, [
     { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试批注" } },
-    { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(pmDoc([pmParagraph("p-1", "甲组正文")]), 1) } },
+    { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(doc, 1) } },
     { kind: "docStateChanged", data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false } },
-    { kind: "annotationGroupsReady", data: { groups: [annotation] } },
+    { kind: "annotationGroupsReady", data: { groups: annotationGroups ?? [annotation] } },
   ]);
   return stream;
 }

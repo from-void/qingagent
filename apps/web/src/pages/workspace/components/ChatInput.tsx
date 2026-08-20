@@ -456,6 +456,29 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         }
         return true;
       },
+      appendChip(spec, options) {
+        const edit = editRef.current;
+        if (!edit || disabled) return false;
+        const hasContent = !!edit.textContent?.trim() || edit.querySelector(".chat-chip") !== null;
+        if (hasContent) {
+          ensureTrailingLineBreaks(edit, options?.separateBlock ? 2 : 1);
+        }
+        edit.appendChild(makeChatChipNode(spec));
+        if (options?.separateBlock) ensureTrailingLineBreaks(edit, 2);
+        // DOM 内容一旦写入就先同步可提交状态；尾部连续 br 在部分真机上可能让
+        // Selection/Range 定位失败，光标位置不应反过来阻断已成功的批注回填。
+        reportChange();
+        try {
+          focusEditorEnd(edit);
+          const selection = window.getSelection();
+          if (selection?.rangeCount) {
+            savedRangeRef.current = selection.getRangeAt(0).cloneRange();
+          }
+        } catch {
+          // 非关键失败：内容和状态已经提交，只有光标定位降级。
+        }
+        return true;
+      },
       insertChip(spec) {
         const edit = editRef.current;
         if (!edit || disabled) return false;

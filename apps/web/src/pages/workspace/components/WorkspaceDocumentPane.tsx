@@ -657,10 +657,14 @@ export function WorkspaceDocumentPane({
                 showToast("输入框当前不可用，请稍后再回填批注");
                 return false;
               }
-              const inserted = chatInputRef.current.appendText(
-                buildAnnotationInstruction(group, suggestion),
-                { separateBlock: true },
-              );
+              const shortTitle = Array.from(group.summary.trim()).slice(0, 15).join("");
+              // 旧数据或异常批注可能没有摘要；降级为完整标签，避免出现半截「批注·」。
+              const label = shortTitle ? `批注·${shortTitle}` : "批注修改";
+              const inserted = chatInputRef.current.appendChip({
+                kind: "annotation",
+                label,
+                text: buildAnnotationInstruction(group, suggestion),
+              }, { separateBlock: true });
               if (!inserted) {
                 showToast("批注意见回填失败，请重试");
                 return false;

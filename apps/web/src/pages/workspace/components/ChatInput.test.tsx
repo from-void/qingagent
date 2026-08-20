@@ -259,6 +259,61 @@ describe("ChatInput", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it("appendChip 始终在末尾追加多个批注 chip，并按插入顺序展开完整指令", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const edit = getEditor();
+    setEditorText(edit, "已有草稿");
+    const range = document.createRange();
+    range.setStart(edit.firstChild!, 0);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const input = ref.current!;
+
+    act(() => {
+      expect(input.appendChip({
+        kind: "annotation",
+        label: "批注·事实有误",
+        text: "按批注修改：事实有误——改为五月发布（原文：『甲组』）",
+      }, { separateBlock: true })).toBe(true);
+      expect(input.appendChip({
+        kind: "annotation",
+        label: "批注·口径冲突",
+        text: "按批注修改：口径冲突——统一为含税金额（原文：『未税』）",
+      }, { separateBlock: true })).toBe(true);
+    });
+
+    const chips = edit.querySelectorAll<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(chips).toHaveLength(2);
+    expect(Array.from(chips, (chip) => chip.querySelector(".c-label")?.textContent)).toEqual([
+      "批注·事实有误",
+      "批注·口径冲突",
+    ]);
+    expect(edit.textContent).not.toContain("按批注修改：");
+    expect(ref.current?.snapshot()).toMatchObject({
+      text: [
+        "已有草稿",
+        "",
+        "按批注修改：事实有误——改为五月发布（原文：『甲组』）",
+        "",
+        "按批注修改：口径冲突——统一为含税金额（原文：『未税』）",
+      ].join("\n"),
+      richText: "已有草稿\n\n{{chip:0}}\n\n{{chip:1}}",
+      chips: [
+        expect.objectContaining({ kind: "annotation", text: "按批注修改：事实有误——改为五月发布（原文：『甲组』）" }),
+        expect.objectContaining({ kind: "annotation", text: "按批注修改：口径冲突——统一为含税金额（原文：『未税』）" }),
+      ],
+    });
+  });
+
   it("序列化并恢复时不把用户字面 chip marker 当成真实 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
@@ -902,6 +957,7 @@ describe("ChatInput", () => {
       />,
     );
     expect(disabledRef.current?.insertChip({ kind: "sel", label: "不可插入" })).toBe(false);
+    expect(disabledRef.current?.appendChip({ kind: "annotation", label: "不可追加" })).toBe(false);
     expect(disabledRef.current?.appendText("不可追加")).toBe(false);
     expect(disabledRef.current?.openFileMenu()).toBe(false);
     expect(disabledRef.current?.snapshot().chips).toEqual([]);
@@ -910,6 +966,7 @@ describe("ChatInput", () => {
     act(() => root?.unmount());
     root = null;
     expect(handle.insertChip({ kind: "sel", label: "已卸载" })).toBe(false);
+    expect(handle.appendChip({ kind: "annotation", label: "已卸载" })).toBe(false);
     expect(handle.appendText("已卸载")).toBe(false);
   });
 

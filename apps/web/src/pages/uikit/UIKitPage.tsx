@@ -596,7 +596,7 @@ export function UIKitPage() {
     <div id="uikit-root" className="uk-root">
       <div className="uk-top">
         <h1>青简 · UI 规范</h1>
-        <span className="uk-sub">qingagent design system</span>
+        <span className="uk-sub">QingAgent design system</span>
         <span className="uk-meta">#/uikit · 铁律 → Token → 场景 · 真类名活页</span>
       </div>
 

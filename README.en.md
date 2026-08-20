@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src=".github/assets/logo.svg" alt="qingagent" width="128">
+<img src=".github/assets/logo.svg" alt="QingAgent 青简" width="128">
 
-# qingagent 青简
+# QingAgent 青简
 
 **Writing AI that keeps you in charge**
 
@@ -20,7 +20,7 @@ A more human-friendly way to write documents with AI, with a toolkit built aroun
 
 ## What is this
 
-qingagent is an **AI writing client that runs on your own computer**.
+QingAgent is an **AI writing client that runs on your own computer**.
 
 You tell it what you want in plain language, and it writes the draft into a real editor — not a message in a chat log, but a document you can typeset, edit and export. From then on, every AI edit is laid over your original text as a candidate: you accept or reject them one by one, and **nothing lands until you say so**.
 
@@ -28,7 +28,7 @@ Export to PDF, Word or Markdown when you're done — what you see is what you de
 
 **It solves three problems:**
 
-| The pain | What qingagent does |
+| The pain | What QingAgent does |
 |---|---|
 | **Drafting is hard** | Say what you need in one sentence; the AI clarifies before writing, drafts on four parallel lanes and picks the best — a shaped first draft in under a minute |
 | **Reviewing is hard** | Every AI change is a candidate you review one by one; 12 role personas (interviewer, client, legal, chief editor…) can nitpick your draft first |
@@ -40,7 +40,7 @@ Export to PDF, Word or Markdown when you're done — what you see is what you de
 
 ### 1.1 One sentence in, a finished draft on the page
 
-Say what you want in the chat box. qingagent narrows things down with a few questions first (say "just draft it" to skip), then streams the draft into the paper-styled editor on the right.
+Say what you want in the chat box. QingAgent narrows things down with a few questions first (say "just draft it" to skip), then streams the draft into the paper-styled editor on the right.
 
 ![From one sentence to a finished draft](.github/assets/qa-draft.gif)
 
@@ -79,7 +79,7 @@ When you ask for changes, the AI never overwrites your text. Every edit appears 
 
 ### 1.4 Review center: an editorial team on call
 
-Have different reviewers read your draft before you ship it. qingagent ships with 8 review types and 23 templates (11 general + 12 role perspectives):
+Have different reviewers read your draft before you ship it. QingAgent ships with 8 review types and 23 templates (11 general + 12 role perspectives):
 
 | | |
 |---|---|
@@ -112,7 +112,7 @@ Two ways to work: launching a review from the menu **only creates annotations an
 
 ### 1.7 Open source, free, running on your own machine
 
-qingagent is MIT-licensed and costs nothing beyond your own model API usage. A ~3,000-character article runs about **¥0.05–0.10** in model fees (estimated from DeepSeek V4 Flash peak/off-peak pricing). All data stays on your machine and never passes through our servers.
+QingAgent is MIT-licensed and costs nothing beyond your own model API usage. A ~3,000-character article runs about **¥0.05–0.10** in model fees (estimated from DeepSeek V4 Flash peak/off-peak pricing). All data stays on your machine and never passes through our servers.
 
 ---
 
@@ -132,7 +132,7 @@ Launch it once and enter your own DeepSeek or Kimi API key in settings to start 
 
 ## 3. Desktop-first, with a web build for local agent debugging
 
-qingagent is **first and foremost a desktop client**: local database, filesystem access, a bundled `qa` command line and OS-level deep links all assume the desktop form.
+QingAgent is **first and foremost a desktop client**: local database, filesystem access, a bundled `qa` command line and OS-level deep links all assume the desktop form.
 
 The same codebase can also be **built and run as a web app locally** — useful for walkthroughs, acceptance checks, and **debugging agent behaviour on your own machine** (tweaking prompts, watching tool calls, validating skills).
 
@@ -174,17 +174,17 @@ Open `http://localhost:6173`, enter the `QINGAGENT_AUTH_TOKEN` you set, and it i
 
 ---
 
-## 4. qingagent inside DeepSeek Harness
+## 4. QingAgent inside DeepSeek Harness
 
-qingagent now supports the **DeepSeek Harness plugin system** — [**dsh-qingagent**](https://github.com/void2anything/dsh-qingagent).
+QingAgent now supports the **DeepSeek Harness plugin system** — [**dsh-qingagent**](https://github.com/void2anything/dsh-qingagent).
 
-With the plugin installed, you shape the writing in a DSH conversation while the agent drafts, edits and submits reviews through the qingagent engine; a **paper panel built from the same source as the desktop app** grows on the right, with per-change verdicts, annotation carousel, diagram editing and export. Documents live in the **same local library** as the desktop client — write it in DSH, keep editing it in qingagent.
+With the plugin installed, you shape the writing in a DSH conversation while the agent drafts, edits and submits reviews through the QingAgent engine; a **paper panel built from the same source as the desktop app** grows on the right, with per-change verdicts, annotation carousel, diagram editing and export. Documents live in the **same local library** as the desktop client — write it in DSH, keep editing it in QingAgent.
 
 ```bash
 npx @deepseek-ai/dsh plugin --profile web add dsh-qingagent@latest
 ```
 
-> The plugin talks to the local qingagent engine, so install and launch the desktop client once first. See the [dsh-qingagent repo](https://github.com/void2anything/dsh-qingagent).
+> The plugin talks to the local QingAgent engine, so install and launch the desktop client once first. See the [dsh-qingagent repo](https://github.com/void2anything/dsh-qingagent).
 
 ---
 
@@ -210,7 +210,7 @@ packages/qa-cli       The qa command line used by external agents
 
 ### Prompt prefix caching
 
-The biggest cost in long sessions is re-sending context. qingagent stabilises the prompt prefix end to end:
+The biggest cost in long sessions is re-sending context. QingAgent stabilises the prompt prefix end to end:
 
 - system runtime instructions and environment descriptions are memoized per process, byte-identical across turns;
 - the session briefing is written once at session creation and becomes an immutable prefix;
@@ -243,7 +243,7 @@ Proposal operations: `fullDraft`, `qingml`, `setTitle`, `strReplace`, `markText`
 
 On launch the desktop app writes instance details to `~/.qingagent/instance.json` (`schemaVersion`, `port`, `pid`, `version`, `attachProtocolVersion`, `instanceId`, `libraryId`, a 256-bit `token`, `startedAt`). The port defaults to `21823` and falls back to an OS-assigned random port when taken — **the port in the instance file is authoritative**.
 
-A second desktop process that finds a live instance with the same `libraryId` attaches to it instead of starting its own server. Expired tokens or sessions re-authenticate automatically; if the original instance disappears, rediscovery retries with 1–8 s exponential backoff and completes within roughly 30 s. This is the same protocol the DSH plugin uses to reach qingagent.
+A second desktop process that finds a live instance with the same `libraryId` attaches to it instead of starting its own server. Expired tokens or sessions re-authenticate automatically; if the original instance disappears, rediscovery retries with 1–8 s exponential backoff and completes within roughly 30 s. This is the same protocol the DSH plugin uses to reach QingAgent.
 
 ### Export pipeline
 
@@ -313,7 +313,7 @@ Desktop single-user usage needs no configuration. **Web / self-hosted deployment
 
 ## 7. Security
 
-> **⚠️ Deployment warning: qingagent is designed for a single user and a single tenant. There is no data or permission isolation between users. `QINGAGENT_AUTH_TOKEN` is an all-or-nothing shared secret, not an identity; anyone holding it and able to reach the backend can read, modify and delete every session and document, and burn through your model quota. Do not deploy it as a multi-tenant service on the public internet.**
+> **⚠️ Deployment warning: QingAgent is designed for a single user and a single tenant. There is no data or permission isolation between users. `QINGAGENT_AUTH_TOKEN` is an all-or-nothing shared secret, not an identity; anyone holding it and able to reach the backend can read, modify and delete every session and document, and burn through your model quota. Do not deploy it as a multi-tenant service on the public internet.**
 
 - **The default boundary is local loopback.** The backend binds `127.0.0.1` by default, and that is exactly what the desktop app does. Exposing it further is an explicit choice with explicit responsibility.
 - **Command channel.** `POST /api/v1/commands` always requires deterministic credentials and a trusted browser origin. On desktop the main process proxies in a global command token that the renderer never sees; the token in `instance.json` serves `/api/v1/external/*` and attach only.
@@ -359,7 +359,7 @@ Development conventions live in [CONTRIBUTING.md](./CONTRIBUTING.md); community 
 Scan to join the WeChat user group — report problems, request features, follow updates:
 
 <!-- TODO: WeChat group QR code pending -->
-<!-- <img src=".github/assets/wechat-group.png" alt="qingagent user group" width="220"> -->
+<!-- <img src=".github/assets/wechat-group.png" alt="QingAgent user group" width="220"> -->
 
 You can also request and upvote features on the [feature board](https://qingagent.com/feedback/client). The DSH plugin has its own pool: [feature board · DSH plugin](https://qingagent.com/feedback/plugin).
 

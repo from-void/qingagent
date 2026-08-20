@@ -4,7 +4,7 @@ import path from "node:path";
 import { NEXT_STEP } from "./errors.js";
 
 export function writerSkillMarkdown(): string {
-  return `# 青简(qingagent)文档读写
+  return `# 青简(QingAgent)文档读写
 
 通过 \`qa\` CLI 操作用户本机的青简写作台。**你是提案者,不是终审者**:一切修改走提案,
 默认由用户在青简界面里裁决；只有用户明确要求你代为审查时,才可调用 review 裁决命令。
@@ -167,7 +167,7 @@ export type SkillInstallTarget = "claude" | "codex";
 export function pointerSkillMarkdown(): string {
   return `---
 name: qingagent-writer
-description: 用户提到青简/qingagent 写作台的读写(写进青简、改青简文档、在青简建一篇)时使用。
+description: 用户提到青简/QingAgent 写作台的读写(写进青简、改青简文档、在青简建一篇)时使用。
 ---
 本机若装有 qa CLI,先跑 \`qa skills read writer\` 读完整行为规范再动手;规范以 CLI 内嵌版为准。
 青简未启动时先 \`qa status\` 确认并提示用户打开应用。

@@ -739,10 +739,10 @@
 .settings-about .ab-intro{
   margin:0;max-width:360px;font-size:13px;line-height:1.7;color:var(--ink-desc);
 }
-/* 版本号:mono,点击复制,不作独立按钮外观 */
+/* 版本号:宋体,点击复制,不作独立按钮外观 */
 .settings-about .ab-version{
   margin-top:2px;padding:2px 6px;border:0;background:transparent;cursor:pointer;
-  font-family:var(--font-mono);font-size:12.5px;letter-spacing:.02em;color:var(--qj-switch-text);
+  font-family:var(--font-zh-serif);font-size:12.5px;letter-spacing:.02em;color:var(--qj-switch-text);
   transition:color .2s;
 }
 .settings-about .ab-version:hover{color:var(--qj-cinnabar)}

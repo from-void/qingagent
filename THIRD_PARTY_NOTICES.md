@@ -1,6 +1,6 @@
 # Third-Party Notices / 第三方组件声明
 
-qingagent is licensed under the MIT License (see [LICENSE](./LICENSE)).
+QingAgent is licensed under the MIT License (see [LICENSE](./LICENSE)).
 The official desktop distribution bundles the following third-party
 components. Full license texts are available under
 [docs/licenses/texts/](./docs/licenses/texts/) in this repository and are

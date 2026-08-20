@@ -46,7 +46,7 @@ export function AboutPanel() {
   // 开发构建:-dev. 版本不参与更新(与主进程 startDesktopUpdater dev 短路口径一致)。
   const isDevBuild = isDesktop && appVersion.includes("-dev.");
   const isBeta = appVersion.includes("-beta");
-  const channelLabel = isBeta ? "测试通道" : "正式通道";
+  const channelLabel = isBeta ? "测试版本" : "正式版本";
 
   // 共享 store 的被动推送(下载就绪 / 强更);手动检查结果走本地 state。
   const pushed = useSyncExternalStore(subscribeDesktopUpdate, getDesktopUpdateSnapshot);
@@ -121,7 +121,7 @@ export function AboutPanel() {
           <img src="/favicon.svg" alt="" width={56} height={56} draggable={false} />
         </div>
         <div className="ab-name">
-          青简 <span className="ab-name-en">qingagent</span>
+          青简 <span className="ab-name-en">QingAgent</span>
         </div>
         <p className="ab-intro">{INTRO}</p>
         <button

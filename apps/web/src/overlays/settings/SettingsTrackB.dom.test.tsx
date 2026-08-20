@@ -2180,6 +2180,23 @@ describe("About Panel", () => {
     vi.restoreAllMocks();
   });
 
+  it("展示规范品牌名与正式版本文案", async () => {
+    installAboutElectron({});
+    await renderAbout();
+
+    const name = host?.querySelector(".ab-name");
+    expect(name?.textContent).toContain("QingAgent");
+    expect(name?.textContent).not.toContain("qingagent");
+    expect(getAboutVersion().textContent).toContain("正式版本");
+  });
+
+  it("beta 版本号显示测试版本", async () => {
+    installAboutElectron({ appVersion: "1.2.0-beta.1" });
+    await renderAbout();
+
+    expect(getAboutVersion().textContent).toContain("测试版本");
+  });
+
   it("桌面端点「检查更新」→ 已是最新时状态显示已是最新版本", async () => {
     installAboutElectron({ checkForUpdate: vi.fn(async () => ({ kind: "none" as const })) });
     await renderAbout();

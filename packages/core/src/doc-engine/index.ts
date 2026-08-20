@@ -44,6 +44,7 @@ export {
   deriveAgentBusy,
   deriveContentState,
   deriveEditorState,
+  deriveExternalEditing,
   emitProjectedDocState,
 } from "./docStateMachine.js";
 

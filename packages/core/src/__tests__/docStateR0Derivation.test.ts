@@ -12,6 +12,7 @@ import {
   deriveAgentBusy,
   deriveContentState,
   deriveEditorState,
+  deriveExternalEditing,
 } from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
@@ -296,11 +297,15 @@ describe("R0/R1 docState R5e derivation and mapping tests", () => {
       expired: deriveAgentBusy(expired, now),
       suspended: deriveAgentBusy(suspended, now),
       pendingConfirm: deriveAgentBusy(confirming, now),
+      externalActive: deriveExternalEditing(active, now),
+      externalExpired: deriveExternalEditing(expired, now),
     }).toEqual({
       active: true,
       expired: false,
       suspended: true,
       pendingConfirm: true,
+      externalActive: true,
+      externalExpired: false,
     });
   });
 

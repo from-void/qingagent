@@ -87,7 +87,12 @@ describe("processAgentStream tool-call-approval", () => {
     }));
     expect(frames).toContainEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: "confirm", agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: "confirm",
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     expect(state.pendingConfirms.get("tool-one")?.runId).toBe("run-confirm");
     const tool = state.chatHistory.flatMap((message) => message.parts)

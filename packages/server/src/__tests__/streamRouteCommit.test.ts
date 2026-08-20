@@ -99,6 +99,7 @@ describe("POST /api/v1/commit", () => {
             state: { kind: "empty" },
             activeOverlay: null,
             agentBusy: false,
+            externalEditing: false,
             reviewCompletion: "noop",
           },
         },

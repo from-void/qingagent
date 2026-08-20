@@ -10,13 +10,21 @@ import { WorkspaceChatPane } from "./WorkspaceChatPane";
 vi.mock("./ChatInput", async () => {
   const React = await import("react");
   return {
-    ChatInput: React.forwardRef<HTMLDivElement, { suppressModelKeyTip?: boolean }>(
+    ChatInput: React.forwardRef<HTMLDivElement, {
+      suppressModelKeyTip?: boolean;
+      placeholder?: string;
+      showStop?: boolean;
+      disabled?: boolean;
+    }>(
       function MockChatInput(props, ref) {
         return (
           <div
             ref={ref}
             data-chat-input
             data-suppress-model-key-tip={String(props.suppressModelKeyTip)}
+            data-placeholder={props.placeholder}
+            data-show-stop={String(props.showStop)}
+            data-disabled={String(props.disabled)}
           />
         );
       },
@@ -83,9 +91,18 @@ describe("WorkspaceChatPane coach 与模型 key 提示接棒", () => {
     expect(host.querySelector<HTMLElement>("[data-chat-input]")?.dataset.suppressModelKeyTip).toBe("false");
     expect(document.querySelector('[data-coach-mark="editor-input"]')).toBeNull();
   });
+
+  it("外部编辑时显示插件提示且不呈现停止按钮", async () => {
+    await renderPane(["editor-input"], true);
+
+    const input = host.querySelector<HTMLElement>("[data-chat-input]");
+    expect(input?.dataset.placeholder).toBe("青简插件正在编辑");
+    expect(input?.dataset.disabled).toBe("true");
+    expect(input?.dataset.showStop).toBe("false");
+  });
 });
 
-async function renderPane(coachSeen: string[]): Promise<void> {
+async function renderPane(coachSeen: string[], externalEditing = false): Promise<void> {
   vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Response.json({
     state: { status: "done", completedAt: "2026-08-18T00:00:00.000Z" },
     coachSeen,
@@ -94,20 +111,21 @@ async function renderPane(coachSeen: string[]): Promise<void> {
   await act(async () => {
     root.render(
       <OnboardingSettingsProvider>
-        <WorkspaceChatPane controller={createController()} />
+        <WorkspaceChatPane controller={createController(externalEditing)} />
       </OnboardingSettingsProvider>,
     );
     for (let index = 0; index < 5; index += 1) await Promise.resolve();
   });
 }
 
-function createController(): WorkspacePageController {
+function createController(externalEditing = false): WorkspacePageController {
   const emptyRef = createRef<HTMLDivElement>();
   return {
     state: {
       sessionId: "session-coach-test",
       messages: [],
       streamActive: false,
+      externalEditing,
       todos: [],
     },
     effectivePatchRevealing: false,
@@ -119,11 +137,11 @@ function createController(): WorkspacePageController {
     debugMode: false,
     inputHandedOff: false,
     inputMorphRef: emptyRef,
-    chatInputEditorDisabled: false,
+    chatInputEditorDisabled: externalEditing,
     inputContentOut: false,
     chatInputRef: { current: null },
-    chatInputPlaceholder: "告诉青简写什么",
-    agentActive: false,
+    chatInputPlaceholder: externalEditing ? "青简插件正在编辑" : "告诉青简写什么",
+    agentActive: externalEditing,
     chatInputSendEnabledWhenDisabled: false,
     handleSubmitChat: vi.fn(),
     handleCancelActiveStream: vi.fn(),

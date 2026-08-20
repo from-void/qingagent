@@ -135,7 +135,12 @@ describe("R0 cancelAskUser bridge red tests", () => {
     });
     expect(frames[1]).toEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: null,
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
     },
   );
@@ -160,7 +165,7 @@ describe("R0 cancelAskUser bridge red tests", () => {
     session._suspensionOwner = null;
     session._abortController = controller;
     session._activeTurnPromise = Promise.resolve();
-    session._lastEmittedWireKind = "editing:askUser:busy";
+    session._lastEmittedWireKind = "editing:askUser:busy:native";
 
     const originalConsoleError = console.error;
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
@@ -199,7 +204,12 @@ describe("R0 cancelAskUser bridge red tests", () => {
     });
     expect(frames[1]).toEqual({
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: null,
+        agentBusy: false,
+        externalEditing: false,
+      },
     });
   });
 

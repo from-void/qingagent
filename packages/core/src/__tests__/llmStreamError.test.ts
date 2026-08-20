@@ -1555,7 +1555,12 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
       )).toBe(true);
       expect(frames).not.toContainEqual({
         kind: "docStateChanged",
-        data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+        data: {
+          state: { kind: "empty" },
+          activeOverlay: null,
+          agentBusy: false,
+          externalEditing: false,
+        },
       });
     } finally {
       await deleteDocumentFamily(sessionId);

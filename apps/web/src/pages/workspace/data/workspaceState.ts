@@ -90,6 +90,8 @@ export interface WorkspaceState {
   docState: DocState;
   activeOverlay: WireActiveOverlay;
   agentBusy: boolean;
+  /** 仅由服务端 docStateChanged 驱动；本地 stop 不得乐观清除。 */
+  externalEditing: boolean;
   /** Chat messages in order of arrival (wire `ChatMessage` shape). */
   messages: ChatMessage[];
   /** Highest applied append `seq` per messageId. */
@@ -146,6 +148,7 @@ export const initialWorkspaceState: WorkspaceState = {
   docState: { kind: "empty" },
   activeOverlay: null,
   agentBusy: false,
+  externalEditing: false,
   messages: [],
   appendCursor: {},
   pendingAppends: {},
@@ -252,6 +255,7 @@ function workspaceReducerMut(
       }
       draft.docState = nextDocState;
       draft.activeOverlay = action.data.activeOverlay;
+      draft.externalEditing = action.data.externalEditing ?? false;
       reduceAgentBusyMut(draft, {
         kind: "projection",
         busy: action.data.agentBusy,
@@ -795,6 +799,7 @@ function reduceAgentBusyMut(
 function resetSessionScopedStateMut(draft: WorkspaceState): void {
   draft.docState = { kind: "empty" };
   draft.activeOverlay = null;
+  draft.externalEditing = false;
   reduceAgentBusyMut(draft, { kind: "reset" });
   draft.messages = [];
   draft.appendCursor = {};

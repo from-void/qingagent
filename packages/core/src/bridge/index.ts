@@ -166,6 +166,7 @@ export {
   deriveAgentBusy,
   deriveContentState,
   deriveEditorState,
+  deriveExternalEditing,
   emitProjectedDocState,
 } from "../doc-engine/docStateMachine.js";
 export type {

@@ -113,6 +113,7 @@ describe("reviewOriginLabel", () => {
   it("角色与自定义审查名保持原样，未知英文来源不直出", () => {
     expect(reviewOriginLabel("角色审查:法务")).toBe("角色审查:法务");
     expect(reviewOriginLabel("自定义审查:对外发布")).toBe("自定义审查:对外发布");
+    expect(reviewOriginLabel("external-plugin")).toBe("青简插件");
     expect(reviewOriginLabel("future-review-origin")).toBe("其他审查");
   });
 });

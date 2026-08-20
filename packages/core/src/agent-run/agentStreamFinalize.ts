@@ -48,6 +48,7 @@ import {
   flushSensitiveReviewReasoning,
   flushSensitiveReviewText,
 } from "./sensitiveReviewMasking.js";
+import { createAnnotationGroupsReadyFrame } from "../tools/annotationGroups.js";
 
 const logger = mastra.getLogger();
 const ANNOTATION_MUTATION_NO_PATCH_NOTICE = "未能生成修改，可再试或手动编辑。";
@@ -264,15 +265,7 @@ export async function* finalizeAgentStream(
     replacedAnnotationOrigins.length > 0
   ) {
     yield { kind: "annotationPreviewCleared", data: {} };
-    yield {
-      kind: "annotationGroupsReady",
-      data: {
-        groups: state.annotationGroups.filter((group) =>
-          replacedAnnotationOriginSet.has(group.origin)
-        ),
-        replacedOrigins: replacedAnnotationOrigins,
-      },
-    };
+    yield createAnnotationGroupsReadyFrame(state, replacedAnnotationOrigins);
     outcome.producedVisibleFrame = true;
   }
 

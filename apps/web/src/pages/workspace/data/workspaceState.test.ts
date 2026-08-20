@@ -2215,6 +2215,37 @@ describe("annotationGroupsReady 来源增量", () => {
   });
 
   describe("docStateChanged", () => {
+    it("外部编辑状态只随服务端帧进出，stop 不会乐观清除", () => {
+      const editing = reduce({
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: true,
+          externalEditing: true,
+        },
+      });
+      expect(editing.externalEditing).toBe(true);
+
+      const stopped = workspaceReducer(editing, {
+        kind: "streamTerminated",
+        reason: "stop",
+      });
+      expect(stopped.agentBusy).toBe(false);
+      expect(stopped.externalEditing).toBe(true);
+
+      const released = workspaceReducer(stopped, {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+          externalEditing: false,
+        },
+      });
+      expect(released.externalEditing).toBe(false);
+    });
+
     it("transitions through states", () => {
       const next = reduce(
         {

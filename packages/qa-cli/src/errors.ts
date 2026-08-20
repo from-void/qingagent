@@ -14,6 +14,10 @@ export type QaErrorCode =
   | "NOT_FOUND"
   | "SESSION_NOT_FOUND"
   | "MATERIAL_NOT_FOUND"
+  | "BROWSER_CAPABILITY_UNAVAILABLE"
+  | "EXPORT_BUSY"
+  | "EXPORT_DEADLINE_EXCEEDED"
+  | "EXPORT_RENDER_FAILED"
   | "RATE_LIMITED"
   | "SERVICE_UNAVAILABLE";
 
@@ -33,6 +37,10 @@ export const NEXT_STEP: Record<QaErrorCode, string> = {
   NOT_FOUND: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
   SESSION_NOT_FOUND: "会话不存在,用 `qa sessions list` 重新对号,不要重试原 id",
   MATERIAL_NOT_FOUND: "材料不存在,用 `qa files list` 重新对号,不要重试原 id",
+  BROWSER_CAPABILITY_UNAVAILABLE: "当前实例缺少可用的安全浏览器能力；改用 docx、html、markdown 或 txt，或联系部署管理员",
+  EXPORT_BUSY: "当前导出任务较多，请按 Retry-After 等待后重试",
+  EXPORT_DEADLINE_EXCEEDED: "导出渲染超时；请减少超大图片或图表后重试",
+  EXPORT_RENDER_FAILED: "导出渲染失败；换一种格式重试，仍失败则告知用户",
   RATE_LIMITED: "请求太频繁,请降低读取频率并优先使用 `qa doc events --follow`",
   SERVICE_UNAVAILABLE: "先运行 `qa status` 检查实例状态,稍后重试一次;仍失败请告知用户",
 };
@@ -137,6 +145,10 @@ function commonErrorHint(code: QaErrorCode): string | null {
     code === "VERSION_CONFLICT" ||
     code === "SESSION_NOT_FOUND" ||
     code === "MATERIAL_NOT_FOUND" ||
+    code === "BROWSER_CAPABILITY_UNAVAILABLE" ||
+    code === "EXPORT_BUSY" ||
+    code === "EXPORT_DEADLINE_EXCEEDED" ||
+    code === "EXPORT_RENDER_FAILED" ||
     code === "RATE_LIMITED" ||
     code === "SERVICE_UNAVAILABLE"
   ) {

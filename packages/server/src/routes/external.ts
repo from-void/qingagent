@@ -21,6 +21,7 @@ import {
 } from "@qingagent/db";
 import type {
   ExternalAnnotation,
+  ExternalAnnotationCreateRequest,
   ExternalAnnotationIgnoreRequest,
   ExternalBridgeFrame,
   ExternalDocReplaceRequest,
@@ -40,8 +41,14 @@ import {
   deriveContentState,
   deriveTitleFromDoc,
   documentRepo,
+  emitProjectedDocState,
+  EXTERNAL_PLUGIN_REVIEW_ORIGIN,
+  hasCanonicalDoc,
   isWholeDocumentSuggestionBatchId,
+  listLexicons,
   QINGAGENT_RESOURCE_ID,
+  createAnnotationGroupsInputSchema,
+  writeAnnotationGroups,
   type SessionState,
 } from "@qingagent/core";
 import {
@@ -81,6 +88,11 @@ import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import { queueExternalChat } from "../lib/externalChatQueue";
 import { externalTemplateRoutes } from "./externalTemplates";
 import { externalSkillRoutes } from "./externalSkills";
+import {
+  exportDocumentResponse,
+  normalizeExportFormat,
+  type ExportFailureCode,
+} from "./export";
 import { resolveUploadMaxBytes } from "../lib/uploadLimits";
 import {
   deleteUploadedFile,
@@ -159,6 +171,18 @@ externalRoutes.get("/health", (c) => {
     return externalError(c, 503, "AUTH_FAILED", "instance identity is not ready");
   }
   return c.json({ ok: true, ...info });
+});
+
+externalRoutes.get("/lexicons", async (c) => {
+  const limited = rateLimit(c);
+  if (limited) return limited;
+  const lexicons = (await listLexicons()).map(({ id, name, entryCount, enabled }) => ({
+    id,
+    name,
+    entryCount,
+    enabled,
+  }));
+  return c.json({ lexicons });
 });
 
 externalRoutes.get("/sessions", async (c) => {
@@ -553,6 +577,41 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
   });
 });
 
+externalRoutes.get("/sessions/:id/export", async (c) => {
+  const sessionId = c.req.param("id");
+  const format = normalizeExportFormat(c.req.query("format"), false);
+  if (!format) {
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      "导出格式不支持，仅支持 pdf、docx、html、markdown、txt",
+      "把 format 改为 pdf、docx、html、markdown 或 txt 后重试",
+    );
+  }
+  return exportDocumentResponse(c, {
+    format,
+    loadSource: async () => {
+      const session = await getOrRestoreSessionForVersionedRead(sessionId);
+      if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+      if (!session.doc || !hasCanonicalDoc(session)) {
+        return externalError(
+          c,
+          409,
+          "CONFLICT",
+          "当前会话没有可导出的文档",
+          "先写入文档内容，再重新导出",
+        );
+      }
+      return {
+        document: session.doc,
+        title: session.title?.trim() || "青简导出",
+      };
+    },
+    onFailure: (code) => externalExportFailure(c, code),
+  });
+});
+
 externalRoutes.put("/sessions/:id/doc", async (c) => {
   const startedAt = Date.now();
   const sessionId = c.req.param("id");
@@ -802,6 +861,145 @@ externalRoutes.get("/sessions/:id/review/annotations/:annotationId", async (c) =
     result: "ok",
   });
   return c.json({ sessionId, annotation: annotationForExternal(annotation) });
+});
+
+externalRoutes.post("/sessions/:id/review/annotations", async (c) => {
+  const startedAt = Date.now();
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as
+    Partial<ExternalAnnotationCreateRequest> | null;
+  const parsedGroups = createAnnotationGroupsInputSchema.safeParse({
+    groups: body?.groups,
+  });
+  if (
+    !body
+    || !isDocumentVersion(body.expectedDocVersion)
+    || !isOptionalExternalTurnId(body.turnId)
+    || !parsedGroups.success
+  ) {
+    externalLog("annotation_create", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VALIDATION",
+    });
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      "expectedDocVersion、turnId 或 groups 不合法",
+    );
+  }
+
+  const request = body as ExternalAnnotationCreateRequest;
+  const leaseOwner = externalLeaseOwnerForTurn(c, request.turnId);
+  type AtomicResult =
+    | { kind: "session_not_found" }
+    | { kind: "agent_busy" }
+    | { kind: "lock_lost" }
+    | { kind: "version_conflict"; actual: number }
+    | { kind: "no_document" }
+    | { kind: "validation"; errors: string[] }
+    | {
+        kind: "created";
+        docVersion: number;
+        groups: AnnotationGroup[];
+        groupCount: number;
+        anchorCount: number;
+      };
+  const atomic = { result: { kind: "session_not_found" } as AtomicResult };
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.runExclusive(sessionId, async function* () {
+      const session = await getOrRestoreSession(sessionId);
+      if (!session) return;
+      const leaseConflict = externalReviewLeaseConflict(session, leaseOwner);
+      if (leaseConflict) {
+        atomic.result = { kind: leaseConflict };
+        return;
+      }
+      if (session.docVersion !== request.expectedDocVersion) {
+        atomic.result = { kind: "version_conflict", actual: session.docVersion };
+        return;
+      }
+      if (!session.doc || !hasCanonicalDoc(session)) {
+        atomic.result = { kind: "no_document" };
+        return;
+      }
+      const result = await writeAnnotationGroups({
+        state: session,
+        groups: parsedGroups.data.groups,
+        forcedOrigin: EXTERNAL_PLUGIN_REVIEW_ORIGIN,
+        replacementMode: "replace",
+        atomic: true,
+      });
+      if (!result.ok) {
+        atomic.result = { kind: "validation", errors: result.errors };
+        return;
+      }
+      if (result.frame) yield result.frame;
+      yield* emitProjectedDocState(session, "external_annotations_written");
+      atomic.result = {
+        kind: "created",
+        docVersion: session.docVersion,
+        groups: result.groups,
+        groupCount: result.groupCount,
+        anchorCount: result.anchorCount,
+      };
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
+
+  const seq = maxSeq(frames);
+  const result = atomic.result;
+  if (result.kind === "session_not_found") {
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  if (result.kind === "agent_busy") {
+    return externalError(c, 409, "AGENT_BUSY");
+  }
+  if (result.kind === "lock_lost") {
+    return externalError(c, 409, "LOCK_LOST");
+  }
+  if (result.kind === "version_conflict") {
+    return reviewVersionConflict(c, request.expectedDocVersion, result.actual, seq);
+  }
+  if (result.kind === "no_document") {
+    return externalError(
+      c,
+      409,
+      "CONFLICT",
+      "当前会话没有可批注的文档",
+      "先写入文档内容，再创建批注",
+    );
+  }
+  if (result.kind === "validation") {
+    return externalError(
+      c,
+      400,
+      "VALIDATION",
+      result.errors.join("；") || "批注组未通过校验",
+      "按错误中的逐字锚点要求修正 groups 后重试",
+    );
+  }
+
+  externalLog("annotation_create", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "created",
+    count: result.groupCount,
+  });
+  return c.json({
+    status: "created" as const,
+    docVersion: result.docVersion,
+    annotations: result.groups.map(annotationForExternal),
+    groupCount: result.groupCount,
+    anchorCount: result.anchorCount,
+    seq,
+  });
 });
 
 externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
@@ -1396,6 +1594,25 @@ function externalAssetInputError(c: Context, error: ExternalAssetUploadInputErro
       return externalError(c, 400, "VALIDATION", "仅支持图片资产");
     case "invalid_body":
       return externalError(c, 400, "VALIDATION", "资产上传请求不合法");
+  }
+}
+
+function externalExportFailure(c: Context, code: ExportFailureCode): Response {
+  switch (code) {
+    case "BROWSER_CAPABILITY_UNAVAILABLE":
+      return externalError(
+        c,
+        503,
+        code,
+        "当前部署环境无法安全启动浏览器，PDF 导出能力不可用",
+      );
+    case "EXPORT_BUSY":
+      c.header("Retry-After", "5");
+      return externalError(c, 503, code, "当前导出任务较多，请稍后重试");
+    case "EXPORT_DEADLINE_EXCEEDED":
+      return externalError(c, 504, code, "导出渲染超时，请重试");
+    case "EXPORT_RENDER_FAILED":
+      return externalError(c, 500, code, "导出失败，请重试");
   }
 }
 
@@ -2258,6 +2475,7 @@ function externalLog(
     | "review_show"
     | "review_verdict"
     | "review_commit"
+    | "annotation_create"
     | "annotation_show"
     | "annotation_ignore",
   fields: {

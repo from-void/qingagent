@@ -46,6 +46,7 @@ import {
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
+  deriveExternalEditing,
   emitProjectedDocState,
 } from "./docStateMachine.js";
 import {
@@ -149,7 +150,8 @@ function reviewNoopCompletionFrame(state: SessionState, command: ReviewCommandNa
   const stateForWire = deriveContentState(state);
   const activeOverlay = deriveActiveOverlay(state);
   const agentBusy = deriveAgentBusy(state);
-  state._lastEmittedWireKind = `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}`;
+  const externalEditing = deriveExternalEditing(state);
+  state._lastEmittedWireKind = `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}:${externalEditing ? "external" : "native"}`;
   logger.warn("Completed review command as no-op", {
     sessionId: state.sessionId,
     command,
@@ -164,6 +166,7 @@ function reviewNoopCompletionFrame(state: SessionState, command: ReviewCommandNa
       state: stateForWire,
       activeOverlay,
       agentBusy,
+      externalEditing,
       reviewCompletion: "noop",
     },
   };
@@ -444,8 +447,9 @@ function reviewCommitFailedFrame(
   const stateForWire = deriveContentState(state);
   const activeOverlay = deriveActiveOverlay(state);
   const agentBusy = deriveAgentBusy(state);
+  const externalEditing = deriveExternalEditing(state);
   state._lastEmittedWireKind =
-    `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}`;
+    `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}:${externalEditing ? "external" : "native"}`;
   logger.warn("Review commit failed; keeping candidates for retry", {
     sessionId: state.sessionId,
     docId: state.docId,
@@ -455,7 +459,7 @@ function reviewCommitFailedFrame(
   });
   return {
     kind: "docStateChanged",
-    data: { state: stateForWire, activeOverlay, agentBusy },
+    data: { state: stateForWire, activeOverlay, agentBusy, externalEditing },
   };
 }
 

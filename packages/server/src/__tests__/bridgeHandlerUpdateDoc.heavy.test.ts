@@ -83,7 +83,7 @@ async function createDraftSession(
   session.docVersion = 1;
   session.lastSyncedDocumentSnapshot = 1;
   session.doc = pmDocFromText("old");
-  session._lastEmittedWireKind = "editing:none:idle";
+  session._lastEmittedWireKind = "editing:none:idle:native";
   return session;
 }
 

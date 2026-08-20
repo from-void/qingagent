@@ -66,6 +66,7 @@ export {
   deriveContentState,
   deriveDocStateFacts,
   deriveEditorState,
+  deriveExternalEditing,
   deriveTitleFromDoc,
   drainSessionPersistence,
   drainSessionPersistenceForSession,
@@ -403,3 +404,14 @@ export {
   upsertReviewDocSupplement,
 } from "@qingagent/db";
 export { validateFetchUrl } from "@qingagent/doc-render/browser";
+export {
+  EXTERNAL_PLUGIN_REVIEW_ORIGIN,
+  annotationGroupInputSchema,
+  createAnnotationGroupsReadyFrame,
+  createAnnotationGroupsInputSchema,
+  writeAnnotationGroups,
+  type AnnotationGroupInput,
+  type CreateAnnotationGroupsInput,
+  type WriteAnnotationGroupsOptions,
+  type WriteAnnotationGroupsResult,
+} from "./tools/annotationGroups.js";

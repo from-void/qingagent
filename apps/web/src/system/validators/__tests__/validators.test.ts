@@ -823,9 +823,18 @@ describe("validateBridgeFrame", () => {
   it("accepts a valid frame", () => {
     const frame: BridgeFrame = {
       kind: "docStateChanged",
-      data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: true },
+      data: {
+        state: { kind: "empty" },
+        activeOverlay: null,
+        agentBusy: true,
+        externalEditing: true,
+      },
     };
     expect(() => validateBridgeFrame(frame)).not.toThrow();
+    expect(() => validateBridgeFrame({
+      ...frame,
+      data: { ...frame.data, externalEditing: "yes" },
+    } as unknown as BridgeFrame)).toThrow(BridgeFrameValidationError);
   });
 
   it("validates folderSourcesChanged frames and rejects private or malformed fields", () => {

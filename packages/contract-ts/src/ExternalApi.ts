@@ -27,6 +27,10 @@ export type ExternalErrorCode =
   | "NOT_FOUND"
   | "SESSION_NOT_FOUND"
   | "MATERIAL_NOT_FOUND"
+  | "BROWSER_CAPABILITY_UNAVAILABLE"
+  | "EXPORT_BUSY"
+  | "EXPORT_DEADLINE_EXCEEDED"
+  | "EXPORT_RENDER_FAILED"
   | "RATE_LIMITED";
 
 export interface ExternalErrorResponse {
@@ -37,6 +41,17 @@ export interface ExternalErrorResponse {
 
 export interface ExternalHealthResponse extends AttachIdentity {
   ok: true;
+}
+
+export interface ExternalLexicon {
+  id: string;
+  name: string;
+  entryCount: number;
+  enabled: boolean;
+}
+
+export interface ExternalLexiconsResponse {
+  lexicons: ExternalLexicon[];
 }
 
 export type ExternalDocumentState = "empty" | "editing" | "pendingReview";
@@ -111,6 +126,8 @@ export interface ExternalDocReplaceRequest {
   clientMutationId: string;
   doc: PmDoc;
 }
+
+export type ExternalExportFormat = "pdf" | "docx" | "html" | "markdown" | "txt";
 
 export type ExternalDocReplaceResponse =
   | {
@@ -364,6 +381,36 @@ export interface ExternalAnnotationResponse {
   annotation: ExternalAnnotation;
 }
 
+export interface ExternalAnnotationCreateGroup {
+  summary: string;
+  note: string;
+  origin: string;
+  suggestion?: string;
+  severity?: "error" | "warn" | "info";
+  judgment?:
+    | "口径漂移" | "数字失真" | "无据" | "素材遗漏"
+    | "时间线" | "数字" | "称谓与术语" | "论断";
+  materialQuote?: string;
+  checkedScope?: string;
+  documentQuote?: string;
+  anchors: Array<{ find: string; all?: boolean }>;
+}
+
+export interface ExternalAnnotationCreateRequest {
+  turnId?: string;
+  expectedDocVersion: number;
+  groups: ExternalAnnotationCreateGroup[];
+}
+
+export interface ExternalAnnotationCreateResponse {
+  status: "created";
+  docVersion: number;
+  annotations: ExternalAnnotation[];
+  groupCount: number;
+  anchorCount: number;
+  seq: number | null;
+}
+
 export interface ExternalReviewVerdictRequest {
   expectedDocVersion: number;
   patchId: string;
@@ -525,13 +572,15 @@ export type ExternalBridgeFrame = { seq: number } & Extract<
 >;
 
 export type ExternalSuccessResponse =
-  | ExternalHealthResponse | ExternalSessionsListResponse | ExternalSessionCreateResponse
+  | ExternalHealthResponse | ExternalLexiconsResponse
+  | ExternalSessionsListResponse | ExternalSessionCreateResponse
   | ExternalDocReadResponse | ExternalPmDocReadResponse | ExternalDocReplaceResponse
   | ExternalChatLogResponse | ExternalChatSendResponse
   | ExternalAssetUploadResponse
   | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse
   | ExternalReviewListResponse | ExternalReviewRenderModelResponse
   | ExternalReviewPatchResponse | ExternalAnnotationResponse
+  | ExternalAnnotationCreateResponse
   | ExternalReviewVerdictResponse | ExternalReviewCommitResponse
   | ExternalAnnotationIgnoreResponse
   | ExternalReviewTemplatesResponse | ExternalReviewTemplateResponse

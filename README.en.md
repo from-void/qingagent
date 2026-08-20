@@ -12,7 +12,7 @@ A more human-friendly way to write documents with AI, with a toolkit built aroun
 [![Release](https://img.shields.io/github/v/release/void2anything/qingagent)](https://github.com/void2anything/qingagent/releases)
 [![CI](https://github.com/void2anything/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/void2anything/qingagent/actions/workflows/ci.yml)
 
-[qingagent.com](https://qingagent.com) · [Download](https://qingagent.com/#download) · [Changelog](https://qingagent.com/changelog) · [中文](./README.md)
+[qingagent.com](https://qingagent.com) · [Download](https://qingagent.com/#download) · [Changelog](https://qingagent.com/changelog) · [Feature board](https://qingagent.com/feedback/client) · [中文](./README.md)
 
 </div>
 
@@ -361,7 +361,7 @@ Scan to join the WeChat user group — report problems, request features, follow
 <!-- TODO: WeChat group QR code pending -->
 <!-- <img src=".github/assets/wechat-group.png" alt="qingagent user group" width="220"> -->
 
-You can also request and upvote features on the [feature board](https://qingagent.com/feedback).
+You can also request and upvote features on the [feature board](https://qingagent.com/feedback/client). The DSH plugin has its own pool: [feature board · DSH plugin](https://qingagent.com/feedback/plugin).
 
 ---
 
@@ -369,8 +369,7 @@ You can also request and upvote features on the [feature board](https://qingagen
 
 - Usage questions, bugs, feature requests: [GitHub Issues](https://github.com/void2anything/qingagent/issues)
 - Security: security@qingagent.com
-
-<!-- TODO: author contact pending -->
+- General enquiries / partnership: support@qingagent.com
 
 ---
 

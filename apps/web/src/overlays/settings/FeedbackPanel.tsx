@@ -4,7 +4,7 @@ import { useDelayedVisible } from "../../system/useDelayedVisible";
 import { attachCapabilityEnabled } from "../../system/backendConnectionStore";
 
 // 「提需求」跳转的反馈站(独立网页,后续单独承载);「报bug」排查不了时的联系邮箱。
-const FEEDBACK_URL = "https://qingagent.com/feedback";
+const FEEDBACK_URL = "https://qingagent.com/feedback/client";
 const SUPPORT_EMAIL = "support@qingagent.com";
 // 列出最近多少篇文档供勾选;默认预勾选最近几篇。
 const MAX_DOCS = 20;

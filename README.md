@@ -12,7 +12,7 @@
 [![Release](https://img.shields.io/github/v/release/void2anything/qingagent)](https://github.com/void2anything/qingagent/releases)
 [![CI](https://github.com/void2anything/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/void2anything/qingagent/actions/workflows/ci.yml)
 
-[官网 qingagent.com](https://qingagent.com) · [下载客户端](https://qingagent.com/#download) · [更新日志](https://qingagent.com/changelog) · [English](./README.en.md)
+[官网 qingagent.com](https://qingagent.com) · [下载客户端](https://qingagent.com/#download) · [更新日志](https://qingagent.com/changelog) · [需求广场](https://qingagent.com/feedback/client) · [English](./README.en.md)
 
 </div>
 
@@ -361,7 +361,7 @@ ProseMirror 文档先处理图表等富内容生成 HTML，再分流：Web / ser
 <!-- TODO: 微信群二维码待补 -->
 <!-- <img src=".github/assets/wechat-group.png" alt="青简用户交流群" width="220"> -->
 
-也欢迎到 [需求广场](https://qingagent.com/feedback) 提需求投票——呼声高的优先做。
+也欢迎到 [需求广场](https://qingagent.com/feedback/client) 提需求投票——呼声高的优先做。DSH 插件的需求另有一池：[需求广场 · DSH 插件](https://qingagent.com/feedback/plugin)。
 
 ---
 
@@ -369,8 +369,7 @@ ProseMirror 文档先处理图表等富内容生成 HTML，再分流：Web / ser
 
 - 使用问题、bug、需求：[GitHub Issues](https://github.com/void2anything/qingagent/issues)
 - 安全问题：security@qingagent.com
-
-<!-- TODO: 作者联系方式待补 -->
+- 使用咨询、合作、其它事宜：support@qingagent.com
 
 ---
 

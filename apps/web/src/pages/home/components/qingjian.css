@@ -1125,10 +1125,7 @@ transform 平移内层) */
 .qj-settings-wrap {
   position: relative;
 }
-.qj-settings-btn {
-  width: 42px;
-  height: 42px;
-  border-radius:0;
+.qj-icon-btn {
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1136,18 +1133,25 @@ transform 平移内层) */
   border: 1px solid var(--qj-switch-border);
   background: var(--qj-switch-bg);
   color: var(--qj-switch-text);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(8px);
-  transition: border-color 0.25s, background 0.25s, transform 0.25s;
+  border-radius: 0;
   outline: none;
+  transition: border-color 0.22s, background 0.22s, transform 0.22s;
 }
-.qj-settings-btn:hover,
-.qj-settings-btn:focus-visible {
-  border-color: var(--qj-cinnabar);
-}
-.qj-settings-btn.qj-on {
+.qj-icon-btn:hover,
+.qj-icon-btn:focus-visible {
+  transform: translateY(-1px);
   border-color: var(--qj-cinnabar);
   background: var(--qj-switch-active-bg);
+}
+.qj-icon-btn.qj-on {
+  border-color: var(--qj-cinnabar);
+  background: var(--qj-switch-active-bg);
+}
+.qj-settings-btn {
+  width: 42px;
+  height: 42px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(8px);
 }
 .qj-ink-debug {
   position: absolute;
@@ -1416,28 +1420,9 @@ transform 平移内层) */
 }
 .qj-dock-search-btn {
   flex: 0 0 auto;
+  /* dock 是 34px 紧凑密度容器；面板已有阴影，搜索键有意不加独立阴影。 */
   width: 34px;
   height: 34px;
-  border-radius:0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--qj-switch-border);
-  background: rgba(127, 127, 127, 0.06);
-  color: var(--qj-switch-text);
-  transition: transform 0.2s, border-color 0.2s, background 0.2s;
-  outline: none;
-}
-.qj-dock-search-btn:hover,
-.qj-dock-search-btn:focus-visible {
-  transform: translateY(-1px);
-  border-color: var(--qj-cinnabar);
-  background: var(--qj-switch-active-bg);
-}
-.qj-dock-search-btn.qj-on {
-  border-color: var(--qj-cinnabar);
-  background: var(--qj-switch-active-bg);
 }
 .qj-dock-search-wrap {
   display: none;
@@ -1547,15 +1532,7 @@ transform 平移内层) */
   z-index: 82;
   width: 42px;
   height: 42px;
-  border-radius:0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--qj-switch-border);
-  background: var(--qj-switch-bg);
-  color: var(--qj-switch-text);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(9px);
   transform: translateY(140%) scale(0.85);
   opacity: 0;
@@ -1563,7 +1540,7 @@ transform 平移内层) */
   /* 隐藏态退出命中与可访问性树，避免浮钮移出视口后仍产生幽灵点击。 */
   visibility: hidden;
   transition: transform 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.42s ease,
-    visibility 0s linear 0.42s, border-color 0.25s, background 0.25s;
+    visibility 0s linear 0.42s, border-color 0.22s, background 0.22s;
 }
 .qj-new-fab.qj-show {
   transform: translateY(0) scale(1);
@@ -1571,13 +1548,13 @@ transform 平移内层) */
   pointer-events: auto;
   visibility: visible;
   transition: transform 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.42s ease,
-    visibility 0s, border-color 0.25s, background 0.25s;
+    visibility 0s, border-color 0.22s, background 0.22s;
 }
-.qj-new-fab:hover,
-.qj-new-fab:focus-visible {
-  border-color: var(--qj-cinnabar);
-  background: var(--qj-switch-active-bg);
-  transform: translateY(-2px);
+/* 进出场继续走上方 0.42s 缓动；稳定显示后的 hover / focus 抬升才切到统一短过渡。 */
+.qj-new-fab.qj-show:hover,
+.qj-new-fab.qj-show:focus-visible {
+  transform: translateY(-1px);
+  transition: border-color 0.22s, background 0.22s, transform 0.22s;
 }
 /* ============ 书阁覆盖层:从青简设置浮层进入 ============ */
 .qj-shelf-overlay {

@@ -32,7 +32,7 @@ describe("FeedbackPanel", () => {
   it("提需求卡片链接指向反馈站", async () => {
     await render(<FeedbackPanel />);
     const link = host?.querySelector<HTMLAnchorElement>('[data-wf="FeedbackRequestLink"]');
-    expect(link?.getAttribute("href")).toBe("https://qingagent.com/feedback");
+    expect(link?.getAttribute("href")).toBe("https://qingagent.com/feedback/client");
     expect(link?.getAttribute("target")).toBe("_blank");
   });
 

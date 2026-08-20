@@ -932,13 +932,13 @@ export function UIKitPage() {
             >
               <div className="qj-topctrl">
                 <div className="qj-settings-wrap">
-                  <button className="qj-settings-btn" type="button" aria-label="设置">
-                    <SettingsIcon size={21} />
+                  <button className="qj-icon-btn qj-settings-btn" type="button" aria-label="设置">
+                    <SettingsIcon size={18} />
                   </button>
                 </div>
                 <div className="qj-settings-wrap">
-                  <button className="qj-settings-btn qj-on" type="button" aria-label="设置已打开">
-                    <SettingsIcon size={21} />
+                  <button className="qj-icon-btn qj-settings-btn qj-on" type="button" aria-label="设置已打开">
+                    <SettingsIcon size={18} />
                   </button>
                 </div>
               </div>
@@ -954,8 +954,8 @@ export function UIKitPage() {
                   </div>
                 </div>
               </div>
-              <button className="qj-new-fab qj-show" type="button" aria-label="新建文档">
-                <PlusIcon size={20} />
+              <button className="qj-icon-btn qj-new-fab qj-show" type="button" aria-label="新建文档">
+                <PlusIcon size={18} />
               </button>
               <div className="qj-dock qj-show">
                 <div className="qj-dock-preview qj-show" style={{ left: "42%" }}>
@@ -976,8 +976,8 @@ export function UIKitPage() {
                       <span>卷尾</span>
                     </div>
                   </div>
-                  <button className="qj-dock-search-btn qj-on" type="button" aria-label="搜索文章">
-                    <SearchIcon />
+                  <button className="qj-icon-btn qj-dock-search-btn qj-on" type="button" aria-label="搜索文章">
+                    <SearchIcon size={18} />
                   </button>
                   <div className="qj-dock-search-wrap qj-open">
                     <input className="qj-dock-search-input" defaultValue="春日" aria-label="搜索关键词" readOnly />

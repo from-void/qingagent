@@ -27,10 +27,6 @@ export function SettingsExternalLink({
 export function GitHubStarInvite({ repoUrl, wf }: { repoUrl: string; wf: string }) {
   return (
     <div className="qj-star-invite" data-wf={wf}>
-      <div className="qj-star-copy">
-        <strong className="qj-star-title">青简是开源的</strong>
-        <span className="qj-star-note">觉得顺手的话,去 GitHub 点颗 Star 是最好的鼓励</span>
-      </div>
       <SettingsExternalLink href={repoUrl} wf={`${wf}Link`} className="qj-star-action">
         <StarIcon />
         <span>给个 Star</span>

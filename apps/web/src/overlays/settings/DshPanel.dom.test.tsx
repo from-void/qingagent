@@ -272,15 +272,20 @@ describe("DSH 插件设置页", () => {
     expect(getEngineStatus().textContent).toContain("插件依赖本机青简引擎");
   });
 
-  it("关于页链接块也复用同款 Star 引导", async () => {
+  it("关于页链接块只保留 Star 按钮并移除版本发布页", async () => {
     await render(<AboutPanel />);
 
     const invite = host?.querySelector('[data-wf="AboutStarInvite"]');
-    expect(invite?.textContent).toContain("青简是开源的");
-    expect(invite?.textContent).toContain("觉得顺手的话,去 GitHub 点颗 Star 是最好的鼓励");
-    const link = invite?.querySelector<HTMLAnchorElement>("a");
+    expect(invite?.textContent?.trim()).toBe("给个 Star");
+    expect(invite?.textContent).not.toContain("青简是开源的");
+    expect(invite?.textContent).not.toContain("觉得顺手的话");
+    const link = invite?.querySelector<HTMLAnchorElement>(
+      '[data-wf="AboutStarInviteLink"]',
+    );
     expect(link?.getAttribute("href")).toBe("https://github.com/void2anything/qingagent");
     expect(link?.querySelector("svg")).not.toBeNull();
+    expect(host?.querySelector('[data-wf="AboutReleases"]')).toBeNull();
+    expect(host?.textContent).not.toContain("版本发布页 Releases");
   });
 });
 

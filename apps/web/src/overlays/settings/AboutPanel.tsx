@@ -16,7 +16,6 @@ import { copySettingsText } from "./settingsClipboard";
 // 更新走「请求-响应」手动检查 + 共享 store 的被动推送(下载就绪 / 强更),不各自挂 IPC 监听。
 
 const GITHUB_REPO_URL = "https://github.com/void2anything/qingagent";
-const RELEASES_URL = `${GITHUB_REPO_URL}/releases`;
 const LICENSE_URL = `${GITHUB_REPO_URL}/blob/main/LICENSE`;
 const NOTICES_URL = `${GITHUB_REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md`;
 // 官网:官方构建注入 VITE_DESKTOP_SITE_URL;fork/未注入则不显示官网入口。
@@ -190,9 +189,6 @@ export function AboutPanel() {
               GitHub 仓库
             </ExternalLink>
             <GitHubStarInvite repoUrl={GITHUB_REPO_URL} wf="AboutStarInvite" />
-            <ExternalLink href={RELEASES_URL} wf="AboutReleases" className="ab-linklike">
-              版本发布页 Releases
-            </ExternalLink>
           </div>
         </div>
 

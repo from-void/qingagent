@@ -2241,7 +2241,7 @@ export function QingjianScroll({
           <button
             ref={settingsButtonRef}
             type="button"
-            className={`qj-settings-btn${settingsSheetOpen ? " qj-on" : ""}`}
+            className={`qj-icon-btn qj-settings-btn${settingsSheetOpen ? " qj-on" : ""}`}
             title="设置"
             aria-label="设置"
             aria-expanded={settingsSheetOpen}
@@ -2251,7 +2251,7 @@ export function QingjianScroll({
               setSettingsSheetOpen(true);
             }}
           >
-            <SettingsIcon size={21} />
+            <SettingsIcon size={18} />
           </button>
         </div>
       </div>
@@ -2452,13 +2452,13 @@ export function QingjianScroll({
           </div>
           <button
             type="button"
-            className={`qj-dock-search-btn${searchOpen ? " qj-on" : ""}`}
+            className={`qj-icon-btn qj-dock-search-btn${searchOpen ? " qj-on" : ""}`}
             title="搜索"
             aria-label="搜索"
             aria-expanded={searchOpen}
             onClick={onSearchToggle}
           >
-            <SearchIcon />
+            <SearchIcon size={18} />
           </button>
           <div className={`qj-dock-search-wrap${searchOpen ? " qj-open" : ""}`}>
             <input
@@ -2485,7 +2485,7 @@ export function QingjianScroll({
       {/* 左下「＋」新建浮钮 */}
       <button
         type="button"
-        className="qj-new-fab"
+        className="qj-icon-btn qj-new-fab"
         ref={newFabRef}
         title="新建文档"
         aria-label="新建文档"

@@ -789,15 +789,10 @@
 .settings-about .ab-linklike:disabled{opacity:.5;cursor:default}
 .settings-about .ab-kernel{font-family:var(--font-mono);font-size:10.5px;color:var(--qj-header-sub)}
 
-/* 关于页与 DSH 页共用的克制 Star 邀请：细分隔、小方钮、只用金铜强调。 */
+/* 关于页与 DSH 页共用的克制 Star 入口：单个小方钮，只用金铜强调。 */
 .qj-star-invite{
-  width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-  margin-top:3px;padding-top:9px;border-top:1px solid var(--qj-switch-border);
-  font-family:var(--font-zh-serif);
+  display:flex;align-items:center;align-self:flex-start;font-family:var(--font-zh-serif);
 }
-.qj-star-copy{display:flex;min-width:0;flex:1 1 190px;flex-direction:column;gap:2px}
-.qj-star-title{font-size:12px;line-height:1.5;color:var(--qj-ink)}
-.qj-star-note{font-size:10.5px;line-height:1.55;color:var(--ink-desc)}
 .qj-star-action{
   display:inline-flex;flex:0 0 auto;align-items:center;gap:5px;height:28px;padding:0 9px;
   border:1px solid var(--qj-cinnabar);border-radius:0;background:transparent;color:var(--qj-cinnabar);

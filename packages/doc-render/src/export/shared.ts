@@ -17,6 +17,7 @@ export type ExportDocument = PmDoc;
 export type ExportDegradationKind =
   | "markdown-columns-flattened"
   | "docx-columns-flattened"
+  | "diagram-source-fallback"
   | "svg-rasterized"
   | "specialized-diagram-overlay";
 
@@ -33,6 +34,10 @@ const EXPORT_DEGRADATIONS: Record<ExportDegradationKind, ExportDegradation> = {
   "docx-columns-flattened": {
     kind: "docx-columns-flattened",
     description: "分栏已拍平为纵向，原并排版式无法保留",
+  },
+  "diagram-source-fallback": {
+    kind: "diagram-source-fallback",
+    description: "未能生成预览的图表已改为可复制的源码",
   },
   "svg-rasterized": {
     kind: "svg-rasterized",

@@ -1170,23 +1170,6 @@ export async function* handleDocWriteCommand(
         session.titlePinned = true;
         metadataChanged ||= titleChanged || pinChanged;
       }
-      if (qingmlDraft && !session.titlePinned) {
-        const nextTitle = qingmlDraft.title ?? deriveTitleFromDoc(qingmlDraft.doc);
-        if (nextTitle && (nextTitle !== session.title || qingmlDraft.titleTruncated)) {
-          session.title = nextTitle;
-          yield {
-            kind: "sessionMeta",
-            data: {
-              sessionId: session.sessionId,
-              title: session.title,
-              ...(qingmlDraft.titleTruncated
-                ? { notice: { kind: "title_truncated" as const, maxChars: MAX_TITLE_CHARS } }
-                : {}),
-            },
-          };
-          metadataChanged = true;
-        }
-      }
       if (metadataChanged) await persistSessionMetadata(session);
       agentMessage.parts.push({
         kind: "patchSummary",

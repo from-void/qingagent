@@ -850,6 +850,16 @@ export async function* commitPatches(
           ),
         },
       };
+      // 标题只跟随已经生效的正文。除防止新候选在审阅期提前改标题外，这里还要
+      // 修复历史版本可能已经持久化的候选标题，并通过 sessionMeta 纠正所有客户端。
+      const effectiveTitle = state.titlePinned ? null : deriveTitleFromDoc(currentPmDoc(state));
+      if (effectiveTitle) {
+        state.title = effectiveTitle;
+        yield {
+          kind: "sessionMeta",
+          data: { sessionId: state.sessionId, title: effectiveTitle },
+        };
+      }
       yield* transitionAndProjectDocState(state, { kind: "editing" }, "patches_committed_idle");
     } else {
       yield* emitProjectedDocState(state, "patches_committed_idle");

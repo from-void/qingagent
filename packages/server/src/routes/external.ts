@@ -603,6 +603,17 @@ externalRoutes.get("/sessions/:id/export", async (c) => {
           "先写入文档内容，再重新导出",
         );
       }
+      // 空稿闸:与客户端导出按钮 gating 同款(可见字数为零即「还没有可导出的内容」),
+      // 判定与 external read 的 charCount 同源,否则清空后的稿仍能导出空 PDF。
+      if (countDocVisibleChars(session.doc) === 0) {
+        return externalError(
+          c,
+          409,
+          "CONFLICT",
+          "还没有可导出的内容",
+          "先写入文档内容，再重新导出",
+        );
+      }
       return {
         document: session.doc,
         title: session.title?.trim() || "青简导出",

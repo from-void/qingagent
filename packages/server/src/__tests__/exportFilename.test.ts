@@ -73,7 +73,14 @@ describe("导出文件名 Unicode 边界", () => {
     mocks.loadSessionFromThread.mockResolvedValue({
       sessionId: "degraded-export",
       title: "降级导出",
-      doc: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "horizontalRule" }] },
+      doc: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          { type: "horizontalRule" },
+          { type: "paragraph", content: [{ type: "text", text: "正文" }] },
+        ],
+      },
     });
     const { exportRoutes } = await import("../routes/export");
     const app = new Hono().route("/api/v1", exportRoutes);

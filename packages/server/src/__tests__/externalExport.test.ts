@@ -8,7 +8,7 @@ import type {
   ExternalSessionCreateResponse,
 } from "../../../contract-ts/src/ExternalApi";
 import { app } from "../app";
-import { sessionManager } from "../gateway/bridgeHandler";
+import { getSession, sessionManager } from "../gateway/bridgeHandler";
 import {
   getExternalToken,
   startExternalInstance,
@@ -84,6 +84,30 @@ describe("GET /api/v1/external/sessions/:id/export", () => {
     expect(empty.status).toBe(409);
     await expect(empty.json() as Promise<ExternalErrorResponse>).resolves.toEqual({
       error: "当前会话没有可导出的文档",
+      code: "CONFLICT",
+      nextStep: "先写入文档内容，再重新导出",
+    });
+  });
+
+  it("写入后清空的空稿导出被阻断(与客户端「还没有可导出的内容」同款)", async () => {
+    const { sessionId } = await createSession();
+    const write = await request(`/sessions/${sessionId}/proposals`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: 0,
+        ops: [{ kind: "fullDraft", markdown: "# 待清空\n\n正文。" }],
+      }),
+    });
+    expect(write.status).toBe(200);
+    // 模拟用户清空正文后的稿:doc 仍存在(canonical),但可见字数为 0
+    const session = getSession(sessionId);
+    expect(session).toBeTruthy();
+    session!.doc = { type: "doc", content: [{ type: "paragraph" }] } as never;
+
+    const response = await request(`/sessions/${sessionId}/export?format=txt`);
+    expect(response.status).toBe(409);
+    await expect(response.json() as Promise<ExternalErrorResponse>).resolves.toEqual({
+      error: "还没有可导出的内容",
       code: "CONFLICT",
       nextStep: "先写入文档内容，再重新导出",
     });

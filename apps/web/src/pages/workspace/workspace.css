@@ -632,8 +632,9 @@
   #view-workspace .chat-chip[data-kind="sel"]{background:rgba(200,169,106,.16);border-color:rgba(200,169,106,.40)}
   #view-workspace .chat-chip[data-kind="attach"] .c-ico{color:#8fb0c4}
   #view-workspace .chat-edit:has(.chat-chip-image:hover){overflow:visible}
-  /* 缩略图把 chip 撑高后 baseline 对齐会浮起,图片 chip 改中线对齐与正文行居中 */
-  #view-workspace .chat-chip-image{position:relative;vertical-align:middle}
+  /* 图片 chip 与正文行垂直居中:middle 对 CJK 行有约 +2px 系统性下沉
+     (真机实测输入框 +2.40px/气泡 +2.09px,top:-2px 后气泡残差 0.09px),用相对位移校正。 */
+  #view-workspace .chat-chip-image{position:relative;vertical-align:middle;top:-2px}
   #view-workspace .chat-chip .c-image-thumb{
     width:18px;height:18px;flex:0 0 18px;display:block;object-fit:cover;
     border:1px solid var(--line-2);border-radius:0;background:var(--bg-subtle);
@@ -3667,3 +3668,14 @@
 /* 审阅态双通道:命中切"只描边不填底",不与补丁底色打架(状态③) */
 body[data-content="pendingReview"] #view-workspace .wf-doc .ws-find-hit{background:transparent; outline:1.5px solid rgba(64,120,150,.55); outline-offset:0}
 body[data-content="pendingReview"] #view-workspace .wf-doc .ws-find-hit.is-current{background:rgba(196,150,58,.20); outline:2px solid rgba(176,128,32,.9)}
+
+/* 气泡图片 chip 的 hover 大图:portal 到 body 的 fixed 层——气泡(InkBubble)自带
+   overflow 裁剪与独立层叠上下文,absolute 预览会被裁成"表面淡淡一层变色";
+   本类不在 #view-workspace 作用域内,token 全部带回退值。 */
+.c-image-preview-pop{
+  position:fixed;z-index:1000;width:240px;height:180px;box-sizing:border-box;padding:6px;
+  border:1px solid var(--line-2, rgba(184,169,140,.28));
+  background:var(--bg-paper-deep, #221d16);
+  box-shadow:0 12px 28px rgba(40,30,15,.24);pointer-events:none;
+}
+.c-image-preview-pop img{display:block;width:100%;height:100%;object-fit:contain}

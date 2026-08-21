@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import type {
   AskUserAnswerCardPart,
@@ -1558,9 +1559,15 @@ function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
   );
 }
 
+const PREVIEW_POP_W = 240;
+const PREVIEW_POP_H = 180;
+
 function ImageAttachChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
   const [thumbFailed, setThumbFailed] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  // 预览层 portal 到 body 用 fixed 定位:气泡(InkBubble)有 overflow 裁剪+独立层叠上下文,
+  // chip 内 absolute 预览会被裁没。open 时记录一次锚点位置,上方放不下就落到下方。
+  const [previewAt, setPreviewAt] = useState<{ left: number; top: number } | null>(null);
+  const chipRef = useRef<HTMLSpanElement | null>(null);
   const src = desktopDataUrl(
     `/api/v1/files/${chip.resourceRef!.id}/${encodeURIComponent(chip.label)}`,
   );
@@ -1569,13 +1576,23 @@ function ImageAttachChipBadge({ chip, inline }: { chip: ChatChip; inline?: boole
   useEffect(() => {
     setThumbFailed(false);
   }, [src]);
+  const openPreview = () => {
+    const rect = chipRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = Math.min(Math.max(rect.left, 8), window.innerWidth - PREVIEW_POP_W - 8);
+    const top = rect.top - PREVIEW_POP_H - 8 >= 8
+      ? rect.top - PREVIEW_POP_H - 8
+      : rect.bottom + 8;
+    setPreviewAt({ left, top });
+  };
   return (
     <span
+      ref={chipRef}
       className={`chat-chip${thumbFailed ? "" : " chat-chip-image"}`}
       data-kind="attach"
-      style={inline ? { display: "inline-flex", verticalAlign: thumbFailed ? "baseline" : "middle" } : undefined}
-      onMouseEnter={() => setPreviewOpen(true)}
-      onMouseLeave={() => setPreviewOpen(false)}
+      style={inline && thumbFailed ? { display: "inline-flex", verticalAlign: "baseline" } : inline ? { display: "inline-flex" } : undefined}
+      onMouseEnter={openPreview}
+      onMouseLeave={() => setPreviewAt(null)}
     >
       {thumbFailed ? (
         <span className="c-ico"><FileChipIcon size={12} /></span>
@@ -1590,10 +1607,16 @@ function ImageAttachChipBadge({ chip, inline }: { chip: ChatChip; inline?: boole
       )}
       <span className="c-label">{truncateLabel(chip.label)}</span>
       {chip.suffix && <span className="c-tag">{chip.suffix}</span>}
-      {!thumbFailed && (
-        <span className="c-image-preview" role="img" aria-label={`预览图片：${chip.label}`} hidden={!previewOpen}>
+      {!thumbFailed && previewAt != null && createPortal(
+        <span
+          className="c-image-preview-pop"
+          role="img"
+          aria-label={`预览图片：${chip.label}`}
+          style={{ left: previewAt.left, top: previewAt.top }}
+        >
           <img src={src} alt={chip.label} onError={() => setThumbFailed(true)} />
-        </span>
+        </span>,
+        document.body,
       )}
     </span>
   );

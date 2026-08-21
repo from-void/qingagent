@@ -284,6 +284,10 @@ export function AnnotationCarousel(props: {
   const storedSuggestion = resolveAnnotationSuggestion(group);
   const suggestion = suggestions[group.id] ?? storedSuggestion;
   const resolvedSuggestion = resolveAnnotationSuggestion(group, suggestion);
+  // 用户裁定(与插件批注 chip 面板同款交互):按钮默认置灰,修改意见内容与初值
+  // 不一致时才点亮;置灰 hover 提示引导先修改。
+  const initialSuggestion = resolveAnnotationSuggestion(group, undefined);
+  const suggestionChanged = resolvedSuggestion.trim() !== initialSuggestion.trim();
   const hasSuggestedChange = storedSuggestion.length > 0;
 
   const keepOpen = () => {
@@ -382,9 +386,9 @@ export function AnnotationCarousel(props: {
         <button
           className="ahc-accept"
           type="button"
-          title="将追加到输入框，由你确认发送"
-          disabled={!resolvedSuggestion}
-          onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
+          title={suggestionChanged && resolvedSuggestion ? "将追加到输入框，由你确认发送" : "请先修改内容"}
+          disabled={!resolvedSuggestion || !suggestionChanged}
+          onClick={() => { if (resolvedSuggestion && suggestionChanged && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
         >生成修改</button>
       </div> : null}
     </footer>

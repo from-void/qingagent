@@ -350,7 +350,9 @@ describe("AnnotationCarousel hover card", () => {
     expect(host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value).toBe("改为四月发布");
     expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "生成修改"]);
     expect(card.textContent).not.toContain("将追加到输入框，由你确认发送");
-    expect(card.querySelector<HTMLButtonElement>(".ahc-accept")?.title).toBe("将追加到输入框，由你确认发送");
+    // 新交互(与插件面板同款):未修改内容时置灰并提示
+    expect(card.querySelector<HTMLButtonElement>(".ahc-accept")?.title).toBe("请先修改内容");
+    expect(card.querySelector<HTMLButtonElement>(".ahc-accept")?.disabled).toBe(true);
     expect(card.querySelectorAll(".ahc-nav button")).toHaveLength(2);
     expect(host.textContent).not.toContain("全部提交");
 
@@ -736,9 +738,18 @@ describe("AnnotationCarousel hover card", () => {
     expect(host!.textContent).toContain("对外发布风险");
     expect(host!.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value)
       .toBe("改为某内部项目");
+    // 新交互:未修改内容时按钮置灰,先编辑再生成
+    expect(host!.querySelector<HTMLButtonElement>(".ahc-accept")?.disabled).toBe(true);
+    await act(async () => {
+      const area = host!.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(area, "改为某内部代号项目");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(host!.querySelector<HTMLButtonElement>(".ahc-accept")?.disabled).toBe(false);
     await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
     expect(host!.querySelector('[data-testid="chat-input"]')?.textContent)
-      .toContain("按批注修改：对外发布风险——改为某内部项目（原文：『甲组』）");
+      .toContain("按批注修改：对外发布风险——改为某内部代号项目（原文：『甲组』）");
 
     await act(async () => {
       presetAnchor!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));

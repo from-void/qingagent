@@ -995,6 +995,7 @@ function renderSkillMarkdown(markdown: string): ReactNode {
   const lines = markdown.split(/\r?\n/);
   let paragraph: string[] = [];
   let list: string[] = [];
+  let listOrdered = false;
   let code: string[] | null = null;
 
   const flushParagraph = () => {
@@ -1005,12 +1006,13 @@ function renderSkillMarkdown(markdown: string): ReactNode {
   };
   const flushList = () => {
     if (list.length === 0) return;
+    const items = list.map((item, index) => (
+      <li key={index}>{renderInlineMarkdown(item)}</li>
+    ));
     nodes.push(
-      <ul key={`ul-${nodes.length}`}>
-        {list.map((item, index) => (
-          <li key={index}>{renderInlineMarkdown(item)}</li>
-        ))}
-      </ul>,
+      listOrdered
+        ? <ol key={`ol-${nodes.length}`}>{items}</ol>
+        : <ul key={`ul-${nodes.length}`}>{items}</ul>,
     );
     list = [];
   };
@@ -1055,7 +1057,17 @@ function renderSkillMarkdown(markdown: string): ReactNode {
     const bullet = trimmed.match(/^[-*]\s+(.+)$/);
     if (bullet) {
       flushParagraph();
+      if (list.length > 0 && listOrdered) flushList();
+      listOrdered = false;
       list.push(bullet[1]!);
+      continue;
+    }
+    const ordered = trimmed.match(/^\d+[.、)]\s*(.+)$/);
+    if (ordered) {
+      flushParagraph();
+      if (list.length > 0 && !listOrdered) flushList();
+      listOrdered = true;
+      list.push(ordered[1]!);
       continue;
     }
     flushList();
@@ -1068,10 +1080,19 @@ function renderSkillMarkdown(markdown: string): ReactNode {
 }
 
 function renderInlineMarkdown(text: string): ReactNode[] {
+  // 反引号优先级高于加粗:`**x**` 这类代码内星号不得被误加粗。
   return text.split(/(`[^`]+`)/g).map((part, index) => {
     if (part.startsWith("`") && part.endsWith("`")) {
       return <code key={index}>{part.slice(1, -1)}</code>;
     }
-    return <span key={index}>{part}</span>;
+    return (
+      <span key={index}>
+        {part.split(/(\*\*[^*]+\*\*)/g).map((seg, i) =>
+          seg.startsWith("**") && seg.endsWith("**") && seg.length > 4
+            ? <strong key={i}>{seg.slice(2, -2)}</strong>
+            : seg,
+        )}
+      </span>
+    );
   });
 }

@@ -632,7 +632,8 @@
   #view-workspace .chat-chip[data-kind="sel"]{background:rgba(200,169,106,.16);border-color:rgba(200,169,106,.40)}
   #view-workspace .chat-chip[data-kind="attach"] .c-ico{color:#8fb0c4}
   #view-workspace .chat-edit:has(.chat-chip-image:hover){overflow:visible}
-  #view-workspace .chat-chip-image{position:relative}
+  /* 缩略图把 chip 撑高后 baseline 对齐会浮起,图片 chip 改中线对齐与正文行居中 */
+  #view-workspace .chat-chip-image{position:relative;vertical-align:middle}
   #view-workspace .chat-chip .c-image-thumb{
     width:18px;height:18px;flex:0 0 18px;display:block;object-fit:cover;
     border:1px solid var(--line-2);border-radius:0;background:var(--bg-subtle);

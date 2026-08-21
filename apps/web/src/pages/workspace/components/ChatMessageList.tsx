@@ -1529,6 +1529,14 @@ function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
   }
   // skill 是后端语义类型；展示层继续复用 mention chip，保证历史/发送后气泡 WYSIWYG 不变。
   const displayKind = chip.kind.kind === "skill" ? "mention" : chip.kind.kind;
+  // 图片附件与输入框同款:小缩略图 + hover 大图预览(独立子组件承载 hooks,绕开本组件的早退分支)。
+  if (
+    chip.kind.kind === "attach" &&
+    chip.resourceRef != null &&
+    /\.(png|jpe?g|webp|gif)$/i.test(chip.label)
+  ) {
+    return <ImageAttachChipBadge chip={chip} inline={inline} />;
+  }
   return (
     <span
       className="chat-chip"
@@ -1546,6 +1554,42 @@ function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
       </span>
       <span className="c-label">{truncateLabel(chip.label)}</span>
       {chip.suffix && <span className="c-tag">{chip.suffix}</span>}
+    </span>
+  );
+}
+
+function ImageAttachChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const src = desktopDataUrl(
+    `/api/v1/files/${chip.resourceRef!.id}/${encodeURIComponent(chip.label)}`,
+  );
+  return (
+    <span
+      className={`chat-chip${thumbFailed ? "" : " chat-chip-image"}`}
+      data-kind="attach"
+      style={inline ? { display: "inline-flex", verticalAlign: thumbFailed ? "baseline" : "middle" } : undefined}
+      onMouseEnter={() => setPreviewOpen(true)}
+      onMouseLeave={() => setPreviewOpen(false)}
+    >
+      {thumbFailed ? (
+        <span className="c-ico"><FileChipIcon size={12} /></span>
+      ) : (
+        <img
+          className="c-image-thumb"
+          src={src}
+          alt=""
+          aria-hidden="true"
+          onError={() => setThumbFailed(true)}
+        />
+      )}
+      <span className="c-label">{truncateLabel(chip.label)}</span>
+      {chip.suffix && <span className="c-tag">{chip.suffix}</span>}
+      {!thumbFailed && (
+        <span className="c-image-preview" role="img" aria-label={`预览图片：${chip.label}`} hidden={!previewOpen}>
+          <img src={src} alt={chip.label} onError={() => setThumbFailed(true)} />
+        </span>
+      )}
     </span>
   );
 }

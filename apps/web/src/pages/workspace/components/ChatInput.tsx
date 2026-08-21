@@ -1504,7 +1504,8 @@ function makeChatChipNode(spec: ChatChipSpec, localFile?: File): HTMLSpanElement
   const labelEl = document.createElement("span");
   labelEl.className = "c-label";
   labelEl.textContent = displayLabel;
-  if (spec.kind === "attach") labelEl.title = spec.label;
+  // 图片 chip 有自绘大图预览层,不再挂原生 title,避免双 hover 提示叠加。
+  if (spec.kind === "attach" && !imageSource) labelEl.title = spec.label;
   chip.appendChild(labelEl);
 
   if (spec.suffix) {

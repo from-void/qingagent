@@ -1043,9 +1043,14 @@ async function diagramToDocx(
     shading: { type: ShadingType.CLEAR, fill: "F2F0EB" },
     spacing: { after: 80 },
   });
+  const sourceFallback = (oversized: boolean): Array<Paragraph | Table> => {
+    // 必须在最终产物确定写入源码时才上报；预处理阶段的渲染尝试不能预判降级。
+    reportDegradation?.("diagram-source-fallback");
+    return [fallbackNotice(oversized), diagramSourceParagraph(diagram.source)];
+  };
 
   if (diagram.svg && svgExceedsExportByteLimit(diagram.svg)) {
-    return [fallbackNotice(true), diagramSourceParagraph(diagram.source)];
+    return sourceFallback(true);
   }
   if (isRenderableSvg(diagram.svg)) {
     const run = await imageRun(
@@ -1061,7 +1066,7 @@ async function diagramToDocx(
     );
     if (run) return [new Paragraph({ children: [run], spacing: { after: 180 } })];
   }
-  return [fallbackNotice(false), diagramSourceParagraph(diagram.source)];
+  return sourceFallback(false);
 }
 
 function diagramSourceParagraph(source: string): Paragraph {

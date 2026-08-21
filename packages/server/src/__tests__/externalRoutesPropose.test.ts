@@ -35,10 +35,10 @@ afterEach(async () => {
 });
 
 describe("external proposals", () => {
-  it("qingmlDraft 首稿直落并按原生结构读回，后续整稿进入审阅", async () => {
+  it("qingmlDraft 首稿直落，后续 H1 候选在拒绝前不改标题且拒绝时发纠正帧", async () => {
     const sessionId = await createSession();
     const firstQingml = [
-      "<title>外部 QingML 标题</title>",
+      "<title>正文一级标题</title>",
       "<h1>正文一级标题</h1>",
       "<p>第一段。</p>",
       "<ul><li>父项<ul><li>子项</li></ul></li></ul>",
@@ -61,7 +61,7 @@ describe("external proposals", () => {
     });
     expect(read.status).toBe(200);
     const readBody = await read.json() as { title: string | null; qingml: string; markdown: string };
-    expect(readBody.title).toBe("外部 QingML 标题");
+    expect(readBody.title).toBe("正文一级标题");
     expect(readBody.markdown).toContain("正文一级标题");
     const parsedRoundTrip = qingmlParse(readBody.qingml);
     expect(parsedRoundTrip.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
@@ -81,26 +81,32 @@ describe("external proposals", () => {
       ops: [{
         kind: "qingmlDraft",
         qingml: firstQingml
-          .replace("外部 QingML 标题", "审阅态新标题")
+          .replaceAll("正文一级标题", "审阅态新标题")
           .replace("第一段。", "第一段已修改。"),
       }],
     });
     expect(review.status).toBe(200);
-    const reviewBody = await review.json() as { status: string; count: number; patchIds: string[] };
+    const reviewBody = await review.json() as {
+      status: string;
+      count: number;
+      patchIds: string[];
+      seq: number;
+    };
     expect(reviewBody.status).toBe("review");
     expect(reviewBody.count).toBeGreaterThan(0);
     expect(reviewBody.patchIds).toHaveLength(reviewBody.count);
     const reviewFrames = sessionManager.frameLog.readFrom(sessionId, committedBody.seq).frames;
-    expect(reviewFrames).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        frame: { kind: "sessionMeta", data: { sessionId, title: "审阅态新标题" } },
-      }),
+    expect(reviewFrames).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ frame: { kind: "sessionMeta", data: { title: "审阅态新标题" } } }),
     ]));
 
     const readAfterReview = await app.request(`/api/v1/external/sessions/${sessionId}/doc`, {
       headers: authHeaders(),
     });
-    expect(await readAfterReview.json()).toMatchObject({ title: "审阅态新标题" });
+    expect(await readAfterReview.json()).toMatchObject({
+      title: "正文一级标题",
+      markdown: expect.stringContaining("# 正文一级标题"),
+    });
 
     const reviewRead = await app.request(`/api/v1/external/sessions/${sessionId}/review`, {
       headers: authHeaders(),
@@ -108,6 +114,126 @@ describe("external proposals", () => {
     expect(reviewRead.status).toBe(200);
     const reviewReadBody = await reviewRead.json() as { patches: unknown[] };
     expect(reviewReadBody.patches.length).toBeGreaterThan(0);
+
+    // 兼容修复前已经把候选标题写进会话元数据的存量 pendingReview。
+    const contaminated = await getOrRestoreSession(sessionId);
+    contaminated!.title = "审阅态新标题";
+
+    const rejected = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "reject_all" }),
+    });
+    expect(rejected.status).toBe(200);
+    expect(await rejected.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 1,
+      acceptedCount: 0,
+      rejectedCount: reviewBody.count,
+      remainingCount: 0,
+    });
+    const rejectFrames = sessionManager.frameLog.readFrom(sessionId, reviewBody.seq).frames;
+    expect(rejectFrames).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        frame: { kind: "sessionMeta", data: { sessionId, title: "正文一级标题" } },
+      }),
+    ]));
+    const settled = await getOrRestoreSession(sessionId);
+    expect(settled).toMatchObject({
+      title: "正文一级标题",
+      titlePinned: false,
+      docVersion: 1,
+      docState: { kind: "editing" },
+    });
+    expect(pmToMarkdown(settled!.doc!)).toContain("# 正文一级标题");
+    await sessionManager.disposeSession(sessionId);
+    expect(await getOrRestoreSession(sessionId)).toMatchObject({
+      title: "正文一级标题",
+      titlePinned: false,
+      docVersion: 1,
+    });
+  });
+
+  it("接受 H1 候选后才同步标题并发 sessionMeta", async () => {
+    const sessionId = await createSession();
+    const original = "<title>旧标题</title><h1>旧标题</h1><p>正文。</p>";
+    const committed = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: original }],
+    });
+    const committedBody = await committed.json() as { seq: number };
+    const review = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{
+        kind: "qingmlDraft",
+        qingml: "<title>新标题</title><h1>新标题</h1><p>正文已修改。</p>",
+      }],
+    });
+    const reviewBody = await review.json() as { count: number; seq: number };
+    expect((await getOrRestoreSession(sessionId))?.title).toBe("旧标题");
+    expect(sessionManager.frameLog.readFrom(sessionId, committedBody.seq).frames).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ frame: { kind: "sessionMeta", data: { title: "新标题" } } }),
+      ]),
+    );
+
+    const accepted = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "accept_all" }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      status: "reviewed",
+      docVersion: 2,
+      acceptedCount: reviewBody.count,
+      rejectedCount: 0,
+    });
+    expect((await getOrRestoreSession(sessionId))?.title).toBe("新标题");
+    expect(sessionManager.frameLog.readFrom(sessionId, reviewBody.seq).frames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          frame: { kind: "sessionMeta", data: { sessionId, title: "新标题" } },
+        }),
+      ]),
+    );
+  });
+
+  it("titlePinned 时接受 H1 候选也不覆盖手动标题", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: "<title>旧标题</title><h1>旧标题</h1><p>正文。</p>" }],
+    });
+    await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "setTitle", title: "手动标题" }],
+    });
+    const review = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{
+        kind: "qingmlDraft",
+        qingml: "<title>候选标题</title><h1>候选标题</h1><p>正文已修改。</p>",
+      }],
+    });
+    const reviewBody = await review.json() as { seq: number };
+    const accepted = await app.request(`/api/v1/external/sessions/${sessionId}/review/commit`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ expectedDocVersion: 1, action: "accept_all" }),
+    });
+
+    expect(accepted.status).toBe(200);
+    expect(await getOrRestoreSession(sessionId)).toMatchObject({
+      title: "手动标题",
+      titlePinned: true,
+      docVersion: 2,
+    });
+    expect(sessionManager.frameLog.readFrom(sessionId, reviewBody.seq).frames).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ frame: { kind: "sessionMeta", data: { title: "候选标题" } } }),
+      ]),
+    );
   });
 
   it("拒绝产生有害降级的 qingmlDraft，并返回脱敏诊断", async () => {

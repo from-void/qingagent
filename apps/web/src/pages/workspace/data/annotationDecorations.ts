@@ -188,14 +188,21 @@ export function installAnnotationGroupDecorations(
           return positions.slice(0, -1).flatMap((from, index) => {
             const to = positions[index + 1]!;
             if (from >= to) return [];
-            const hitGroupIds = [...new Set(entries
-              .filter((entry) => entry.group.status === "reviewing" && entry.anchor.pmFrom < to && entry.anchor.pmTo > from)
-              .map((entry) => entry.group.id))];
+            const hitEntries = entries
+              .filter((entry) => entry.group.status === "reviewing" && entry.anchor.pmFrom < to && entry.anchor.pmTo > from);
+            const hitGroupIds = [...new Set(hitEntries.map((entry) => entry.group.id))];
+            // 重叠区间取最高优先级着色:高优(error)问题不能被叠在同段的中/低优盖成金/灰。
+            const severityRank = { error: 3, warn: 2, info: 1 } as const;
+            const ownSeverity = ("severity" in group ? group.severity : undefined) ?? "warn";
+            const topSeverity = hitEntries.reduce<"error" | "warn" | "info">((best, entry) => {
+              const candidate = ("severity" in entry.group ? entry.group.severity : undefined) ?? "warn";
+              return severityRank[candidate] > severityRank[best] ? candidate : best;
+            }, ownSeverity);
             return [Decoration.inline(from, to, {
               class: className,
               "data-annotation-group": group.id,
               "data-annotation-groups": hitGroupIds.join(","),
-              "data-annotation-severity": "severity" in group ? group.severity ?? "warn" : "warn",
+              "data-annotation-severity": hitGroupIds.length > 1 ? topSeverity : ownSeverity,
               ...(group.status === "previewing" ? { "data-annotation-preview": "true" } : {}),
               ...(hitGroupIds.length > 1 ? { "data-annotation-overlap": "true" } : {}),
             })];

@@ -480,6 +480,34 @@ describe("ChatMessageList", () => {
     expect(items[1]!.getAttribute("value")).toBe("3");
   });
 
+  it("识图完成卡沿生产调用链复用聊天 Markdown 渲染器", async () => {
+    const spec: ToolCallSpec = {
+      id: "read-image-markdown",
+      name: "readImage",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: {
+        kind: "readImageCard",
+        data: {
+          prompt: "识别图中内容",
+          thumbnailSrc: null,
+          excerpt: "识别到 **重点**\n- 条目一\n- 条目二",
+        },
+      },
+      result: null,
+    };
+    await render(<ChatMessageList messages={[agentToolMessage(spec)]} streamActive />);
+
+    const header = host?.querySelector<HTMLButtonElement>("button.u-card-hd");
+    expect(header).not.toBeNull();
+    act(() => header?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+
+    const result = host?.querySelector(".u-scrollbox-rich");
+    expect(result?.querySelector("strong")?.textContent).toBe("重点");
+    expect(result?.querySelectorAll("li")).toHaveLength(2);
+    expect(result?.textContent).not.toContain("**");
+  });
+
   it("skill/skill_read 工具卡技能名使用 skills API label", async () => {
     vi.stubGlobal(
       "fetch",

@@ -9,6 +9,7 @@ import type {
 } from "@qingagent/contract-ts";
 import { ASK_USER_RESTORE_INTERRUPTED_MESSAGE } from "@qingagent/contract-ts";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 import "./chatUnified.css";
 
 // ════════════════════════════════════════════════════════════════════════
@@ -569,22 +570,60 @@ export function USvg({ body, status }: { body: GenerateSvgCardBody; status: stri
 }
 
 type ReadImageBody = { prompt: string; thumbnailSrc: string | null; excerpt: string | null };
-export function UReadImage({ body, status }: { body: ReadImageBody; status: string }) {
+type MarkdownRenderer = (text: string) => ReactNode;
+
+function thumbnailFilename(src: string): string {
+  try {
+    const pathname = new URL(src, "http://qingagent.local").pathname;
+    const encodedName = pathname.split("/").filter(Boolean).at(-1);
+    return encodedName ? decodeURIComponent(encodedName) : "图片";
+  } catch {
+    return "图片";
+  }
+}
+
+export function UReadImage({
+  body,
+  status,
+  renderMarkdown = (text) => text,
+}: {
+  body: ReadImageBody;
+  status: string;
+  renderMarkdown?: MarkdownRenderer;
+}) {
   const aborted = status === "aborted";
   const failed = status === "failed";
   const done = status === "done";
   const running = !done && !failed && !aborted;
   const meta = aborted ? "已中止" : failed ? "未完成" : done ? "已完成" : "处理中";
+  const [failedThumbnailSrc, setFailedThumbnailSrc] = useState<string | null>(null);
+  const thumbnailFailed = failedThumbnailSrc === body.thumbnailSrc;
   return (
     <UCard icon={failed || aborted ? ICO.stop : ICO.image} title="识别图片" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
       <div className="u-card-bd">
         {body.thumbnailSrc && (
           <span className="u-thumb">
-            <img src={body.thumbnailSrc} alt={body.prompt} loading="lazy" />
-            {running && <span className="u-thumb-pulse" aria-hidden="true" />}
+            <img
+              src={desktopDataUrl(body.thumbnailSrc)}
+              alt={body.prompt}
+              loading="lazy"
+              hidden={thumbnailFailed}
+              onError={() => setFailedThumbnailSrc(body.thumbnailSrc)}
+            />
+            {thumbnailFailed && (
+              <span className="u-thumb-fallback" role="img" aria-label={`图片预览不可用：${thumbnailFilename(body.thumbnailSrc)}`}>
+                <UIcon d={ICO.image} size={18} />
+                <span>{thumbnailFilename(body.thumbnailSrc)}</span>
+              </span>
+            )}
+            {running && !thumbnailFailed && <span className="u-thumb-pulse" aria-hidden="true" />}
           </span>
         )}
-        {done && body.excerpt && <div className="u-foot">{body.excerpt}</div>}
+        {(running || done) && body.excerpt && (
+          <ScrollBox lines={4} variant="output" rich={done}>
+            {done ? renderMarkdown(body.excerpt) : body.excerpt}
+          </ScrollBox>
+        )}
       </div>
     </UCard>
   );
@@ -594,10 +633,10 @@ export function UReadImage({ body, status }: { body: ReadImageBody; status: stri
 //  - 滚动阴影按"该侧是否还有内容"动态加(到顶不加上阴影、到底不加下阴影);
 //  - scrollbar-gutter:stable → 出现滚动条不挤压内容宽度;
 //  - variant: code=深色终端 / output=较浅结果面板+赭色左条,一眼区分"执行 vs 输出"。
-function ScrollBox({ lines, variant, children }: {
-  lines: number; variant: "code" | "output"; children: ReactNode;
+function ScrollBox({ lines, variant, rich = false, children }: {
+  lines: number; variant: "code" | "output"; rich?: boolean; children: ReactNode;
 }) {
-  const ref = useRef<HTMLPreElement>(null);
+  const ref = useRef<HTMLElement | null>(null);
   const [edge, setEdge] = useState({ top: false, bottom: false });
   const update = () => {
     const el = ref.current;
@@ -612,11 +651,20 @@ function ScrollBox({ lines, variant, children }: {
     `u-scrollbox u-scrollbox--${variant}` +
     (edge.top ? " has-top" : "") +
     (edge.bottom ? " has-bottom" : "");
+  const setRef = (node: HTMLElement | null) => {
+    ref.current = node;
+  };
   return (
     <div className={cls}>
-      <pre ref={ref} className="u-scrollbox-pre" onScroll={update} style={{ "--u-sb-lines": lines } as CSSProperties}>
-        {children}
-      </pre>
+      {rich ? (
+        <div ref={setRef} className="u-scrollbox-pre u-scrollbox-rich" onScroll={update} style={{ "--u-sb-lines": lines } as CSSProperties}>
+          {children}
+        </div>
+      ) : (
+        <pre ref={setRef} className="u-scrollbox-pre" onScroll={update} style={{ "--u-sb-lines": lines } as CSSProperties}>
+          {children}
+        </pre>
+      )}
     </div>
   );
 }
@@ -755,14 +803,18 @@ export function UnifiedToolCall({
   spec,
   skillLabels = EMPTY_SKILL_LABELS,
   materialLabels = EMPTY_MATERIAL_LABELS,
+  renderMarkdown,
 }: {
   spec: ToolCallSpec;
   skillLabels?: SkillLabelMap;
   materialLabels?: MaterialLabelMap;
+  renderMarkdown?: MarkdownRenderer;
 }) {
   const b = spec.body;
   if (b.kind === "researchCard") return <UResearch body={b.data} status={spec.status.kind} />;
-  if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
+  if (b.kind === "readImageCard") {
+    return <UReadImage body={b.data} status={spec.status.kind} renderMarkdown={renderMarkdown} />;
+  }
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
   if (b.kind === "commandCard") {
     return <UCommand body={b.data} status={spec.status} />;

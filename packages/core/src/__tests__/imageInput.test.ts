@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 
 const dnsMocks = vi.hoisted(() => ({
   lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
@@ -36,6 +40,7 @@ import {
   ImageInputError,
   MAX_IMAGE_BYTES,
   resolveImageInput,
+  thumbnailSrcForImageInput,
 } from "../tools/imageInput.js";
 
 const VALID_UUID = "11111111-1111-4111-8111-111111111111";
@@ -77,6 +82,28 @@ function responseWithCancel(
   );
   return { response, cancel };
 }
+
+describe("thumbnailSrcForImageInput", () => {
+  it("本地上传路径与裸 fileId 生成文件缩略图地址，远程与 data URI 不生成缩略图", async () => {
+    const fileId = randomUUID();
+    const filename = "识图样例.png";
+    const uploadDir = join(uploadsBaseDir(), fileId);
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(join(uploadDir, filename), PNG_1X1);
+
+    try {
+      const localSrc = `/api/v1/files/${fileId}/${encodeURIComponent(filename)}`;
+      await expect(thumbnailSrcForImageInput(localSrc)).resolves.toBe(localSrc);
+      await expect(thumbnailSrcForImageInput(fileId)).resolves.toBe(
+        `/api/v1/files/${fileId}/${filename}`,
+      );
+      await expect(thumbnailSrcForImageInput("https://example.com/photo.png")).resolves.toBeNull();
+      await expect(thumbnailSrcForImageInput("data:image/png;base64,AAAA")).resolves.toBeNull();
+    } finally {
+      await rm(uploadDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("resolveImageInput dirty path", () => {
   it("拒绝非法 URL/地址形态", async () => {

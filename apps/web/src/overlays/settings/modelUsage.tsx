@@ -273,6 +273,8 @@ export function modelLabel(modelId: string): string {
       return "V4 Flash";
     case "deepseek-v4-pro":
       return "V4 PRO";
+    case "deepseek-v4-flash-vision-exp":
+      return "V4F Vision";
     case "kimi-for-coding":
       return "K2.7 Code";
     case "k3":

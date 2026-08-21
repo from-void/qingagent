@@ -2015,6 +2015,7 @@ function ToolCallRow({
       spec={spec}
       skillLabels={skillLabels}
       materialLabels={materialLabels}
+      renderMarkdown={renderSimpleMarkdown}
     />
   );
 }

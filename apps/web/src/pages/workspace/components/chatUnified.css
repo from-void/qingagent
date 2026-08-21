@@ -142,6 +142,12 @@
 .u-scope .u-thumb { position: relative; margin-top: 8px; border: var(--u-border); background: var(--u-bg-soft); display: block; }
 .u-scope .u-thumb-btn { padding: 0; cursor: pointer; width: 100%; }
 .u-scope .u-thumb img, .u-scope .u-thumb svg, .u-scope .u-thumb-svg svg { display: block; width: 100%; height: auto; }
+.u-scope .u-thumb img[hidden] { display: none; }
+.u-scope .u-thumb-fallback {
+  min-height: 88px; padding: 16px; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  color: var(--u-ink-faint); font-size: var(--u-fs-meta); overflow-wrap: anywhere;
+}
 .u-scope .u-thumb-svg { display: block; }
 .u-scope .u-thumb-empty { padding: 24px; text-align: center; color: var(--u-ink-faint); font-size: 12px; }
 .u-scope .u-thumb-pulse { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--mark); box-shadow: 0 0 0 0 rgba(181, 154, 99, 0.6); animation: u-dotpulse 1.6s infinite; }
@@ -202,6 +208,11 @@
   color: var(--u-ink-soft);
   border: var(--u-border);
   white-space: pre-wrap; word-break: break-all;
+}
+.u-scope .u-thumb + .u-scrollbox { margin-top: 6px; }
+.u-scope .u-scrollbox-rich {
+  font-family: var(--font-zh-serif); font-size: var(--u-fs-meta);
+  white-space: normal; word-break: break-word;
 }
 /* 执行(命令/代码)= 深色终端;输出 = 较浅结果面板 + 赭色左条,一眼区分 */
 .u-scope .u-scrollbox--code .u-scrollbox-pre { background: rgba(0, 0, 0, 0.28); }

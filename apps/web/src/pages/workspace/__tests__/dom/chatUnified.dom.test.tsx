@@ -2,15 +2,17 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GenerateSvgCardBody, ResearchCardBody, ToolCallSpec } from "@qingagent/contract-ts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import gallerySource from "../../../gallery/GalleryPage.tsx?raw";
 import revampUiSource from "../../../gallery/revampUi.tsx?raw";
 import cssText from "../../components/chatUnified.css?raw";
+import { renderSimpleMarkdown } from "../../components/ChatMessageList";
 import {
   TOOL_LABELS,
+  UReadImage,
   UResearch,
   USvg,
   UToolBar,
@@ -40,6 +42,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  vi.unstubAllGlobals();
 });
 
 function renderResearch(body: ResearchCardBody) {
@@ -52,6 +55,19 @@ function renderBar(spec: ToolCallSpec, skillLabels?: SkillLabelMap, materialLabe
 }
 function renderSvg(body: GenerateSvgCardBody, status: string) {
   act(() => root.render(<USvg body={body} status={status} />));
+}
+function renderReadImage(
+  body: { prompt: string; thumbnailSrc: string | null; excerpt: string | null },
+  status: string,
+) {
+  act(() => root.render(
+    <UReadImage body={body} status={status} renderMarkdown={renderSimpleMarkdown} />,
+  ));
+}
+function openCard() {
+  const header = host.querySelector<HTMLButtonElement>("button.u-card-hd");
+  expect(header).not.toBeNull();
+  act(() => header!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
 }
 
 describe("UResearch", () => {
@@ -535,6 +551,61 @@ describe("USvg", () => {
 
     renderSvg(svgBody("done", "data:image/svg+xml,<svg/>"), "done");
     expect(header()?.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+describe("UReadImage", () => {
+  it("桌面端把本地缩略图改写到数据桥，加载失败后隐藏 img 并显示文件名占位", () => {
+    vi.stubGlobal("electron", {
+      platform: "linux",
+      isDesktop: true,
+      dataOrigin: "qingagent-data://library",
+    } satisfies Pick<NonNullable<Window["electron"]>, "platform" | "isDesktop" | "dataOrigin">);
+    const thumbnailSrc = "/api/v1/files/11111111-1111-4111-8111-111111111111/%E6%98%9F%E7%A9%BA.png";
+
+    renderReadImage({ prompt: "识别星空图", thumbnailSrc, excerpt: "正在识别" }, "running");
+
+    const image = host.querySelector<HTMLImageElement>(".u-thumb img");
+    expect(image?.getAttribute("src")).toBe(`qingagent-data://library${thumbnailSrc}`);
+    expect(host.querySelector(".u-thumb-fallback")).toBeNull();
+
+    act(() => image?.dispatchEvent(new Event("error")));
+    expect(image?.hidden).toBe(true);
+    expect(host.querySelector(".u-thumb-fallback")?.textContent).toContain("星空.png");
+    expect(host.querySelector(".u-thumb-fallback")?.hasAttribute("hidden")).toBe(false);
+  });
+
+  it("完成态只在四行 ScrollBox 中显示 Markdown 结果，正文不重复指令", () => {
+    const excerpt = "识别到 **金色标题**\n- 第一项\n- 第二项\n- 第三项\n- 第四项\n- 第五项";
+    renderReadImage({ prompt: "请识别图片里的内容", thumbnailSrc: null, excerpt }, "done");
+    openCard();
+
+    const body = host.querySelector(".u-card-bd");
+    const scrollBox = body?.querySelector<HTMLElement>(".u-scrollbox--output");
+    const scrollContent = scrollBox?.querySelector<HTMLElement>(".u-scrollbox-pre");
+    expect(host.querySelector(".u-card-sub")?.textContent).toContain("请识别图片里的内容");
+    expect(body?.textContent).not.toContain("请识别图片里的内容");
+    expect(body?.textContent).toContain("金色标题");
+    expect(scrollBox).not.toBeNull();
+    expect(scrollContent?.style.getPropertyValue("--u-sb-lines")).toBe("4");
+    expect(scrollContent?.querySelector("strong")?.textContent).toBe("金色标题");
+    expect(scrollContent?.querySelectorAll("li")).toHaveLength(5);
+    expect(scrollContent?.textContent).not.toContain("**");
+    expect(chatCss).toMatch(
+      /\.u-scope \.u-scrollbox-pre \{[^}]*max-height: calc\(var\(--u-sb-lines, 4\) \* 1\.5em \+ 12px\);[^}]*overflow: auto;[^}]*\}/s,
+    );
+  });
+
+  it("运行态把流式 excerpt 放进四行 ScrollBox", () => {
+    renderReadImage({
+      prompt: "读取图中表格",
+      thumbnailSrc: null,
+      excerpt: "正在识别第一行\n正在识别第二行",
+    }, "running");
+
+    const scrollContent = host.querySelector<HTMLElement>(".u-scrollbox--output .u-scrollbox-pre");
+    expect(scrollContent?.textContent).toContain("正在识别第一行");
+    expect(scrollContent?.style.getPropertyValue("--u-sb-lines")).toBe("4");
   });
 });
 

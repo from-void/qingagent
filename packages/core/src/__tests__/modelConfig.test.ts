@@ -13,6 +13,7 @@ import {
   resolveVisionConfig,
   getDeepseekModel,
   readRawBranchResponse,
+  transformDeepseekVisionRequestBody,
   transformKimiRequestBody,
 } from "../llm/modelConfig.js";
 
@@ -232,7 +233,26 @@ describe("modelConfig", () => {
     await expect(resolveVisionConfig(rc)).resolves.toBeNull();
   });
 
-  it("Kimi 无独立 vision 配置时复用当前主模型；显式 vision 仍优先", async () => {
+  it("厂商原生 vision 复用主 key/baseUrl，显式 vision 仍优先", async () => {
+    const deepseek = requestContext([
+      [
+        "modelOverrides",
+        {
+          provider: "deepseek",
+          visitorApiKey: "deepseek-visitor-key",
+        },
+      ],
+    ]);
+    await expect(resolveVisionConfig(deepseek)).resolves.toEqual({
+      apiKey: "deepseek-visitor-key",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-v4-flash-vision-exp",
+      protocol: "openai",
+      keyOrigin: "visitor",
+      provider: "deepseek",
+      reuseMainModel: true,
+    });
+
     const reused = requestContext([
       [
         "modelOverrides",
@@ -251,6 +271,7 @@ describe("modelConfig", () => {
       model: "proxy-k3",
       protocol: "openai",
       keyOrigin: "visitor",
+      provider: "kimi",
       reuseMainModel: true,
     });
 
@@ -274,6 +295,7 @@ describe("modelConfig", () => {
       model: "explicit-vision",
       protocol: "openai",
       keyOrigin: "vision",
+      provider: "custom",
       reuseMainModel: false,
     });
 
@@ -288,6 +310,26 @@ describe("modelConfig", () => {
       ],
     ]);
     await expect(resolveVisionConfig(explicitInvalid)).resolves.toBeNull();
+  });
+
+  it("DeepSeek 主厂商没有 key 时原生 vision 不可用", async () => {
+    delete process.env.DEEPSEEK_API_KEY;
+    await expect(resolveVisionConfig(requestContext([
+      ["modelOverrides", { provider: "deepseek" }],
+    ]))).resolves.toBeNull();
+  });
+
+  it("DeepSeek 自定义 baseUrl 下不启用官方实验视觉模型", async () => {
+    await expect(resolveVisionConfig(requestContext([
+      [
+        "modelOverrides",
+        {
+          provider: "deepseek",
+          visitorApiKey: "deepseek-proxy-key",
+          baseUrl: "https://proxy.example.com/v1",
+        },
+      ],
+    ]))).resolves.toBeNull();
   });
 
   it("resolveVisionConfig 对 vision baseUrl 执行 SSRF 拦截", async () => {
@@ -393,6 +435,64 @@ describe("modelConfig", () => {
     expect(pro).not.toHaveProperty("top_p");
     expect(pro).not.toHaveProperty("thinking");
     expect(pro).toHaveProperty("reasoning_effort", "high");
+  });
+
+  it("DeepSeek 哨兵 image_url 纯函数改写为 file part", () => {
+    const sentinelPart = {
+      type: "image_url",
+      image_url: { url: "https://qingagent-file-id.invalid/file-api-Abc-123" },
+    };
+    const untouchedPart = {
+      type: "image_url",
+      image_url: { url: "https://example.com/image.png" },
+    };
+    const input = {
+      messages: [{ role: "user", content: [sentinelPart, untouchedPart, { type: "text", text: "x" }] }],
+    };
+
+    const output = transformDeepseekVisionRequestBody(input);
+
+    expect(output).toEqual({
+      messages: [{
+        role: "user",
+        content: [
+          { type: "file", file_id: "file-api-Abc-123" },
+          untouchedPart,
+          { type: "text", text: "x" },
+        ],
+      }],
+    });
+    expect(output).not.toBe(input);
+    expect(output.messages).not.toBe(input.messages);
+    expect((output.messages as unknown[])[0]).not.toBe(input.messages[0]);
+    expect(((output.messages as Array<{ content: unknown[] }>)[0]?.content)).not.toBe(input.messages[0]?.content);
+    expect(input.messages[0]?.content[0]).toBe(sentinelPart);
+  });
+
+  it.each([
+    "http://qingagent-file-id.invalid/file-api-Abc-123",
+    "https://user@qingagent-file-id.invalid/file-api-Abc-123",
+    "https://qingagent-file-id.invalid/file-api-Abc-123?x=1",
+    "https://qingagent-file-id.invalid/file-api-Abc-123#x",
+    "https://qingagent-file-id.invalid/not-a-file-id",
+    "https://sub.qingagent-file-id.invalid/file-api-Abc-123",
+  ])("DeepSeek 哨兵严格校验拒绝 %s", (url) => {
+    const body = {
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: { url } }] }],
+    };
+    expect(transformDeepseekVisionRequestBody(body)).toEqual(body);
+  });
+
+  it("DeepSeek wire 改写对畸形结构原样返回且不抛", () => {
+    const bodies = [
+      {},
+      { messages: "bad" },
+      { messages: [null, { content: "not-array" }, { content: [null, "bad"] }] },
+    ];
+    for (const body of bodies) {
+      expect(() => transformDeepseekVisionRequestBody(body)).not.toThrow();
+      expect(transformDeepseekVisionRequestBody(body)).toEqual(body);
+    }
   });
 
   it("Kimi mock transport:K2.7 不传思考开关/effort，K3 固定 reasoning_effort=high", async () => {

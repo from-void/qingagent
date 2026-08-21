@@ -10,6 +10,7 @@ import {
   resolveModelTier,
   resolveProtocol,
 } from "../llm/modelConfig.js";
+import { isOfficialDeepseekBaseUrl } from "../llm/modelBaseUrl.js";
 
 // 防御性解析:baseURL / 模型别名来自访客 header(不可信),必须枚举脏形态确保非法回退官方默认。
 function ctx(overrides: unknown): RequestContext {
@@ -41,6 +42,14 @@ describe("resolveBaseUrl", () => {
       expect(resolveBaseUrl(ctx({ baseUrl: bad }))).toBe(DEEPSEEK_BASE_URL);
     },
   );
+});
+
+describe("isOfficialDeepseekBaseUrl", () => {
+  it("只认 DeepSeek 官方端点并容忍尾斜杠", () => {
+    expect(isOfficialDeepseekBaseUrl("https://api.deepseek.com/v1")).toBe(true);
+    expect(isOfficialDeepseekBaseUrl("https://api.deepseek.com/v1/")).toBe(true);
+    expect(isOfficialDeepseekBaseUrl("https://proxy.example.com/v1")).toBe(false);
+  });
 });
 
 describe("resolveModelId", () => {

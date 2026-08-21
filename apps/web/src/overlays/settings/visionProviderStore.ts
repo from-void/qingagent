@@ -1,7 +1,7 @@
 // 图像识别副基模(多模态)配置:visitor 层,随请求 header(x-vision-*)透传,服务端不落盘
 // ——与主模型 visitor key 同哲学(见 visitorKeyStore.ts)。持久化后端经 clientPersist:
 // 桌面端落 userData(打包后不丢)、web 端仍用 localStorage。
-// DeepSeek 暂不支持多模态,故现在只接第三方多模态厂商;待 DeepSeek 原生支持后复用主模型 key。
+// DeepSeek/Kimi 均原生支持,显式第三方配置仍优先。
 
 import { readPersisted, writePersistedAwaited } from "./clientPersist";
 

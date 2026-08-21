@@ -28,6 +28,7 @@ export {
   DEEPSEEK_BASE_URL,
   KIMI_BASE_URL,
   MODEL_OVERRIDES_CONTEXT_KEY,
+  isOfficialDeepseekBaseUrl,
   resolveBaseUrl,
   resolveModelProvider,
   sanitizeBaseUrl,
@@ -35,6 +36,7 @@ export {
 } from "./modelBaseUrl.js";
 import {
   MODEL_OVERRIDES_CONTEXT_KEY,
+  isOfficialDeepseekBaseUrl,
   resolveBaseUrl,
   resolveModelProvider,
   sanitizeBaseUrl,
@@ -78,9 +80,14 @@ export {
 import {
   DEEPSEEK_MODEL_IDS,
   KIMI_MODEL_IDS,
+  NATIVE_VISION_MODEL,
   type ApiKeyOrigin,
   type DeepseekTier,
 } from "./modelTypes.js";
+import {
+  DEEPSEEK_FILE_SENTINEL_HOST,
+  DEEPSEEK_FILE_SENTINEL_URL_RE,
+} from "./deepseekFiles.js";
 import { allowGlobalModelFallback } from "./modelSourcePolicy.js";
 export {
   DEEPSEEK_MODEL_IDS,
@@ -1000,13 +1007,65 @@ export function transformKimiRequestBody(
   return transformed;
 }
 
+function deepseekFileIdFromSentinel(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== DEEPSEEK_FILE_SENTINEL_HOST ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    return null;
+  }
+  const match = /^\/(file-api-[A-Za-z0-9-]+)$/.exec(url.pathname);
+  return match?.[1] ?? null;
+}
+
+/** 把受控哨兵改写为 Files 引用；畸形 provider body 必须保持可透传且不抛错。 */
+export function transformDeepseekVisionRequestBody(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Array.isArray(body.messages)) return body;
+  let messagesChanged = false;
+  const messages = body.messages.map((message) => {
+    if (!message || typeof message !== "object") return message;
+    const record = message as Record<string, unknown>;
+    if (!Array.isArray(record.content)) return message;
+    let contentChanged = false;
+    const content = record.content.map((part) => {
+      if (!part || typeof part !== "object") return part;
+      const partRecord = part as Record<string, unknown>;
+      if (partRecord.type !== "image_url") return part;
+      const imageUrl = partRecord.image_url;
+      if (!imageUrl || typeof imageUrl !== "object") return part;
+      const fileId = deepseekFileIdFromSentinel((imageUrl as Record<string, unknown>).url);
+      if (!fileId) return part;
+      contentChanged = true;
+      return { type: "file", file_id: fileId };
+    });
+    if (!contentChanged) return message;
+    messagesChanged = true;
+    return { ...record, content };
+  });
+  return messagesChanged ? { ...body, messages } : body;
+}
+
 export interface ResolvedVisionConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
   protocol: ModelProtocol;
   keyOrigin: ApiKeyOrigin;
-  /** true 表示 Kimi 原生多模态直接复用当前主模型。 */
+  provider: ModelProvider | "custom";
+  /** true 表示复用主模型 key/baseUrl，模型 id 仍由厂商能力声明决定。 */
   reuseMainModel: boolean;
 }
 
@@ -1031,19 +1090,25 @@ export async function resolveVisionConfig(
       model,
       protocol: vision.protocol === "anthropic" ? "anthropic" : "openai",
       keyOrigin: "vision",
+      provider: "custom",
       reuseMainModel: false,
     };
   }
-  if (resolveModelProvider(requestContext) !== "kimi") return null;
+  const provider = resolveModelProvider(requestContext);
+  const nativeVision = NATIVE_VISION_MODEL[provider];
+  if (!nativeVision) return null;
   const { apiKey, origin } = resolveModelAuth(requestContext);
   if (!apiKey) return null;
+  const baseUrl = resolveBaseUrl(requestContext).replace(/\/+$/, "");
+  if (nativeVision !== "main" && !isOfficialDeepseekBaseUrl(baseUrl)) return null;
   return {
     apiKey,
     // 主模型自定义地址已由 server 的 validateModelFetchUrl 验过；env/官方地址属于部署者配置。
-    baseUrl: resolveBaseUrl(requestContext).replace(/\/+$/, ""),
-    model: resolveModelId(requestContext, "flash"),
+    baseUrl,
+    model: nativeVision === "main" ? resolveModelId(requestContext, "flash") : nativeVision,
     protocol: "openai",
     keyOrigin: origin,
+    provider,
     reuseMainModel: true,
   };
 }
@@ -1116,10 +1181,10 @@ export function getDeepseekModel(
   return createDeepseekProvider(requestContext, options)(resolveModelId(requestContext, tier));
 }
 
-export async function getVisionModel(
+export async function getVisionModelWithConfig(
   requestContext?: RequestContext,
   options: UsageTrackedModelOptions = {},
-): Promise<InnerLanguageModel | null> {
+): Promise<{ model: InnerLanguageModel; config: ResolvedVisionConfig } | null> {
   const config = await resolveVisionConfig(requestContext);
   if (!config) return null;
   const wrapModel = (model: InnerLanguageModel) => wrapLanguageModel({
@@ -1134,21 +1199,39 @@ export async function getVisionModel(
     }),
   });
   if (config.protocol === "anthropic") {
-    return wrapModel(createAnthropic({
+    return { config, model: wrapModel(createAnthropic({
       baseURL: anthropicBaseUrl(config.baseUrl),
       apiKey: config.apiKey,
       fetch: modelFetch,
-    })(config.model));
+    })(config.model)) };
   }
-  return wrapModel(createOpenAICompatible({
-    name: config.reuseMainModel ? "kimi" : "vision",
+  const providerOptions = config.provider === "kimi"
+    ? { transformRequestBody: (body: Record<string, unknown>) =>
+        transformKimiRequestBody(body, requestContext) }
+    : config.provider === "deepseek"
+      ? {
+          supportedUrls: () => ({
+            "image/*": [DEEPSEEK_FILE_SENTINEL_URL_RE],
+          }),
+          transformRequestBody: transformDeepseekVisionRequestBody,
+        }
+      : {};
+  const model = wrapModel(createOpenAICompatible({
+    name: config.provider === "kimi" || config.provider === "deepseek"
+      ? config.provider
+      : "vision",
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
     includeUsage: true,
     fetch: modelFetch,
-    ...(config.reuseMainModel
-      ? { transformRequestBody: (body: Record<string, unknown>) =>
-          transformKimiRequestBody(body, requestContext) }
-      : {}),
+    ...providerOptions,
   }).chatModel(config.model));
+  return { model, config };
+}
+
+export async function getVisionModel(
+  requestContext?: RequestContext,
+  options: UsageTrackedModelOptions = {},
+): Promise<InnerLanguageModel | null> {
+  return (await getVisionModelWithConfig(requestContext, options))?.model ?? null;
 }

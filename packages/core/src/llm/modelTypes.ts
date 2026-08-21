@@ -14,3 +14,9 @@ export const KIMI_MODEL_IDS: Record<DeepseekTier, string> = {
   flash: "kimi-for-coding",
   pro: "k3",
 };
+
+/** 与 ModelProvider 保持同步；null=不支持，"main"=复用主模型 id，其余=固定视觉模型 id。 */
+export const NATIVE_VISION_MODEL = {
+  kimi: "main",
+  deepseek: "deepseek-v4-flash-vision-exp",
+} as const satisfies Record<"deepseek" | "kimi", "main" | string | null>;

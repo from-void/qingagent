@@ -3,7 +3,8 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { createHash } from "node:crypto";
 import { streamText, type ModelMessage } from "ai-v5";
 import { z } from "zod";
-import { getVisionModel } from "../llm/modelConfig.js";
+import { getVisionModelWithConfig } from "../llm/modelConfig.js";
+import { resolveDeepseekFileTransport } from "../llm/deepseekFiles.js";
 import { ImageInputError, resolveImageInput } from "./imageInput.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 
@@ -40,6 +41,13 @@ function isRateLimitError(error: unknown): boolean {
     haystack.includes("当前使用人数过多") ||
     haystack.includes("使用人数过多")
   );
+}
+
+function isMissingFileIdError(error: unknown): boolean {
+  const maybeError = error as { message?: unknown; responseBody?: unknown } | null | undefined;
+  return [maybeError?.message, maybeError?.responseBody]
+    .filter((value): value is string => typeof value === "string")
+    .some((value) => value.includes("file_ids do not exist"));
 }
 
 function visionRequestErrorMessage(error: unknown): string {
@@ -216,8 +224,8 @@ export const readImageTool = createTool({
     const stopHeartbeat = startToolHeartbeat(context, { tool: "readImage" });
     const requestContext = context?.requestContext as RequestContext | undefined;
     try {
-      const model = await getVisionModel(requestContext, { callSite: "readImage" });
-      if (!model) {
+      const resolved = await getVisionModelWithConfig(requestContext, { callSite: "readImage" });
+      if (!resolved) {
         return {
           ok: false,
           text: "",
@@ -225,6 +233,7 @@ export const readImageTool = createTool({
           materialId: null,
         };
       }
+      const { model, config } = resolved;
 
       const prompt = input.prompt.trim() || "请识别并描述这张图片的主要内容。";
       // 先把素材区 materialId 折算成原始上传文件,再统一交给安全 resolver。
@@ -280,7 +289,36 @@ export const readImageTool = createTool({
           ? `最近纯文本对话(仅供理解本次识图任务):\n${conversation}\n\n本次识别指令:\n${prompt}`
           : prompt;
         const parentSignal = (context as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
-        const runVisionOnce = async (): Promise<string> => {
+        type VisionImagePart = {
+          type: "image";
+          image: Buffer | URL;
+          mediaType: string;
+        };
+        const inlineImagePart: VisionImagePart = {
+          type: "image",
+          image: image.buffer,
+          mediaType: image.mimeType,
+        };
+        const transport = resolveDeepseekFileTransport(config);
+        let imagePart = inlineImagePart;
+        let usedFileId: string | null = null;
+        if (transport) {
+          try {
+            const sent = await transport.ensureFileSentinelUrl(image, parentSignal);
+            usedFileId = sent.fileId;
+            imagePart = {
+              type: "image",
+              image: new URL(sent.sentinelUrl),
+              mediaType: image.mimeType,
+            };
+          } catch (error) {
+            // 主动取消必须终止整次识图；仅传输故障才允许回退到既有内联路径。
+            parentSignal?.throwIfAborted();
+            console.warn("[readImage] DeepSeek Files 上传失败，已降级内联传输");
+          }
+        }
+
+        const runVisionOnce = async (currentImagePart: VisionImagePart): Promise<string> => {
           const abortController = new AbortController();
           const abortFromParent = () => abortController.abort();
           if (parentSignal?.aborted) {
@@ -303,7 +341,7 @@ export const readImageTool = createTool({
                   role: "user",
                   content: [
                     { type: "text", text: textPart },
-                    { type: "image", image: image.buffer, mediaType: image.mimeType },
+                    currentImagePart,
                   ],
                 },
               ],
@@ -341,16 +379,29 @@ export const readImageTool = createTool({
           return text.trim();
         };
 
+        const runWithFileFallback = async (): Promise<string> => {
+          try {
+            return await runVisionOnce(imagePart);
+          } catch (error) {
+            if (!transport || !usedFileId || !isMissingFileIdError(error)) throw error;
+            const failedFileId = usedFileId;
+            usedFileId = null;
+            transport.invalidate(image, failedFileId);
+            imagePart = inlineImagePart;
+            return runVisionOnce(imagePart);
+          }
+        };
+
         let trimmed: string;
         try {
-          trimmed = await runVisionOnce();
+          trimmed = await runWithFileFallback();
         } catch (error) {
           if (!isRateLimitError(error)) throw error;
           display += `${display ? "\n" : ""}识图模型限流,等待 20 秒后自动重试…`;
           emitProgress(true);
           await waitForRetryDelay(parentSignal);
           try {
-            trimmed = await runVisionOnce();
+            trimmed = await runWithFileFallback();
           } catch (retryError) {
             parentSignal?.throwIfAborted();
             return {

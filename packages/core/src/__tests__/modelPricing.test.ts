@@ -17,6 +17,7 @@ const unitPrice: ModelPricing = {
   inputCacheMissPerMillion: 10,
   outputPerMillion: 20,
 };
+const DEEPSEEK_VISION_MODEL_ID = "deepseek-v4-flash-vision-exp";
 
 function schedule(
   pricing: ModelPricing = unitPrice,
@@ -51,6 +52,19 @@ describe("pricing schedule", () => {
             { start: "14:00", end: "18:00" },
           ],
           models: [DEEPSEEK_MODEL_IDS.flash, DEEPSEEK_MODEL_IDS.pro],
+        },
+      }, {
+        effectiveFrom: "2026-08-20T16:00:00.000Z",
+        peak: {
+          windows: [
+            { start: "09:00", end: "12:00" },
+            { start: "14:00", end: "18:00" },
+          ],
+          models: [
+            DEEPSEEK_MODEL_IDS.flash,
+            DEEPSEEK_MODEL_IDS.pro,
+            DEEPSEEK_VISION_MODEL_ID,
+          ],
         },
       }],
     });
@@ -113,6 +127,32 @@ describe("pricing schedule", () => {
     )).toEqual({ costCny: 0.3, pricingTier: "peak", pricingMultiplier: 2 });
   });
 
+  it("DeepSeek vision-exp 从 08-21 零时起按 V4-Flash 峰谷价计费", () => {
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_VISION_MODEL_ID,
+      { output: 1_000_000 },
+      "2026-08-20T15:59:59.999Z",
+    )).toBeNull();
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_VISION_MODEL_ID,
+      { output: 1_000_000 },
+      "2026-08-20T16:00:00.000Z",
+    )).toEqual({ costCny: 4.5, pricingTier: "standard", pricingMultiplier: 1 });
+    expect(computeCostCnyAt(
+      PRICING_SCHEDULE,
+      DEEPSEEK_VISION_MODEL_ID,
+      { output: 1_000_000 },
+      "2026-08-21T01:30:00.000Z",
+    )).toEqual({ costCny: 9, pricingTier: "peak", pricingMultiplier: 2 });
+    expect(PRICING_SCHEDULE.epochs[2]?.pricing[DEEPSEEK_VISION_MODEL_ID]).toEqual({
+      inputCacheHitPerMillion: 0.05,
+      inputCacheMissPerMillion: 1.5,
+      outputPerMillion: 4.5,
+    });
+  });
+
   it.each([
     ["09:00", "2026-08-17T01:00:00.000Z", "peak", 2, 9],
     ["13:00", "2026-08-17T05:00:00.000Z", "standard", 1, 4.5],
@@ -132,12 +172,20 @@ describe("pricing schedule", () => {
     )).toEqual({ costCny, pricingTier, pricingMultiplier });
   });
 
-  it("新 epoch 完整保留 Kimi 两档原价，且 Kimi 不受 DeepSeek 峰段影响", () => {
-    const [oldEpoch, newEpoch] = PRICING_SCHEDULE.epochs;
-    expect(newEpoch?.pricing[KIMI_MODEL_IDS.flash])
+  it("各新增 epoch 完整保留既有价格，且 Kimi 不受 DeepSeek 峰段影响", () => {
+    const [oldEpoch, fromAugust17, fromAugust21] = PRICING_SCHEDULE.epochs;
+    expect(fromAugust17?.pricing[KIMI_MODEL_IDS.flash])
       .toEqual(oldEpoch?.pricing[KIMI_MODEL_IDS.flash]);
-    expect(newEpoch?.pricing[KIMI_MODEL_IDS.pro])
+    expect(fromAugust17?.pricing[KIMI_MODEL_IDS.pro])
       .toEqual(oldEpoch?.pricing[KIMI_MODEL_IDS.pro]);
+    expect(fromAugust21?.pricing[KIMI_MODEL_IDS.flash])
+      .toEqual(fromAugust17?.pricing[KIMI_MODEL_IDS.flash]);
+    expect(fromAugust21?.pricing[KIMI_MODEL_IDS.pro])
+      .toEqual(fromAugust17?.pricing[KIMI_MODEL_IDS.pro]);
+    expect(fromAugust21?.pricing[DEEPSEEK_MODEL_IDS.flash])
+      .toEqual(fromAugust17?.pricing[DEEPSEEK_MODEL_IDS.flash]);
+    expect(fromAugust21?.pricing[DEEPSEEK_MODEL_IDS.pro])
+      .toEqual(fromAugust17?.pricing[DEEPSEEK_MODEL_IDS.pro]);
 
     const usage = { cacheHit: 1_000_000, cacheMiss: 1_000_000, output: 1_000_000 };
     expect(computeCostCnyAt(

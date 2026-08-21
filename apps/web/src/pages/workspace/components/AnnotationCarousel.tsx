@@ -285,7 +285,6 @@ export function AnnotationCarousel(props: {
   const suggestion = suggestions[group.id] ?? storedSuggestion;
   const resolvedSuggestion = resolveAnnotationSuggestion(group, suggestion);
   const hasSuggestedChange = storedSuggestion.length > 0;
-  const severitySummary = buildAnnotationSeveritySummary(reviewingGroups);
 
   const keepOpen = () => {
     cancelHide();
@@ -346,20 +345,20 @@ export function AnnotationCarousel(props: {
         <div className="ahc-title-row">
           <strong>{group.summary}</strong>
           <div className="ahc-nav" aria-label="批注位置">
+            {/* 用户裁定:导航只留「n/N」,严重度汇总等冗余信息全部去掉。 */}
             <span className="ahc-count">{hasOverlap
-              ? <>此处 {hitGroups.length} 条 · 第 {hitIndex + 1} / 共 {hitGroups.length} 条{severitySummary ? ` · ${severitySummary}` : ""}</>
-              : <>第 {groupIndex + 1} / 共 {reviewingGroups.length} 处{severitySummary ? ` · ${severitySummary}` : ""}</>}</span>
+              ? <>{hitIndex + 1}/{hitGroups.length}</>
+              : <>{groupIndex + 1}/{reviewingGroups.length}</>}</span>
             <button type="button" aria-label="上一处批注" disabled={(hasOverlap ? hitGroups : reviewingGroups).length < 2} onClick={() => moveGroup(-1)}><CaretIcon size={13} direction="left" /></button>
             <button type="button" aria-label="下一处批注" disabled={(hasOverlap ? hitGroups : reviewingGroups).length < 2} onClick={() => moveGroup(1)}><CaretIcon size={13} direction="right" /></button>
           </div>
         </div>
-        <div className="ahc-meta">
-          {group.origin ? <span className="ahc-origin">{reviewOriginLabel(group.origin)}</span> : null}
-          {group.severity ? <span className="ahc-severity" data-severity={group.severity}>{SEVERITY_LABELS[group.severity]}</span> : null}
-        </div>
       </header>
+      {/* 用户裁定:去掉来源/优先级独立行;优先级做成小标签跟在「批注原因」后。 */}
       <section className="ahc-reason" aria-label="批注原因">
-        <span>批注原因</span>
+        <span>批注原因{group.severity
+          ? <span className="ahc-severity" data-severity={group.severity}>{SEVERITY_LABELS[group.severity]}</span>
+          : null}</span>
         <p>{group.note}</p>
       </section>
       {hasSuggestedChange ? <section className="ahc-suggestion" aria-label="修改意见">

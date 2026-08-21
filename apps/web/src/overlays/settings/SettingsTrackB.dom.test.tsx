@@ -90,6 +90,8 @@ describe("Settings Track B", () => {
       .toContain("推 荐");
     expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
       .toContain("写作成本最低");
+    expect(host?.querySelector('[data-wf="ModelVendorCardDeepseek"]')?.textContent)
+      .toContain("支持图片识别(实验版)");
     expect(host?.querySelector('[data-wf="ModelVendorCardKimi"]')?.textContent)
       .toContain("能看图理解配图");
     // 没配置就没有档位、没有使用中
@@ -1298,6 +1300,50 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     expect(host?.querySelector(".ss-card .ss-badge")?.textContent).toContain(badge);
+  });
+
+  it.each([
+    [false, "未配置"],
+    [true, "自动启用"],
+  ])("DeepSeek 原生识图按 key 配置状态启用卡片：configured=%s", async (configured, badge) => {
+    await setSelectedModelProvider("deepseek");
+    if (configured) await setVisitorModelKey("deepseek", "deepseek-vision-key");
+
+    await render(<VisionPanel />);
+
+    const nativeCard = host?.querySelector(".ss-card");
+    expect(nativeCard?.classList.contains("sm-disabled")).toBe(false);
+    expect(nativeCard?.querySelector(".ss-badge")?.textContent).toContain(badge);
+    expect(nativeCard?.textContent).not.toContain("即将支持");
+    if (configured) {
+      expect(nativeCard?.textContent).toContain("deepseek-v4-flash-vision-exp");
+      expect(host?.textContent).toContain("默认复用主模型 key");
+    }
+  });
+
+  it("DeepSeek 自定义中转生效时不宣称原生识图自动启用", async () => {
+    await setSelectedModelProvider("deepseek");
+    await writeCustomProvider({
+      protocol: "openai",
+      baseUrl: "https://deepseek-proxy.example/v1",
+      apiKey: "deepseek-proxy-key",
+      modelFlash: "proxy-flash",
+      modelPro: "proxy-pro",
+    }, "deepseek");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "deepseek",
+      "x-model-base-url": "https://deepseek-proxy.example/v1",
+    });
+
+    await render(<VisionPanel />);
+
+    const nativeCard = host?.querySelector(".ss-card");
+    expect(nativeCard?.querySelector(".ss-badge")?.textContent).toContain("未启用");
+    expect(nativeCard?.querySelector(".ss-badge")?.classList.contains("ss-quota")).toBe(true);
+    expect(nativeCard?.textContent).toContain(
+      "当前使用自定义 API 地址,原生识图(实验版)仅在 DeepSeek 官方地址下启用;可在下方显式配置独立视觉模型。",
+    );
+    expect(nativeCard?.textContent).not.toContain("自动启用");
   });
 
   it("Kimi 原生识图复用服务端活动 provider 与 DB/env key 状态", async () => {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PricingSliceSpec } from "@qingagent/db";
-import { DEEPSEEK_MODEL_IDS, KIMI_MODEL_IDS } from "./modelTypes.js";
+import { DEEPSEEK_MODEL_IDS, KIMI_MODEL_IDS, NATIVE_VISION_MODEL } from "./modelTypes.js";
 
 export interface ModelPricing {
   inputCacheHitPerMillion: number;
@@ -92,6 +92,34 @@ const MODEL_PRICING_CNY_PER_MILLION_FROM_2026_08_17: ModelPricingTable = {
     inputCacheHitPerMillion: 2,
     inputCacheMissPerMillion: 20,
     outputPerMillion: 100,
+  },
+};
+
+const MODEL_PRICING_CNY_PER_MILLION_FROM_2026_08_21: ModelPricingTable = {
+  [DEEPSEEK_MODEL_IDS.flash]: {
+    inputCacheHitPerMillion: 0.05,
+    inputCacheMissPerMillion: 1.5,
+    outputPerMillion: 4.5,
+  },
+  [DEEPSEEK_MODEL_IDS.pro]: {
+    inputCacheHitPerMillion: 0.15,
+    inputCacheMissPerMillion: 4.5,
+    outputPerMillion: 13.5,
+  },
+  [KIMI_MODEL_IDS.flash]: {
+    inputCacheHitPerMillion: 1.3,
+    inputCacheMissPerMillion: 6.5,
+    outputPerMillion: 27,
+  },
+  [KIMI_MODEL_IDS.pro]: {
+    inputCacheHitPerMillion: 2,
+    inputCacheMissPerMillion: 20,
+    outputPerMillion: 100,
+  },
+  [NATIVE_VISION_MODEL.deepseek]: {
+    inputCacheHitPerMillion: 0.05,
+    inputCacheMissPerMillion: 1.5,
+    outputPerMillion: 4.5,
   },
 };
 
@@ -213,6 +241,21 @@ export const PRICING_SCHEDULE: PricingSchedule = createPricingSchedule([{
       { start: "14:00", end: "18:00" },
     ],
     models: [DEEPSEEK_MODEL_IDS.flash, DEEPSEEK_MODEL_IDS.pro],
+  },
+}, {
+  effectiveFrom: "2026-08-20T16:00:00.000Z",
+  pricing: MODEL_PRICING_CNY_PER_MILLION_FROM_2026_08_21,
+  peak: {
+    multiplier: 2,
+    windows: [
+      { start: "09:00", end: "12:00" },
+      { start: "14:00", end: "18:00" },
+    ],
+    models: [
+      DEEPSEEK_MODEL_IDS.flash,
+      DEEPSEEK_MODEL_IDS.pro,
+      NATIVE_VISION_MODEL.deepseek,
+    ],
   },
 }]);
 

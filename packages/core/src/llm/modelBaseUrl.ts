@@ -1,8 +1,13 @@
 // 模型 baseURL 的无副作用入口:桌面启动预热会在迁移前加载它,不能依赖 Mastra。
 import { allowGlobalModelFallback } from "./modelSourcePolicy.js";
 
-const OFFICIAL_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+export const OFFICIAL_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 const OFFICIAL_KIMI_BASE_URL = "https://api.kimi.com/coding/v1";
+
+/** DeepSeek 官方端点判定:原生视觉(实验模型)与 Files API 仅在官方端点启用——中转/反代未必部署两者。 */
+export function isOfficialDeepseekBaseUrl(baseUrl: string): boolean {
+  return baseUrl.replace(/\/+$/, "") === OFFICIAL_DEEPSEEK_BASE_URL;
+}
 
 // 默认官方端点;Web/自部署/desktop dev 可由 env 覆盖。打包 desktop 固定官方端点，
 // 自定义地址必须随 visitor key 从请求显式传入。

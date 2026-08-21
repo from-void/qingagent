@@ -56,7 +56,7 @@ export const VENDOR_META: Record<ModelProvider, VendorMeta> = {
 export const VENDOR_INTRO: Record<ModelProvider, ReactNode> = {
   deepseek: (
     <>
-      国产旗舰,长文写作能力强,<em>写作成本最低</em>;不支持看图(无多模态)。
+      国产旗舰,长文写作能力强,<em>写作成本最低</em>;支持图片识别(实验版)。
     </>
   ),
   kimi: (

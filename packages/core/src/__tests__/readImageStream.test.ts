@@ -6,11 +6,17 @@ import { Buffer } from "node:buffer";
 // 显式处理 error part,并对空文本兜底 ok:false。本测试锁死这三条行为。
 
 const streamTextMock = vi.hoisted(() => vi.fn());
-const getVisionModelMock = vi.hoisted(() => vi.fn());
+const getVisionModelWithConfigMock = vi.hoisted(() => vi.fn());
+const resolveDeepseekFileTransportMock = vi.hoisted(() => vi.fn());
 const resolveImageInputMock = vi.hoisted(() => vi.fn());
 
 vi.mock("ai-v5", () => ({ streamText: streamTextMock }));
-vi.mock("../llm/modelConfig.js", () => ({ getVisionModel: getVisionModelMock }));
+vi.mock("../llm/modelConfig.js", () => ({
+  getVisionModelWithConfig: getVisionModelWithConfigMock,
+}));
+vi.mock("../llm/deepseekFiles.js", () => ({
+  resolveDeepseekFileTransport: resolveDeepseekFileTransportMock,
+}));
 // 注意:mock 路径必须是 readImage.ts 实际 import 的模块(src/tools/imageInput.js),
 // 即从本测试文件(src/__tests__/)算的 ../tools/imageInput.js,不能写成 ./imageInput.js。
 vi.mock("../tools/imageInput.js", async (importActual) => {
@@ -73,9 +79,14 @@ describe("readImage stream error handling", () => {
 
   beforeEach(() => {
     streamTextMock.mockReset();
-    getVisionModelMock.mockReset();
+    getVisionModelWithConfigMock.mockReset();
+    resolveDeepseekFileTransportMock.mockReset();
     resolveImageInputMock.mockReset();
-    getVisionModelMock.mockResolvedValue({ modelId: `vision-test-${++modelSeq}` });
+    getVisionModelWithConfigMock.mockResolvedValue({
+      model: { modelId: `vision-test-${++modelSeq}` },
+      config: { provider: "custom", protocol: "openai", baseUrl: "https://vision.example.com/v1" },
+    });
+    resolveDeepseekFileTransportMock.mockReturnValue(null);
     resolveImageInputMock.mockResolvedValue({ buffer: Buffer.from([0x89, 0x50]), mimeType: "image/png" });
   });
 
@@ -272,6 +283,78 @@ describe("readImage stream error handling", () => {
     expect(streamTextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("Files 上传失败时降级内联图片并继续识别", async () => {
+    const ensureFileSentinelUrl = vi.fn().mockRejectedValue(new Error("files upload failed"));
+    resolveDeepseekFileTransportMock.mockReturnValue({
+      ensureFileSentinelUrl,
+      invalidate: vi.fn(),
+    });
+    streamTextMock.mockReturnValue(visionText("内联降级成功"));
+
+    const result = await run("img-files-upload-fallback");
+
+    expect(result).toMatchObject({ ok: true, text: "内联降级成功" });
+    expect(ensureFileSentinelUrl).toHaveBeenCalledTimes(1);
+    expect(streamTextMock.mock.calls[0]?.[0].messages[0].content[1]).toMatchObject({
+      type: "image",
+      image: expect.any(Buffer),
+      mediaType: "image/png",
+    });
+  });
+
+  it("chat 报 file_id 失效时剔除正确 id 并以内联图片立即重试一次", async () => {
+    const invalidate = vi.fn();
+    resolveDeepseekFileTransportMock.mockReturnValue({
+      ensureFileSentinelUrl: vi.fn().mockResolvedValue({
+        sentinelUrl: "https://qingagent-file-id.invalid/file-api-stale-123",
+        fileId: "file-api-stale-123",
+      }),
+      invalidate,
+    });
+    streamTextMock
+      .mockReturnValueOnce({
+        fullStream: fullStream([{
+          type: "error",
+          error: new Error("the following file_ids do not exist or are not created under your account"),
+        }]),
+      })
+      .mockReturnValueOnce(visionText("失效后内联成功"));
+
+    const result = await run("img-stale-file-id");
+
+    expect(result).toMatchObject({ ok: true, text: "失效后内联成功" });
+    expect(invalidate).toHaveBeenCalledWith(
+      { buffer: Buffer.from([0x89, 0x50]), mimeType: "image/png" },
+      "file-api-stale-123",
+    );
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(streamTextMock.mock.calls[0]?.[0].messages[0].content[1].image).toEqual(
+      new URL("https://qingagent-file-id.invalid/file-api-stale-123"),
+    );
+    expect(streamTextMock.mock.calls[1]?.[0].messages[0].content[1].image).toEqual(
+      Buffer.from([0x89, 0x50]),
+    );
+  });
+
+  it("file_id 降级只重试一次", async () => {
+    const missing = new Error("file_ids do not exist");
+    resolveDeepseekFileTransportMock.mockReturnValue({
+      ensureFileSentinelUrl: vi.fn().mockResolvedValue({
+        sentinelUrl: "https://qingagent-file-id.invalid/file-api-stale-once",
+        fileId: "file-api-stale-once",
+      }),
+      invalidate: vi.fn(),
+    });
+    streamTextMock
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: missing }]) })
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: missing }]) });
+
+    const result = await run("img-stale-file-id-once");
+
+    expect(result.ok).toBe(false);
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
   it("最外层捕获遇到父取消时重抛原始 reason，不吞成 ok:false", async () => {
     const controller = new AbortController();
     const reason = new DOMException("用户取消识图", "AbortError");
@@ -316,6 +399,41 @@ describe("readImage stream error handling", () => {
     expect(first).toEqual({ ok: true, text: "缓存结果", error: null, materialId: null });
     expect(second).toEqual(first);
     expect(streamTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("识别结果 LRU 命中先于 Files 上传短路", async () => {
+    streamTextMock.mockReturnValue(visionText("已有识别结果"));
+    await run("img-result-cache-before-files", {}, "同一问题");
+    const ensureFileSentinelUrl = vi.fn();
+    resolveDeepseekFileTransportMock.mockReturnValue({
+      ensureFileSentinelUrl,
+      invalidate: vi.fn(),
+    });
+
+    const cached = await run("img-result-cache-before-files", {}, "同一问题");
+
+    expect(cached).toMatchObject({ ok: true, text: "已有识别结果" });
+    expect(ensureFileSentinelUrl).not.toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("Files 上传进行中父 signal abort 时抛原 AbortError，且不降级调用 streamText", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("用户取消上传", "AbortError");
+    const ensureFileSentinelUrl = vi.fn((_image: unknown, signal?: AbortSignal) => new Promise(
+      (_resolve, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+    ));
+    resolveDeepseekFileTransportMock.mockReturnValue({
+      ensureFileSentinelUrl,
+      invalidate: vi.fn(),
+    });
+
+    const pending = run("img-abort-files-upload", { abortSignal: controller.signal });
+    await vi.waitFor(() => expect(ensureFileSentinelUrl).toHaveBeenCalledTimes(1));
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(streamTextMock).not.toHaveBeenCalled();
   });
 
   it("素材输入命中缓存时仍返回同一 materialId", async () => {

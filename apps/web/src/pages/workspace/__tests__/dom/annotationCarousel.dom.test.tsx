@@ -342,9 +342,9 @@ describe("AnnotationCarousel hover card", () => {
     expect(body.querySelector(":scope > .ahc-suggestion")).not.toBeNull();
     expect(card.querySelector(":scope > footer")).not.toBeNull();
     expect(card.textContent).toContain("事实有误");
-    expect(card.querySelector(".ahc-origin")?.textContent).toBe("来源核查");
+    expect(card.querySelector(".ahc-origin")).toBeNull();
     expect(card.textContent).not.toContain("source-check");
-    expect(card.textContent).toContain("第 1 / 共 2 处");
+    expect(card.textContent).toContain("1/2");
     expect(card.textContent).toContain("时间与资料不一致");
     expect(card.textContent).toContain("改为四月发布");
     expect(host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value).toBe("改为四月发布");
@@ -365,7 +365,7 @@ describe("AnnotationCarousel hover card", () => {
     });
     await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
     expect(host.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
-    expect(host.textContent).toContain("第 2 / 共 2 处");
+    expect(host.textContent).toContain("2/2");
     expect(host.textContent).toContain("表述重复");
     await act(async () => vi.advanceTimersByTime(50));
     expect(host.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
@@ -449,7 +449,7 @@ describe("AnnotationCarousel hover card", () => {
 
     const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
     expect(card.textContent).toContain(note);
-    expect(card.querySelector(".ahc-origin")?.textContent).toBe("敏感词");
+    expect(card.querySelector(".ahc-origin")).toBeNull();
     expect(card.textContent).not.toContain("sensitive");
     expect(card.querySelector('[aria-label="修改意见"]')).toBeNull();
     expect(card.querySelector(".ahc-accept-actions")).toBeNull();
@@ -491,7 +491,7 @@ describe("AnnotationCarousel hover card", () => {
     await act(async () => nextButton.click());
     expect(card.dataset.groupId).toBe("g2");
     expect(card.style.visibility).toBe("visible");
-    expect(card.textContent).toContain("第 2 / 共 2 处");
+    expect(card.textContent).toContain("2/2");
     expect(card.textContent).toContain("表述重复");
 
     await act(async () => {
@@ -509,7 +509,7 @@ describe("AnnotationCarousel hover card", () => {
     await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
     expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g1");
     expect(card.style.visibility).toBe("visible");
-    expect(card.textContent).toContain("第 1 / 共 2 处");
+    expect(card.textContent).toContain("1/2");
     expect(card.textContent).toContain("事实有误");
   });
 
@@ -809,7 +809,7 @@ describe("AnnotationCarousel hover card", () => {
       { ...groups[1]!, severity: "warn" },
       { ...groups[1]!, id: "g3", severity: "info" },
       { ...groups[1]!, id: "g4" },
-    ])).toBe("1 严重 · 2 建议 · 1 提示");
+    ])).toBe("1 高优 · 2 中优 · 1 低优");
   });
 
   it("装饰节点透传三档严重度，未分级按 warn 保持现状", () => {
@@ -856,11 +856,11 @@ describe("AnnotationCarousel hover card", () => {
       vi.advanceTimersByTime(80);
     });
 
-    expect(host!.textContent).toContain("此处 2 条 · 第 1 / 共 2 条");
+    expect(host!.textContent).toContain("1/2");
     const firstId = host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId;
     await act(async () => host!.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
     expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).not.toBe(firstId);
-    expect(host!.textContent).toContain("此处 2 条 · 第 2 / 共 2 条");
+    expect(host!.textContent).toContain("2/2");
   });
 
   function createEditor() {

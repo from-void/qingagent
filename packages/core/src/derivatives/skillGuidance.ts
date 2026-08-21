@@ -4,7 +4,7 @@ import {
   DERIVATIVE_WRITING_SKILL,
   derivativeChildSkillFor,
 } from "@qingagent/contract-ts";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir, userSkillsDir } from "../skills/paths.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import { stripSkillSourceBom } from "../skills/frontmatter.js";
 import { DTYPE_COMMON_CONSTRAINTS } from "./dtypeTemplatePrompts.js";
@@ -25,9 +25,9 @@ const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;
 function childSkillCandidates(childSkillName: string): string[] {
   return [
     ...BUILTIN_SKILL_CATEGORIES.map((category) =>
-      join(BUILTIN_SKILLS_DIR, category, DERIVATIVE_WRITING_SKILL, childSkillName, "SKILL.md")
+      join(builtinSkillsDir(), category, DERIVATIVE_WRITING_SKILL, childSkillName, "SKILL.md")
     ),
-    join(USER_SKILLS_DIR, DERIVATIVE_WRITING_SKILL, childSkillName, "SKILL.md"),
+    join(userSkillsDir(), DERIVATIVE_WRITING_SKILL, childSkillName, "SKILL.md"),
   ];
 }
 

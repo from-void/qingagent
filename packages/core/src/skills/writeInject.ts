@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEFAULT_SKILL_CHIP_INSTRUCTION_CHAR_LIMIT } from "../session/chipOnlyNote.js";
 import { SKILL_NAME_RE, stripSkillSourceBom } from "./frontmatter.js";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "./paths.js";
+import { builtinSkillsDir, userSkillsDir } from "./paths.js";
 
 export const ACTIVATED_SKILLS_REQUEST_CONTEXT_KEY = "qingagentActivatedSkills";
 export const SKILL_WRITE_INJECT_CHAR_LIMIT =
@@ -201,9 +201,9 @@ async function loadSkillWriteInjectSourceFromDisk(
   if (!SKILL_NAME_RE.test(skillName)) return null;
   const candidates = [
     ...BUILTIN_SKILL_CATEGORIES.map((category) =>
-      join(BUILTIN_SKILLS_DIR, category, skillName, "SKILL.md")
+      join(builtinSkillsDir(), category, skillName, "SKILL.md")
     ),
-    join(USER_SKILLS_DIR, skillName, "SKILL.md"),
+    join(userSkillsDir(), skillName, "SKILL.md"),
   ];
   for (const candidate of candidates) {
     try {

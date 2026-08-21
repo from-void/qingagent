@@ -1,12 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { USER_SKILLS_DIR } from "./paths.js";
+import { userSkillsDir } from "./paths.js";
 
-// Keep the disabled-set file inside the user skills directory so it always
-// lives in a writable, user-owned location regardless of how USER_SKILLS_DIR
-// is configured (the previous "../disabled.json" form could escape to e.g.
-// "/disabled.json" when QINGAGENT_USER_SKILLS_DIR pointed at a root-level dir).
-const DISABLED_FILE = join(USER_SKILLS_DIR, ".disabled.json");
+// 禁用状态必须留在用户技能目录内；路径调用时求值，避免运行时 env 注入前被焊死。
+function disabledFile(): string {
+  return join(userSkillsDir(), ".disabled.json");
+}
 
 function normalizeName(name: string): string {
   return name.trim();
@@ -18,10 +17,10 @@ class AllSkillsDisabledSet extends Set<string> {
   }
 }
 
-let lastValidDisabledSet: Set<string> | null = null;
+let lastValidDisabledSet: { path: string; value: Set<string> } | null = null;
 
-function cloneAndCacheDisabledSet(disabled: Set<string>): Set<string> {
-  lastValidDisabledSet = new Set(disabled);
+function cloneAndCacheDisabledSet(path: string, disabled: Set<string>): Set<string> {
+  lastValidDisabledSet = { path, value: new Set(disabled) };
   return new Set(disabled);
 }
 
@@ -41,8 +40,9 @@ function logReadFallback(error: unknown, usingCache: boolean): void {
 }
 
 export async function readDisabledSet(): Promise<Set<string>> {
+  const path = disabledFile();
   try {
-    const raw = await readFile(DISABLED_FILE, "utf8");
+    const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (
       !Array.isArray(parsed) ||
@@ -50,18 +50,18 @@ export async function readDisabledSet(): Promise<Set<string>> {
     ) {
       throw new Error("disabled skill state must be a string array");
     }
-    return cloneAndCacheDisabledSet(new Set(
+    return cloneAndCacheDisabledSet(path, new Set(
       parsed
         .map(normalizeName)
         .filter(Boolean),
     ));
   } catch (error) {
     if (isMissingDisabledFile(error)) {
-      return cloneAndCacheDisabledSet(new Set());
+      return cloneAndCacheDisabledSet(path, new Set());
     }
-    if (lastValidDisabledSet) {
+    if (lastValidDisabledSet?.path === path) {
       logReadFallback(error, true);
-      return new Set(lastValidDisabledSet);
+      return new Set(lastValidDisabledSet.value);
     }
     logReadFallback(error, false);
     return new AllSkillsDisabledSet();
@@ -69,16 +69,17 @@ export async function readDisabledSet(): Promise<Set<string>> {
 }
 
 export async function writeDisabledSet(set: Set<string>): Promise<void> {
+  const path = disabledFile();
   try {
-    await mkdir(dirname(DISABLED_FILE), { recursive: true });
+    await mkdir(dirname(path), { recursive: true });
     const names = Array.from(set).map(normalizeName).filter(Boolean).sort();
     // Atomic-ish write: write to a temp file in the same directory, then
     // rename over the target so readers never observe a truncated file
     // (a partial write would parse-fail and silently re-enable everything).
-    const tmp = `${DISABLED_FILE}.${process.pid}.${Date.now()}.tmp`;
+    const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tmp, `${JSON.stringify(names, null, 2)}\n`, "utf8");
-    await rename(tmp, DISABLED_FILE);
-    lastValidDisabledSet = new Set(names);
+    await rename(tmp, path);
+    lastValidDisabledSet = { path, value: new Set(names) };
   } catch {
     // Enable/disable state must not make agent startup or turns fail.
   }

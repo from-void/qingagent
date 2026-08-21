@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir, userSkillsDir } from "../skills/paths.js";
 import {
   listChildSkills,
   listTopLevelSkills,
@@ -16,7 +16,7 @@ import { parseSkillWriteInjectSource } from "../skills/writeInject.js";
 
 describe("builtin skills", () => {
   it("发现 cli-auth 内部技能且显式禁止用户调用", async () => {
-    const skillPath = join(BUILTIN_SKILLS_DIR, "capability", "cli-auth", "SKILL.md");
+    const skillPath = join(builtinSkillsDir(), "capability", "cli-auth", "SKILL.md");
     const source = await readFile(skillPath, "utf8");
     const frontmatter = parseSkillFrontmatter(source);
 
@@ -68,9 +68,9 @@ describe("builtin skills", () => {
 
   it("发现 diagram-viz 内置技能，并在显式停用后从 Workspace 目录移除", async () => {
     const categoryRoots = [
-      join(BUILTIN_SKILLS_DIR, "capability"),
-      join(BUILTIN_SKILLS_DIR, "native"),
-      join(BUILTIN_SKILLS_DIR, "style"),
+      join(builtinSkillsDir(), "capability"),
+      join(builtinSkillsDir(), "native"),
+      join(builtinSkillsDir(), "style"),
     ];
     const enabledDirs = await resolveEnabledSkillDirsFromRoots(categoryRoots, new Set());
     const diagramDir = enabledDirs.find((dir) => basename(dir) === "diagram-viz");
@@ -89,8 +89,8 @@ describe("builtin skills", () => {
 
     const workspace = new Workspace({
       filesystem: new LocalFilesystem({
-        basePath: BUILTIN_SKILLS_DIR,
-        allowedPaths: [USER_SKILLS_DIR],
+        basePath: builtinSkillsDir(),
+        allowedPaths: [userSkillsDir()],
       }),
       skills: enabledDirs,
     });
@@ -107,9 +107,9 @@ describe("builtin skills", () => {
 
   it("将八类审查合并为 review，并允许旧禁用记录自然失效", async () => {
     const categoryRoots = [
-      join(BUILTIN_SKILLS_DIR, "capability"),
-      join(BUILTIN_SKILLS_DIR, "native"),
-      join(BUILTIN_SKILLS_DIR, "style"),
+      join(builtinSkillsDir(), "capability"),
+      join(builtinSkillsDir(), "native"),
+      join(builtinSkillsDir(), "style"),
     ];
     const oldReviewNames = [
       "sensitive-review",
@@ -199,7 +199,7 @@ describe("builtin skills", () => {
   });
 
   it("review、diagram-viz 与 image-gen 暴露标准子技能列表，Mastra 顶层列表不平铺子技能", async () => {
-    const capabilityRoot = join(BUILTIN_SKILLS_DIR, "capability");
+    const capabilityRoot = join(builtinSkillsDir(), "capability");
     const reviewDir = join(capabilityRoot, "review");
     const diagramDir = join(capabilityRoot, "diagram-viz");
     const imageGenDir = join(capabilityRoot, "image-gen");
@@ -228,7 +228,7 @@ describe("builtin skills", () => {
 
     const enabledDirs = await resolveEnabledSkillDirsFromRoots([capabilityRoot], new Set());
     const workspace = new Workspace({
-      filesystem: new LocalFilesystem({ basePath: BUILTIN_SKILLS_DIR }),
+      filesystem: new LocalFilesystem({ basePath: builtinSkillsDir() }),
       skills: enabledDirs,
     });
     const listedNames = (await workspace.skills?.list() ?? []).map((skill) => skill.name);
@@ -292,7 +292,7 @@ describe("builtin skills", () => {
       expect(hierarchy.some((skill) => skill.path.endsWith("/references/notes"))).toBe(false);
       expect(hierarchy.some((skill) => skill.path.endsWith("/broken"))).toBe(false);
 
-      // USER_SKILLS_DIR 与内置技能根共用同一扫描入口：解析给 Workspace 的仍只有母技能。
+      // 用户技能目录与内置技能根共用同一扫描入口：解析给 Workspace 的仍只有母技能。
       const workspaceDirs = await resolveEnabledSkillDirsFromRoots([root], new Set());
       expect(workspaceDirs.map((dir) => basename(dir)).sort()).toEqual(["parent", "peer"]);
     } finally {
@@ -303,8 +303,8 @@ describe("builtin skills", () => {
   it("loads browser-ops from the capability category with valid frontmatter", async () => {
     const workspace = new Workspace({
       filesystem: new LocalFilesystem({
-        basePath: BUILTIN_SKILLS_DIR,
-        allowedPaths: [USER_SKILLS_DIR],
+        basePath: builtinSkillsDir(),
+        allowedPaths: [userSkillsDir()],
       }),
       skills: ["capability"],
     });
@@ -317,7 +317,7 @@ describe("builtin skills", () => {
     expect(browserOps?.description).toEqual(expect.any(String));
     expect(browserOps?.description.length).toBeGreaterThan(0);
 
-    const skillPath = resolve(BUILTIN_SKILLS_DIR, "capability", "browser-ops", "SKILL.md");
+    const skillPath = resolve(builtinSkillsDir(), "capability", "browser-ops", "SKILL.md");
     const frontmatter = parseSkillFrontmatter(await readFile(skillPath, "utf8"));
     expect(frontmatter?.name).toBe(basename(dirname(skillPath)));
     expect(frontmatter?.description).toEqual(expect.any(String));
@@ -372,9 +372,9 @@ describe("builtin skills", () => {
   it("归档清单为空时仍正常发现内置技能", async () => {
     const skillDirs = await resolveEnabledSkillDirsFromRoots(
       [
-        join(BUILTIN_SKILLS_DIR, "capability"),
-        join(BUILTIN_SKILLS_DIR, "native"),
-        join(BUILTIN_SKILLS_DIR, "style"),
+        join(builtinSkillsDir(), "capability"),
+        join(builtinSkillsDir(), "native"),
+        join(builtinSkillsDir(), "style"),
       ],
       new Set(),
     );
@@ -383,8 +383,8 @@ describe("builtin skills", () => {
 
     const workspace = new Workspace({
       filesystem: new LocalFilesystem({
-        basePath: BUILTIN_SKILLS_DIR,
-        allowedPaths: [USER_SKILLS_DIR],
+        basePath: builtinSkillsDir(),
+        allowedPaths: [userSkillsDir()],
       }),
       skills: skillDirs,
     });
@@ -421,7 +421,7 @@ describe("builtin skills", () => {
   // 兄弟测试留下禁用 browser-ops 的 .disabled.json 时,browser-ops 被过滤 → 断言红。
   // 修法(e2e98c2)是改喂显式 roots + 空 disabled 集。本用例把该隔离性钉死成回归:
   // resolveEnabledSkillDirsFromRoots 必须是 (roots, disabled) 的纯函数——只看传入的 tmp
-  // roots 与显式 disabled 集,绝不回读真实 BUILTIN_SKILLS_DIR 或全局 .disabled.json。
+  // roots 与显式 disabled 集,绝不回读真实内置技能目录或全局 .disabled.json。
   it("resolveEnabledSkillDirsFromRoots 只认传入的 tmp roots 与显式禁用集(隔离全局 .disabled.json 污染)", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-skills-hermetic-"));
     try {

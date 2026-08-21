@@ -5,7 +5,7 @@ import type {
   SkillChipInstructionLoader,
   SkillChipInstructionLoadResult,
 } from "../session/chipOnlyNote.js";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir, userSkillsDir } from "../skills/paths.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import { resolveTopLevelSkillId } from "../skills/skillIdResolver.js";
 import { injectExternalSkillPositioningNotice } from "../skills/externalSkillNotice.js";
@@ -21,12 +21,13 @@ function skillFileCandidates(skillPath: string): string[] {
       join(resolve(skillPath, "..", basename(skillPath)), "SKILL.md"),
     ]);
   }
+  const builtinRoot = builtinSkillsDir();
   return unique([
-    resolve(BUILTIN_SKILLS_DIR, skillPath, "SKILL.md"),
-    resolve(USER_SKILLS_DIR, skillPath, "SKILL.md"),
-    resolve(BUILTIN_SKILLS_DIR, "capability", skillPath, "SKILL.md"),
-    resolve(BUILTIN_SKILLS_DIR, "native", skillPath, "SKILL.md"),
-    resolve(BUILTIN_SKILLS_DIR, "style", skillPath, "SKILL.md"),
+    resolve(builtinRoot, skillPath, "SKILL.md"),
+    resolve(userSkillsDir(), skillPath, "SKILL.md"),
+    resolve(builtinRoot, "capability", skillPath, "SKILL.md"),
+    resolve(builtinRoot, "native", skillPath, "SKILL.md"),
+    resolve(builtinRoot, "style", skillPath, "SKILL.md"),
   ]);
 }
 

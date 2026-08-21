@@ -9,7 +9,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DERIVATIVE_CHILD_SKILL_BY_DTYPE } from "@qingagent/contract-ts";
 import { buildSystemPrompt } from "../prompts/system.js";
-import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir } from "../skills/paths.js";
 import { derivativeBriefTool } from "../tools/derivatives.js";
 import { loadDerivativeGuidance } from "../derivatives/skillGuidance.js";
 
@@ -87,7 +87,7 @@ afterEach(() => db.cleanup());
 
 async function motherSkillBody(): Promise<string> {
   return readFile(
-    join(BUILTIN_SKILLS_DIR, "capability", "derivative-writing", "SKILL.md"),
+    join(builtinSkillsDir(), "capability", "derivative-writing", "SKILL.md"),
     "utf8",
   );
 }

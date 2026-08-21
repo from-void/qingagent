@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir, userSkillsDir } from "../skills/paths.js";
 import {
   commandPolicyRequiresApproval,
   commandPolicyDenyMessage,
@@ -12,7 +12,7 @@ import {
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 
 const workspaceCwd = sessionWorkspaceDir("policy-test");
-const calcScript = join(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "scripts", "calc.mjs");
+const calcScript = join(builtinSkillsDir(), "capability", "doc-calc", "scripts", "calc.mjs");
 
 function decision(command: string) {
   return evaluateCommandPolicy(command, { workspaceCwd });
@@ -214,7 +214,7 @@ describe("commandPolicy P0 gate", () => {
       action: "confirm",
     });
     // 不存在的用户脚本交给运行时自然失败，且绝不获得托管凭据。
-    expect(decision(`node "${join(USER_SKILLS_DIR, "custom", "scripts", "publish.js")}"`)).toEqual({ action: "allow" });
+    expect(decision(`node "${join(userSkillsDir(), "custom", "scripts", "publish.js")}"`)).toEqual({ action: "allow" });
   });
 
   it("旧 shell 元字符 deny 迁移：表示法默认 allow，第二段真实破坏操作仍 confirm", () => {

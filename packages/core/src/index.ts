@@ -198,6 +198,7 @@ export type {
   ModelOverrides,
   ModelParamOverrides,
   ModelProtocol,
+  VisionSource,
 } from "./llm/index.js";
 export {
   DEEPSEEK_CONTEXT_WINDOWS,
@@ -271,13 +272,14 @@ export {
 } from "./session/reviewSupplement.js";
 export { clearQuestionBranch } from "./services/genService.js";
 export {
-  BUILTIN_SKILLS_DIR,
-  SKILL_DISCOVERY_SOURCE_ROOTS,
   MAX_EXTERNAL_USER_SKILLS,
-  SKILLS_INSTALL_DIR,
-  USER_SKILL_SOURCE_DIRS,
-  USER_SKILLS_DIR,
+  builtinSkillsDir,
   classifyUserSkillSource,
+  defaultExtraUserSkillSources,
+  skillDiscoverySourceRoots,
+  skillsInstallDir,
+  userSkillSourceDirs,
+  userSkillsDir,
   type SkillDiscoverySource,
   type SkillDiscoverySourceRoot,
   checkCredentialPath,

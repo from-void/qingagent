@@ -1,7 +1,7 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILTIN_SKILLS_DIR } from "./paths.js";
+import { builtinSkillsDir } from "./paths.js";
 import {
   activateSkill,
   isSkillActivated,
@@ -40,7 +40,7 @@ const DRAWIO_ACTION_INTENT_RE =
 const MERMAID_ACTION_INTENT_RE =
   /(?:画(?:一张|个)?|绘制|可视化)[^，。！？；\n]{0,6}(?:流程|时序|状态机|\bER\b)(?=[\t ]*(?:(?:图示?|示意图?|设计图|结构图?|视图|优化)[\t ]*)?(?:[，。！？；：,.!?;:\n]|$))|(?:流程|时序|状态机|\bER\b)[\t ]*可视化(?=[\t ]*(?:[，。！？；：,.!?;:\n]|$))/iu;
 
-let cachedResources: DiagramVizResources | null = null;
+let cachedResources: { root: string; value: DiagramVizResources } | null = null;
 
 function extractMarkedSection(source: string, marker: string): string {
   const start = `<!-- diagram-viz:${marker}:start -->`;
@@ -54,15 +54,15 @@ function extractMarkedSection(source: string, marker: string): string {
 }
 
 export function loadDiagramVizResources(): DiagramVizResources {
-  if (cachedResources) return cachedResources;
-  const root = join(BUILTIN_SKILLS_DIR, "capability", DIAGRAM_VIZ_SKILL_NAME);
+  const root = join(builtinSkillsDir(), "capability", DIAGRAM_VIZ_SKILL_NAME);
+  if (cachedResources?.root === root) return cachedResources.value;
   const references = join(root, "references");
   const skill = readFileSync(join(root, "SKILL.md"), "utf8");
   const mermaid = readFileSync(join(root, "mermaid", "SKILL.md"), "utf8");
   const drawio = readFileSync(join(root, "drawio", "SKILL.md"), "utf8");
   const palettes = readFileSync(join(references, "palettes.md"), "utf8");
   const templates = readFileSync(join(references, "templates.md"), "utf8");
-  cachedResources = {
+  const value = {
     skillBody: parseSkillWriteInjectSource(skill).body,
     mermaid: extractMarkedSection(mermaid, "mermaid"),
     drawio: extractMarkedSection(drawio, "drawio"),
@@ -71,7 +71,8 @@ export function loadDiagramVizResources(): DiagramVizResources {
     mermaidTemplate: extractMarkedSection(templates, "template:mermaid"),
     drawioTemplate: extractMarkedSection(templates, "template:drawio"),
   };
-  return cachedResources;
+  cachedResources = { root, value };
+  return value;
 }
 
 function uniqueLanguages(languages: Iterable<DiagramVizLanguage>): DiagramVizLanguage[] {

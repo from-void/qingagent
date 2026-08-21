@@ -3,7 +3,7 @@ import type { Workspace } from "@mastra/core/workspace";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir } from "../skills/paths.js";
 import {
   EXECUTE_COMMAND_MAX_RETAINED_BYTES,
   SANDBOX_BACKGROUND_TTL_MS,
@@ -65,7 +65,7 @@ interface SandboxSpawnOptions {
   abortSignal?: AbortSignal;
 }
 
-const calcScript = resolve(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "scripts", "calc.mjs");
+const calcScript = resolve(builtinSkillsDir(), "capability", "doc-calc", "scripts", "calc.mjs");
 const allowedFileCommand = `node ${JSON.stringify(calcScript)} stats --file passwd`;
 const trustedNodeCommand = `node ${JSON.stringify(calcScript)} sum --data "[1,2]"`;
 const toolInvocationOptions = { toolCallId: "gated-execute-test", messages: [] } as never;

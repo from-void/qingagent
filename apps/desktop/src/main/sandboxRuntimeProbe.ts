@@ -3,9 +3,9 @@ import { spawnSync } from "node:child_process";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  BUILTIN_SKILLS_DIR,
   SANDBOX_BIN_DIR,
   SANDBOX_NODE_RUNTIME_DIR,
+  builtinSkillsDir,
   buildSandboxEnv,
   getQingagentSessionWorkspace,
   redactProbe,
@@ -80,7 +80,7 @@ export async function runSandboxRuntimeProbe() {
   const dataDir = process.env.QINGAGENT_DATA_DIR ?? path.join(app.getPath("userData"), "data");
   const probesDir = path.join(dataDir, "probes");
   const resourcesSkillsDir = path.join(process.resourcesPath, "skills");
-  const skillsDir = process.env.QINGAGENT_SKILLS_DIR ?? BUILTIN_SKILLS_DIR;
+  const skillsDir = builtinSkillsDir();
   const calcScript = path.join(skillsDir, "capability", "doc-calc", "scripts", "calc.mjs");
   const sandboxEnv = buildSandboxEnv();
   const pathEntries = (sandboxEnv.PATH ?? "").split(path.delimiter).filter(Boolean);

@@ -35,10 +35,10 @@ describe("技能 mutation 开关", () => {
     if (installedNames.size > 0) {
       const { rm } = await import("node:fs/promises");
       const { join } = await import("node:path");
-      const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+      const { skillsInstallDir } = await import("@qingagent/core");
       await Promise.all(
         Array.from(installedNames, (name) =>
-          rm(join(SKILLS_INSTALL_DIR, name), { recursive: true, force: true }).catch(() => undefined),
+          rm(join(skillsInstallDir(), name), { recursive: true, force: true }).catch(() => undefined),
         ),
       );
       installedNames.clear();
@@ -166,8 +166,8 @@ describe("技能 mutation 开关", () => {
     await expect(response.json()).resolves.toEqual({ error: "zip is too large" });
     const { access } = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
-    await expect(access(join(SKILLS_INSTALL_DIR, skillName))).rejects.toThrow();
+    const { skillsInstallDir } = await import("@qingagent/core");
+    await expect(access(join(skillsInstallDir(), skillName))).rejects.toThrow();
   });
 });
 
@@ -179,8 +179,8 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
   beforeEach(async () => {
     process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
     const { mkdir } = await import("node:fs/promises");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
-    await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+    const { skillsInstallDir } = await import("@qingagent/core");
+    await mkdir(skillsInstallDir(), { recursive: true });
   });
 
   afterEach(async () => {
@@ -192,9 +192,9 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
   });
 
   it("仅传 skillMd(无 name)、且带 BOM,后端解析 frontmatter 取名并安装成功", async () => {
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const { skillsInstallDir } = await import("@qingagent/core");
     const { join } = await import("node:path");
-    installDir = join(SKILLS_INSTALL_DIR, SKILL);
+    installDir = join(skillsInstallDir(), SKILL);
     const app = await loadApp();
     // 前导 ﻿ 模拟 Windows 记事本导出的 BOM;body 不含 name。
     const skillMd = `﻿---\nname: ${SKILL}\ndescription: 演示\n---\n# demo`;
@@ -210,9 +210,9 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
   it("并发直写同名技能时仅一个成功，最终文件完整且属于成功方", async () => {
     const skillName = "atomic-concurrent-skill";
     const { readFile } = await import("node:fs/promises");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const { skillsInstallDir } = await import("@qingagent/core");
     const { join } = await import("node:path");
-    installDir = join(SKILLS_INSTALL_DIR, skillName);
+    installDir = join(skillsInstallDir(), skillName);
     const candidates = [
       `---\nname: ${skillName}\ndescription: 候选甲\n---\n# 完整内容甲\n`,
       `---\nname: ${skillName}\ndescription: 候选乙\n---\n# 完整内容乙\n`,
@@ -240,10 +240,10 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
     const skillName = "atomic-write-failure";
     const skillMd = `---\nname: ${skillName}\ndescription: 可重装\n---\n# 完整内容\n`;
     const fs = await import("node:fs/promises");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const { skillsInstallDir } = await import("@qingagent/core");
     const { join } = await import("node:path");
     const { installSkillMarkdown } = await import("../routes/skills");
-    installDir = join(SKILLS_INSTALL_DIR, skillName);
+    installDir = join(skillsInstallDir(), skillName);
 
     await expect(installSkillMarkdown(installDir, skillMd, {
       mkdtemp: fs.mkdtemp,
@@ -254,7 +254,7 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
       }) as typeof fs.writeFile,
     })).rejects.toThrow("injected write failure");
     await expect(fs.access(installDir)).rejects.toThrow();
-    expect((await fs.readdir(SKILLS_INSTALL_DIR)).filter((name) => name.startsWith(".install-")))
+    expect((await fs.readdir(skillsInstallDir())).filter((name) => name.startsWith(".install-")))
       .toEqual([]);
 
     const app = await loadApp();
@@ -275,8 +275,8 @@ describe("技能导入 UX 元数据", () => {
   beforeEach(async () => {
     process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
     const { mkdir } = await import("node:fs/promises");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
-    await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+    const { skillsInstallDir } = await import("@qingagent/core");
+    await mkdir(skillsInstallDir(), { recursive: true });
   });
 
   afterEach(async () => {
@@ -284,10 +284,10 @@ describe("技能导入 UX 元数据", () => {
     const { rm } = await import("node:fs/promises");
     if (installedNames.size > 0) {
       const { join } = await import("node:path");
-      const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+      const { skillsInstallDir } = await import("@qingagent/core");
       await Promise.all(
         Array.from(installedNames, (name) =>
-          rm(join(SKILLS_INSTALL_DIR, name), { recursive: true, force: true }).catch(() => undefined),
+          rm(join(skillsInstallDir(), name), { recursive: true, force: true }).catch(() => undefined),
         ),
       );
       installedNames.clear();
@@ -325,8 +325,8 @@ describe("技能导入 UX 元数据", () => {
 
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
-    const saved = await readFile(join(SKILLS_INSTALL_DIR, skillName, "SKILL.md"), "utf8");
+    const { skillsInstallDir } = await import("@qingagent/core");
+    const saved = await readFile(join(skillsInstallDir(), skillName, "SKILL.md"), "utf8");
     expect(saved).toContain(`name: ${skillName}`);
     expect(parseSkillFrontmatter(saved)?.label).toBe(longLabel);
   });
@@ -351,8 +351,8 @@ describe("技能导入 UX 元数据", () => {
     const skillName = "installed-file-symlink-escape";
     const fs = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
-    const skillDir = join(SKILLS_INSTALL_DIR, skillName);
+    const { skillsInstallDir } = await import("@qingagent/core");
+    const skillDir = join(skillsInstallDir(), skillName);
     const linkPath = join(skillDir, "SKILL.md");
     const outside = `/tmp/qingagent-skill-route-escape-${process.pid}`;
     const outsideSkillMd = join(outside, "SKILL.md");
@@ -433,9 +433,9 @@ describe("技能导入 UX 元数据", () => {
 
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const { skillsInstallDir } = await import("@qingagent/core");
     await expect(
-      readFile(join(SKILLS_INSTALL_DIR, parentName, childName, "SKILL.md"), "utf8"),
+      readFile(join(skillsInstallDir(), parentName, childName, "SKILL.md"), "utf8"),
     ).resolves.toContain(`name: ${childName}`);
 
     const list = await app.request("/api/v1/skills");

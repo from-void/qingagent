@@ -45,9 +45,9 @@ import {
 import { isBypassEnabled, loadBypassMode } from "../security/bypassMode.js";
 import { BrowserBridgeFilesystem } from "./browserBridgeFilesystem.js";
 import {
-  BUILTIN_SKILLS_DIR,
-  USER_SKILLS_DIR,
-  USER_SKILL_SOURCE_DIRS,
+  builtinSkillsDir,
+  userSkillSourceDirs,
+  userSkillsDir,
 } from "../skills/paths.js";
 import {
   ensureCredentialPathExists,
@@ -706,11 +706,14 @@ async function buildSessionWorkspace(
   opts: SessionWorkspaceFactoryOptions,
 ): Promise<Workspace> {
   const sessionDir = sessionWorkspaceDir(sessionId);
+  const builtinRoot = builtinSkillsDir();
+  const userRoot = userSkillsDir();
+  const userSourceDirs = userSkillSourceDirs();
   // 同步确保目录存在:Workspace 装配在 stream 起步路径上,异步竞态不值得
   mkdirSync(sessionDir, { recursive: true });
   // 缓存与技能目录必须先存在,写墙才能把它们 bind 成可写(bwrap 对不存在的路径无法 bind)。
   mkdirSync(SANDBOX_PACKAGE_CACHE_DIR, { recursive: true });
-  for (const skillsDir of [USER_SKILLS_DIR]) {
+  for (const skillsDir of [userRoot]) {
     try {
       mkdirSync(skillsDir, { recursive: true });
     } catch {
@@ -739,9 +742,9 @@ async function buildSessionWorkspace(
         dataDir: QINGAGENT_DATA_DIR,
         sessionDir,
         sandboxBinDir: SANDBOX_BIN_DIR,
-        builtinSkillsDir: BUILTIN_SKILLS_DIR,
-        userSkillsDir: USER_SKILLS_DIR,
-        extraUserSkillsDirs: USER_SKILL_SOURCE_DIRS.filter((dir) => dir !== USER_SKILLS_DIR),
+        builtinSkillsDir: builtinRoot,
+        userSkillsDir: userRoot,
+        extraUserSkillsDirs: userSourceDirs.filter((dir) => dir !== userRoot),
         packageCacheDir: SANDBOX_PACKAGE_CACHE_DIR,
         extraReadOnlyPaths,
         grantedCredentialPaths,
@@ -819,12 +822,12 @@ async function buildSessionWorkspace(
     // 技能区只读共享:skill 脚本可被读取与执行,不可被模型改写
     "/skills": new RedactedSymlinkTargetFilesystem(
       new LocalFilesystem({
-        basePath: BUILTIN_SKILLS_DIR,
-        allowedPaths: [...USER_SKILL_SOURCE_DIRS],
+        basePath: builtinRoot,
+        allowedPaths: [...userSourceDirs],
         readOnly: true,
       }),
       "/skills",
-      [BUILTIN_SKILLS_DIR, ...USER_SKILL_SOURCE_DIRS],
+      [builtinRoot, ...userSourceDirs],
     ),
   };
 
@@ -871,15 +874,15 @@ async function buildSessionWorkspace(
               allowNetwork: true,
               // 技能目录 + 产品级 CLI 目录只读可执行(bwrap/seatbelt 隔离下访问 lark-cli 等)
               readOnlyPaths: [
-                BUILTIN_SKILLS_DIR,
-                ...USER_SKILL_SOURCE_DIRS.filter((dir) => dir !== USER_SKILLS_DIR),
+                builtinRoot,
+                ...userSourceDirs.filter((dir) => dir !== userRoot),
                 SANDBOX_BIN_DIR,
                 ...extraReadOnlyPaths,
               ],
               // 仅现装目录与包缓存可写；legacy 自有目录及外部 agent 技能目录保持只读。
               readWritePaths: [
                 sessionDir,
-                USER_SKILLS_DIR,
+                userRoot,
                 SANDBOX_PACKAGE_CACHE_DIR,
               ],
             },

@@ -2,35 +2,49 @@ import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-
 function absolutize(rawPath: string): string {
   return isAbsolute(rawPath) ? rawPath : resolve(process.cwd(), rawPath);
 }
 
-export const BUILTIN_SKILLS_DIR = process.env.QINGAGENT_SKILLS_DIR
-  ? absolutize(process.env.QINGAGENT_SKILLS_DIR)
-  : resolve(CORE_ROOT, "skills");
+function coreRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
 
-export const USER_SKILLS_DIR = process.env.QINGAGENT_USER_SKILLS_DIR
-  ? absolutize(process.env.QINGAGENT_USER_SKILLS_DIR)
-  : resolve(homedir(), ".qingagent", "skills");
+/**
+ * 打包主进程在运行时初始化才注入 QINGAGENT_SKILLS_DIR 等 env；本模块任何路径
+ * 不得在模块加载时定值，否则 bundle 懒初始化时序会把回退路径焊死。
+ */
+export function builtinSkillsDir(): string {
+  const configured = process.env.QINGAGENT_SKILLS_DIR;
+  return configured ? absolutize(configured) : resolve(coreRoot(), "skills");
+}
 
-export const SKILLS_INSTALL_DIR = USER_SKILLS_DIR;
+export function userSkillsDir(): string {
+  const configured = process.env.QINGAGENT_USER_SKILLS_DIR;
+  return configured
+    ? absolutize(configured)
+    : resolve(homedir(), ".qingagent", "skills");
+}
+
+export function skillsInstallDir(): string {
+  return userSkillsDir();
+}
 
 export const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;
 
 /**
  * 第三方技能安装器普遍会同时覆盖 Claude 与 Codex 的技能目录；
  * `~/.agents/skills` 作为共享来源。这里采用**只增不搬**:
- * 扫描外部目录但不迁移文件,也不改变默认安装位置(仍是 SKILLS_INSTALL_DIR)。
+ * 扫描外部目录但不迁移文件,也不改变默认安装位置(仍由 skillsInstallDir() 返回)。
  * 可用 QINGAGENT_EXTRA_USER_SKILLS_DIRS(路径分隔符分隔)追加更多外部来源。
  */
-export const DEFAULT_EXTRA_USER_SKILL_SOURCES = [
-  resolve(homedir(), ".claude", "skills"),
-  resolve(homedir(), ".codex", "skills"),
-  resolve(homedir(), ".agents", "skills"),
-];
+export function defaultExtraUserSkillSources(): readonly string[] {
+  return [
+    resolve(homedir(), ".claude", "skills"),
+    resolve(homedir(), ".codex", "skills"),
+    resolve(homedir(), ".agents", "skills"),
+  ];
+}
 
 /** 外部目录最多注入的顶层技能数，避免第三方目录无限膨胀提示词。 */
 export const MAX_EXTERNAL_USER_SKILLS = 60;
@@ -52,11 +66,11 @@ function parseExtraUserSkillSources(): string[] {
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
     .map(absolutize);
-  return [...DEFAULT_EXTRA_USER_SKILL_SOURCES, ...fromEnv];
+  return [...defaultExtraUserSkillSources(), ...fromEnv];
 }
 
 /**
- * 用户技能的全部来源目录,首位恒为安装目录 USER_SKILLS_DIR。发现、沙箱权限面、
+ * 用户技能的全部来源目录,首位恒为 userSkillsDir() 返回的安装目录。发现、沙箱权限面、
  * 可信脚本判定都必须走这一份清单,避免各处各记一半；权限消费必须保持
  * “首位安装目录可写、其余来源只读”。
  *
@@ -64,12 +78,14 @@ function parseExtraUserSkillSources(): string[] {
  * (现装目录 > Claude/Codex/Agents 等外部来源),
  * 由 resolveEnabledSkillDirsFromRoots 按名去重落实,避免多来源同名时行为不确定。
  */
-export const USER_SKILL_SOURCE_DIRS: readonly string[] = [
-  ...new Set([
-    USER_SKILLS_DIR,
-    ...parseExtraUserSkillSources(),
-  ]),
-];
+export function userSkillSourceDirs(): readonly string[] {
+  return [
+    ...new Set([
+      userSkillsDir(),
+      ...parseExtraUserSkillSources(),
+    ]),
+  ];
+}
 
 export type SkillDiscoverySource = "builtin" | UserSkillSource;
 
@@ -83,24 +99,35 @@ export interface SkillDiscoverySourceRoot {
  * 产品技能发现的唯一来源顺序。安装目录优先于内置技能；外部来源保持
  * Claude > Codex > Agents > 环境追加目录，供 Agent 注入与管理列表共同消费。
  */
-export const SKILL_DISCOVERY_SOURCE_ROOTS: readonly SkillDiscoverySourceRoot[] = [
-  { path: USER_SKILLS_DIR, source: "installed", external: false },
-  ...BUILTIN_SKILL_CATEGORIES.map((category) => ({
-    path: resolve(BUILTIN_SKILLS_DIR, category),
-    source: "builtin" as const,
-    external: false,
-  })),
-  ...USER_SKILL_SOURCE_DIRS.slice(1).map((path) => ({
-    path,
-    source: classifyUserSkillSource(path),
-    external: true,
-  })),
-];
+export function skillDiscoverySourceRoots(): readonly SkillDiscoverySourceRoot[] {
+  return [
+    { path: userSkillsDir(), source: "installed", external: false },
+    ...BUILTIN_SKILL_CATEGORIES.map((category) => ({
+      path: resolve(builtinSkillsDir(), category),
+      source: "builtin" as const,
+      external: false,
+    })),
+    ...userSkillSourceDirs().slice(1).map((path) => ({
+      path,
+      source: classifyUserSkillSource(path),
+      external: true,
+    })),
+  ];
+}
+
+function normalizePathForComparison(sourceDir: string): string {
+  const normalized = resolve(sourceDir);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
 
 export function classifyUserSkillSource(sourceDir: string): UserSkillSource {
-  const normalized = resolve(sourceDir);
-  if (normalized === resolve(USER_SKILLS_DIR)) return "installed";
-  if (normalized === resolve(homedir(), ".claude", "skills")) return "external-claude";
-  if (normalized === resolve(homedir(), ".codex", "skills")) return "external-codex";
+  const normalized = normalizePathForComparison(sourceDir);
+  if (normalized === normalizePathForComparison(userSkillsDir())) return "installed";
+  if (normalized === normalizePathForComparison(resolve(homedir(), ".claude", "skills"))) {
+    return "external-claude";
+  }
+  if (normalized === normalizePathForComparison(resolve(homedir(), ".codex", "skills"))) {
+    return "external-codex";
+  }
   return "external-shared";
 }

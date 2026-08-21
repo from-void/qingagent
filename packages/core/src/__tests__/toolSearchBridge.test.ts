@@ -4,7 +4,7 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
   getActivatedSkillRegistrations,
 } from "../skills/writeInject.js";
-import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir } from "../skills/paths.js";
 import { EXTERNAL_SKILL_POSITIONING_NOTICE } from "../skills/externalSkillNotice.js";
 import { join } from "node:path";
 
@@ -248,7 +248,7 @@ describe("ToolSearch bridge", () => {
     const builtinSkill = {
       ...externalSkill,
       name: "review",
-      path: join(BUILTIN_SKILLS_DIR, "capability", "review"),
+      path: join(builtinSkillsDir(), "capability", "review"),
       instructions: "# 文档审查",
     };
     const skills = {

@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
-import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
+import { builtinSkillsDir } from "../skills/paths.js";
 import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
 
 // 回归:执行前 gate 拒绝一切管道/重定向,而 doc-calc 原本只支持 `echo ... | node calc.mjs`(stdin),
 // 等于被 gate 打死。calc.mjs 新增 --json/--file 入参后必须:① 脚本本身能从这两条路读数;
 // ② gate 放行文档里的新调用;③ 旧管道喂数仍被拒(这正是改文档的原因)。
 
-const calc = join(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "scripts", "calc.mjs");
+const calc = join(builtinSkillsDir(), "capability", "doc-calc", "scripts", "calc.mjs");
 
 type CalcModule = {
   calculateFromArgs: (argv: string[], stdinText?: string) => unknown;

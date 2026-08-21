@@ -15,10 +15,6 @@ import {
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   MAX_EXTERNAL_USER_SKILLS,
-  SKILLS_INSTALL_DIR,
-  SKILL_DISCOVERY_SOURCE_ROOTS,
-  USER_SKILL_SOURCE_DIRS,
-  USER_SKILLS_DIR,
   getQingagentSkills,
   listChildSkills,
   parseSkillFrontmatter,
@@ -27,6 +23,9 @@ import {
   listConnectorDefinitions,
   listCredentialRequests,
   resolveSkillSourcesFromRoots,
+  skillDiscoverySourceRoots,
+  skillsInstallDir,
+  userSkillSourceDirs,
 } from "@qingagent/core";
 import { listCredentialGrants } from "@qingagent/db";
 import type { CredentialShareItem, ExternalSkillSource } from "@qingagent/contract-ts";
@@ -239,8 +238,9 @@ skillsRoutes.post("/skills/install", async (c) => {
     }
     const name = parsed.name;
 
-    const dest = resolve(SKILLS_INSTALL_DIR, name);
-    if (!isInside(resolve(SKILLS_INSTALL_DIR), dest)) return c.json({ error: "技能名称不合法" }, 400);
+    const installDir = skillsInstallDir();
+    const dest = resolve(installDir, name);
+    if (!isInside(resolve(installDir), dest)) return c.json({ error: "技能名称不合法" }, 400);
     if (existsSync(dest)) return c.json({ error: "这个技能已存在" }, 409);
     // Archived built-ins are hidden from list/detail, but their names remain reserved
     // while the built-in directories still exist in the repo.
@@ -382,8 +382,9 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
   const parsed = skillMd ? parseSkillFrontmatter(skillMd) : null;
   if (!parsed) throw new Error("SKILL.md missing valid frontmatter");
 
-  const dest = resolve(SKILLS_INSTALL_DIR, parsed.name);
-  if (!isInside(resolve(SKILLS_INSTALL_DIR), dest)) throw new Error("invalid skill name");
+  const installDir = skillsInstallDir();
+  const dest = resolve(installDir, parsed.name);
+  if (!isInside(resolve(installDir), dest)) throw new Error("invalid skill name");
   if (existsSync(dest)) throw new Error("skill already exists");
   // Reject names that collide with any existing skill, including built-ins.
   if (await findSkillOnDisk(parsed.name)) throw new Error("skill already exists");
@@ -399,8 +400,8 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
     entries.push({ entry, destRel });
   }
 
-  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
-  const staging = await mkdtemp(join(SKILLS_INSTALL_DIR, ".install-"));
+  await mkdir(installDir, { recursive: true });
+  const staging = await mkdtemp(join(installDir, ".install-"));
   let totalBytes = 0;
   try {
     for (const item of entries) {
@@ -502,8 +503,9 @@ export async function installSkillMarkdown(
   skillMd: string,
   operations: SkillMarkdownInstallOperations = defaultSkillMarkdownInstallOperations,
 ): Promise<void> {
-  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
-  const staging = await operations.mkdtemp(join(SKILLS_INSTALL_DIR, ".install-"));
+  const installDir = skillsInstallDir();
+  await mkdir(installDir, { recursive: true });
+  const staging = await operations.mkdtemp(join(installDir, ".install-"));
   try {
     await operations.writeFile(join(staging, "SKILL.md"), skillMd, "utf8");
     await operations.rename(staging, dest);
@@ -563,8 +565,9 @@ export async function installSkillFiles(
 ): Promise<{ name: string }> {
   const validated = validateSkillFiles(input);
   const name = validated.root.name;
-  const dest = resolve(SKILLS_INSTALL_DIR, name);
-  if (!isInside(resolve(SKILLS_INSTALL_DIR), dest)) throw new Error("invalid skill name");
+  const installDir = skillsInstallDir();
+  const dest = resolve(installDir, name);
+  if (!isInside(resolve(installDir), dest)) throw new Error("invalid skill name");
   if (existsSync(dest) || await findSkillOnDisk(name)) {
     throw new Error("skill already exists");
   }
@@ -668,8 +671,9 @@ async function writeSkillFilesToNewDestination(
   dest: string,
   files: readonly SkillFileInput[],
 ): Promise<void> {
-  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
-  const staging = await mkdtemp(join(SKILLS_INSTALL_DIR, ".install-"));
+  const installDir = skillsInstallDir();
+  await mkdir(installDir, { recursive: true });
+  const staging = await mkdtemp(join(installDir, ".install-"));
   try {
     await writeSkillFilesInto(staging, files);
     await rename(staging, dest);
@@ -834,7 +838,7 @@ export async function resolveInstalledSkillMutationPath(
   if (!skillPath) throw new InvalidSkillPathError("技能路径不合法");
 
   const roots = await Promise.all(
-    USER_SKILL_SOURCE_DIRS.map((root) => realpath(root).catch(() => null)),
+    userSkillSourceDirs().map((root) => realpath(root).catch(() => null)),
   );
   const isManagedPath = roots.some((root) =>
     root !== null && skillPath !== root && isInside(root, skillPath)
@@ -855,8 +859,9 @@ async function resolveSkillMutationFilePath(
 }
 
 async function collectAllSkillDirs(): Promise<Array<{ path: string; source: SkillSourceLabel; mtimeMs: number }>> {
+  const sourceRoots = skillDiscoverySourceRoots();
   const sources = await resolveSkillSourcesFromRoots(
-    SKILL_DISCOVERY_SOURCE_ROOTS.map((root) => ({
+    sourceRoots.map((root) => ({
       path: root.path,
       external: root.external,
     })),
@@ -867,7 +872,7 @@ async function collectAllSkillDirs(): Promise<Array<{ path: string; source: Skil
   );
   return sources.map(({ skill, rootIndex }) => ({
     path: skill.path,
-    source: SKILL_DISCOVERY_SOURCE_ROOTS[rootIndex]!.source,
+    source: sourceRoots[rootIndex]!.source,
     mtimeMs: skill.mtimeMs,
   }));
 }

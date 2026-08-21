@@ -8,11 +8,11 @@ import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { buildSystemPrompt } from "../prompts/system.js";
 import { isBypassEnabled } from "../security/bypassMode.js";
 import {
-  BUILTIN_SKILLS_DIR,
   MAX_EXTERNAL_USER_SKILLS,
-  SKILL_DISCOVERY_SOURCE_ROOTS,
-  USER_SKILLS_DIR,
-  USER_SKILL_SOURCE_DIRS,
+  builtinSkillsDir,
+  skillDiscoverySourceRoots,
+  userSkillSourceDirs,
+  userSkillsDir,
 } from "../skills/paths.js";
 import {
   acquireSessionWorkspace,
@@ -179,11 +179,12 @@ export async function resolveEnabledSkillDirs(): Promise<string[]> {
     });
     return [];
   }
+  const sourceRoots = skillDiscoverySourceRoots();
   return resolveEnabledSkillDirsFromRoots(
-    SKILL_DISCOVERY_SOURCE_ROOTS.map((root) => root.path),
+    sourceRoots.map((root) => root.path),
     disabled,
     {
-      externalRoots: SKILL_DISCOVERY_SOURCE_ROOTS
+      externalRoots: sourceRoots
         .filter((root) => root.external)
         .map((root) => root.path),
       logger: console,
@@ -241,13 +242,28 @@ export const QINGAGENT_SESSION_WORKSPACE_CONTEXT_KEY = "qingagentSessionWorkspac
 
 /** 全局兜底 Workspace:技能发现/列表(getQingagentSkills)与无会话上下文时使用。
  *  不带沙箱——命令执行能力只存在于会话级 Workspace。 */
-export const qingagentWorkspace = new Workspace({
-  filesystem: new LocalFilesystem({
-    basePath: BUILTIN_SKILLS_DIR,
-    allowedPaths: [USER_SKILLS_DIR],
-  }),
-  skills: resolveEnabledSkillDirs,
-});
+let fallbackWorkspaceCache: {
+  pathKey: string;
+  workspace: Workspace;
+} | null = null;
+
+function getFallbackQingagentWorkspace(): Workspace {
+  const builtinRoot = builtinSkillsDir();
+  const userRoot = userSkillsDir();
+  const pathKey = JSON.stringify([builtinRoot, userRoot, ...userSkillSourceDirs()]);
+  if (fallbackWorkspaceCache?.pathKey === pathKey) {
+    return fallbackWorkspaceCache.workspace;
+  }
+  const workspace = new Workspace({
+    filesystem: new LocalFilesystem({
+      basePath: builtinRoot,
+      allowedPaths: [userRoot],
+    }),
+    skills: resolveEnabledSkillDirs,
+  });
+  fallbackWorkspaceCache = { pathKey, workspace };
+  return workspace;
+}
 
 /** 会话级 Workspace 解析:带 sessionId 的对话拿到"私有目录+技能只读+LocalSandbox"
  *  的完整沙箱;解析失败或无会话上下文回退全局兜底,绝不拖死主链。 */
@@ -263,7 +279,7 @@ async function resolveWorkspaceForRequest({
   // sessionWorkspace.test/exec.test 直接调 getSessionWorkspace 覆盖,无需经此路径。
   // QINGAGENT_FORCE_SESSION_SANDBOX=1 可在需要端到端测沙箱时强制开启。
   if (process.env.VITEST && process.env.QINGAGENT_FORCE_SESSION_SANDBOX !== "1") {
-    return qingagentWorkspace;
+    return getFallbackQingagentWorkspace();
   }
   const sessionId = requestContext?.get?.("sessionId");
   if (typeof sessionId === "string" && sessionId.length > 0) {
@@ -273,7 +289,7 @@ async function resolveWorkspaceForRequest({
       console.error("[sessionWorkspace] 装配失败,回退全局 Workspace", error);
     }
   }
-  return qingagentWorkspace;
+  return getFallbackQingagentWorkspace();
 }
 
 /**

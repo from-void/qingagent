@@ -8,7 +8,7 @@ const TEST_SKILLS_DIR = vi.hoisted(() => {
   return value;
 });
 
-import { SKILLS_INSTALL_DIR } from "@qingagent/core";
+import { skillsInstallDir } from "@qingagent/core";
 import { app } from "../app";
 import {
   getExternalToken,
@@ -120,7 +120,7 @@ describe("external skills", () => {
       }),
     });
     expect(updated.status).toBe(200);
-    await expect(readFile(path.join(SKILLS_INSTALL_DIR, "external-parent", "SKILL.md"), "utf8"))
+    await expect(readFile(path.join(skillsInstallDir(), "external-parent", "SKILL.md"), "utf8"))
       .resolves.toContain("第二版");
 
     const deleted = await request("/skills/external-parent", { method: "DELETE" });
@@ -148,7 +148,7 @@ describe("external skills", () => {
       body: JSON.stringify({ skillMd: skillMd("rollback-demo", "旧版") }),
     });
     const before = await readFile(
-      path.join(SKILLS_INSTALL_DIR, "rollback-demo", "SKILL.md"),
+      path.join(skillsInstallDir(), "rollback-demo", "SKILL.md"),
       "utf8",
     );
     const failed = await request("/skills/rollback-demo", {
@@ -159,7 +159,7 @@ describe("external skills", () => {
     });
     expect(failed.status).toBe(400);
     await expect(
-      readFile(path.join(SKILLS_INSTALL_DIR, "rollback-demo", "SKILL.md"), "utf8"),
+      readFile(path.join(skillsInstallDir(), "rollback-demo", "SKILL.md"), "utf8"),
     ).resolves.toBe(before);
   });
 

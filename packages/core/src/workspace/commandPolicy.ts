@@ -1,9 +1,8 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import {
-  BUILTIN_SKILLS_DIR,
-  USER_SKILLS_DIR,
-  USER_SKILL_SOURCE_DIRS,
+  builtinSkillsDir,
+  userSkillSourceDirs,
 } from "../skills/paths.js";
 import {
   analyzeCommand,
@@ -132,7 +131,7 @@ function findNodeScriptArg(args: string[]): { script?: string; scriptIndex?: num
 
 export function isTrustedScriptPath(
   scriptPath: string,
-  roots = [BUILTIN_SKILLS_DIR, ...USER_SKILL_SOURCE_DIRS],
+  roots = [builtinSkillsDir(), ...userSkillSourceDirs()],
 ): boolean {
   if (hasShellExpansionMetacharacter(scriptPath)) return false;
   const literalPath = resolve(scriptPath);

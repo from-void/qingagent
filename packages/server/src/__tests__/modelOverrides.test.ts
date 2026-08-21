@@ -327,6 +327,68 @@ describe("resolveRequestModelOverrides — 模型档位 header", () => {
 });
 
 describe("resolveRequestModelOverrides — vision header 安全解析", () => {
+  it.each(["deepseek", "kimi", "custom"] as const)(
+    "合法 x-vision-source=%s 透传到 vision",
+    async (visionSource) => {
+      const r = await resolveRequestModelOverrides({ visionSource });
+      expect(r.vision).toEqual({ source: visionSource });
+    },
+  );
+
+  it("非法 x-vision-source 丢弃，并保持旧三件套显式配置行为", async () => {
+    const r = await resolveRequestModelOverrides({
+      visionSource: "unknown",
+      visionKey: VKEY,
+      visionBaseUrl: "https://vision.example.com/v1/",
+      visionModel: "vision-model-1",
+      visionProtocol: "openai",
+    });
+    expect(r.vision).toEqual({
+      apiKey: VKEY,
+      baseUrl: "https://vision.example.com/v1",
+      model: "vision-model-1",
+      protocol: "openai",
+    });
+  });
+
+  it("原生 source 只接收可选 key，不接收客户端 endpoint 覆盖", async () => {
+    const r = await resolveRequestModelOverrides({
+      visionSource: "deepseek",
+      visionKey: VKEY,
+      visionBaseUrl: "https://evil.example.com/v1",
+      visionModel: "evil-vision",
+      visionProtocol: "anthropic",
+    });
+    expect(r.vision).toEqual({ source: "deepseek", apiKey: VKEY });
+  });
+
+  it("非主厂商原生 source 注入该厂商 DB key，供 core 按厂商解析", async () => {
+    mockCore.store.set("deepseek_global_key", "deepseek-db-key");
+    mockCore.store.set("kimi_global_key", "kimi-db-key");
+    invalidateModelOverridesCache();
+
+    const r = await resolveRequestModelOverrides({
+      provider: "kimi",
+      visionSource: "deepseek",
+    });
+    expect(r).toMatchObject({
+      provider: "kimi",
+      globalApiKey: "kimi-db-key",
+      globalApiKeys: { deepseek: "deepseek-db-key" },
+      vision: { source: "deepseek" },
+    });
+  });
+
+  it("source=custom 无 key 时保留选择但继续拒绝 endpoint 三件套", async () => {
+    const r = await resolveRequestModelOverrides({
+      visionSource: "custom",
+      visionBaseUrl: "https://evil.example.com/v1",
+      visionModel: "evil-vision",
+      visionProtocol: "anthropic",
+    });
+    expect(r.vision).toEqual({ source: "custom" });
+  });
+
   it("无 x-vision-key 时,vision baseUrl/protocol/model 一律忽略", async () => {
     const r = await resolveRequestModelOverrides({
       visionKey: null,

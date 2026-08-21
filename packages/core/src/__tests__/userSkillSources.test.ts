@@ -6,6 +6,7 @@ import { resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
 
 const roots: string[] = [];
 const savedEnv = {
+  builtinSkills: process.env.QINGAGENT_SKILLS_DIR,
   userSkills: process.env.QINGAGENT_USER_SKILLS_DIR,
   extraUserSkills: process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS,
   home: process.env.HOME,
@@ -27,16 +28,52 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.resetModules();
+  process.env.QINGAGENT_SKILLS_DIR = savedEnv.builtinSkills;
   process.env.QINGAGENT_USER_SKILLS_DIR = savedEnv.userSkills;
   process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS = savedEnv.extraUserSkills;
   process.env.HOME = savedEnv.home;
+  if (savedEnv.builtinSkills === undefined) delete process.env.QINGAGENT_SKILLS_DIR;
   if (savedEnv.userSkills === undefined) delete process.env.QINGAGENT_USER_SKILLS_DIR;
   if (savedEnv.extraUserSkills === undefined) delete process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("用户技能的多来源目录", () => {
+  it("paths 模块加载后再注入内置技能目录仍会按最新 env 求值", async () => {
+    delete process.env.QINGAGENT_SKILLS_DIR;
+    const paths = await import("../skills/paths.js");
+    const defaultRoot = paths.builtinSkillsDir();
+    const root = await mkdtemp(join(tmpdir(), "qingagent-builtin-skills-"));
+    roots.push(root);
+    const lateInjectedRoot = join(root, "skills");
+
+    process.env.QINGAGENT_SKILLS_DIR = lateInjectedRoot;
+
+    expect(paths.builtinSkillsDir()).not.toBe(defaultRoot);
+    expect(paths.skillDiscoverySourceRoots().filter(({ source }) => source === "builtin"))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: join(lateInjectedRoot, "capability") }),
+        expect.objectContaining({ path: join(lateInjectedRoot, "native") }),
+        expect.objectContaining({ path: join(lateInjectedRoot, "style") }),
+      ]));
+  });
+
+  it("Windows 下来源目录仅大小写不同时仍能识别安装、Claude、Codex 与共享来源", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-user-skill-case-"));
+    roots.push(root);
+    process.env.HOME = root;
+    process.env.QINGAGENT_USER_SKILLS_DIR = join(root, ".qingagent", "skills");
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const { classifyUserSkillSource } = await import("../skills/paths.js");
+
+    expect(classifyUserSkillSource(join(root, ".QINGAGENT", "SKILLS"))).toBe("installed");
+    expect(classifyUserSkillSource(join(root, ".CLAUDE", "SKILLS"))).toBe("external-claude");
+    expect(classifyUserSkillSource(join(root, ".CODEX", "SKILLS"))).toBe("external-codex");
+    expect(classifyUserSkillSource(join(root, ".AGENTS", "SKILLS"))).toBe("external-shared");
+  });
+
   it("默认扫描 Claude、Codex 与历史共享目录,安装目录仍是第一位", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-user-skill-sources-"));
     roots.push(root);
@@ -45,22 +82,22 @@ describe("用户技能的多来源目录", () => {
     delete process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS;
 
     const {
-      SKILL_DISCOVERY_SOURCE_ROOTS,
-      SKILLS_INSTALL_DIR,
-      USER_SKILL_SOURCE_DIRS,
-      USER_SKILLS_DIR,
+      skillDiscoverySourceRoots,
+      skillsInstallDir,
+      userSkillSourceDirs,
+      userSkillsDir,
     } =
       await import("../skills/paths.js");
 
-    expect(USER_SKILL_SOURCE_DIRS[0]).toBe(USER_SKILLS_DIR);
-    expect(SKILLS_INSTALL_DIR).toBe(USER_SKILLS_DIR);
-    expect(USER_SKILL_SOURCE_DIRS.slice(0, 4)).toEqual([
-      USER_SKILLS_DIR,
+    expect(userSkillSourceDirs()[0]).toBe(userSkillsDir());
+    expect(skillsInstallDir()).toBe(userSkillsDir());
+    expect(userSkillSourceDirs().slice(0, 4)).toEqual([
+      userSkillsDir(),
       join(root, ".claude", "skills"),
       join(root, ".codex", "skills"),
       join(root, ".agents", "skills"),
     ]);
-    expect(SKILL_DISCOVERY_SOURCE_ROOTS.map(({ source }) => source)).toEqual([
+    expect(skillDiscoverySourceRoots().map(({ source }) => source)).toEqual([
       "installed",
       "builtin",
       "builtin",
@@ -79,15 +116,15 @@ describe("用户技能的多来源目录", () => {
     process.env.HOME = root;
     process.env.QINGAGENT_EXTRA_USER_SKILLS_DIRS = [extraA, extraB].join(delimiter);
 
-    const { USER_SKILL_SOURCE_DIRS, USER_SKILLS_DIR } = await import("../skills/paths.js");
-    expect(USER_SKILL_SOURCE_DIRS[0]).toBe(USER_SKILLS_DIR);
-    expect(USER_SKILL_SOURCE_DIRS).toContain(extraA);
-    expect(USER_SKILL_SOURCE_DIRS).toContain(extraB);
+    const { userSkillSourceDirs, userSkillsDir } = await import("../skills/paths.js");
+    expect(userSkillSourceDirs()[0]).toBe(userSkillsDir());
+    expect(userSkillSourceDirs()).toContain(extraA);
+    expect(userSkillSourceDirs()).toContain(extraB);
     // 内置来源必须仍在:覆盖语义会让存量用户的技能再次"查无此技能"。
-    expect(USER_SKILL_SOURCE_DIRS).toContain(join(root, ".agents", "skills"));
+    expect(userSkillSourceDirs()).toContain(join(root, ".agents", "skills"));
     // 顺序即优先级:安装目录 > 内置额外来源 > env 追加。
-    expect(USER_SKILL_SOURCE_DIRS.indexOf(join(root, ".agents", "skills")))
-      .toBeLessThan(USER_SKILL_SOURCE_DIRS.indexOf(extraA));
+    expect(userSkillSourceDirs().indexOf(join(root, ".agents", "skills")))
+      .toBeLessThan(userSkillSourceDirs().indexOf(extraA));
   });
 
   it("五类来源按安装 > 内置 > Claude > Codex > Agents 排序并以先到来源去重", async () => {

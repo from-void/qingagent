@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BUILTIN_SKILLS_DIR } from "../../skills/paths.js";
+import { builtinSkillsDir } from "../../skills/paths.js";
 import { EXTERNAL_SKILL_POSITIONING_NOTICE } from "../../skills/externalSkillNotice.js";
 
 vi.mock("../../skills/enabledStore.js", () => ({
@@ -79,7 +79,7 @@ describe("skill chip 母子技能加载", () => {
   });
 
   it("外部技能注入定位声明，builtin 技能正文保持原样", async () => {
-    const builtinDir = join(BUILTIN_SKILLS_DIR, "capability", "review");
+    const builtinDir = join(builtinSkillsDir(), "capability", "review");
     const skills = {
       get: vi.fn(async (id: string) =>
         id === "review"

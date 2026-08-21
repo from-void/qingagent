@@ -930,6 +930,49 @@ describe("candidate-diff backend flow", () => {
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
   });
 
+  it("docCommitted 帧发出前已清除结算候选", async () => {
+    const { createSession, commitPatches, settleDraftCandidate } = await import("../bridge/index.js");
+    const state = createSession("candidate-cleared-before-committed-frame");
+    const baseDoc = pmDocFromText("保留前缀。旧句。");
+    const draftDoc = pmDocFromText("保留前缀。新句。");
+    state.doc = baseDoc;
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftBaseDoc = baseDoc;
+    state.docDraftBaseVersion = 1;
+    state.docDraftCandidateDoc = draftDoc;
+    await seedDocument({
+      docId: state.docId,
+      sessionId: state.sessionId,
+      docVersion: 1,
+      doc: baseDoc,
+    });
+    await collectFrames(settleDraftCandidate({
+      state,
+      agentMessageId: "agent-cleared-before-frame",
+      streamId: "stream-cleared-before-frame",
+      runId: "run-cleared-before-frame",
+      wholeDocument: true,
+    }));
+
+    const iterator = commitPatches(state, [...state.suggestions.keys()]);
+    let sawCommitted = false;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (next.value.kind !== "docCommitted") continue;
+      sawCommitted = true;
+      expect(state.suggestions.size).toBe(0);
+      expect(state.docDraftBaseDoc).toBeNull();
+      expect(state.docDraftCandidateDoc).toBeNull();
+      await iterator.return(undefined);
+      break;
+    }
+
+    expect(sawCommitted).toBe(true);
+    await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+  });
+
   it("settleDraftCandidate 把列表项级 hunk 的完整 blockPath 写入 SuggestionRecord", async () => {
     const { createSession, settleDraftCandidate } = await import("../bridge/index.js");
     const state = createSession("candidate-list-item-path");

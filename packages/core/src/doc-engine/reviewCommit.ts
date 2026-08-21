@@ -1378,6 +1378,21 @@ export async function* commitPatches(
     );
   }
 
+  const reviewFinished = state.suggestions.size === 0;
+  if (reviewFinished) {
+    // docCommitted 对调用方代表本轮已经完全结算；在发出该帧前先清候选，避免
+    // 消费方于帧边界收尾时留下「editing + 旧 candidate」的可写中间态。
+    await documentDraftRepo.clear(state.docId).catch((err) => {
+      logger.warn("Failed to clear pending draft after commit", {
+        sessionId: state.sessionId,
+        docId: state.docId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    clearInMemoryDraftDocs(state);
+    clearStaleReviewStreamLock(state);
+  }
+
   const commitNotice = movedBlockUserAttrLossNotice(oldBaseDoc, result.doc);
   yield {
     kind: "docCommitted",
@@ -1389,16 +1404,7 @@ export async function* commitPatches(
       conflictCount: shouldCommitDiffHunks ? skippedHunks.length : 0,
     },
   };
-  if (state.suggestions.size === 0) {
-    await documentDraftRepo.clear(state.docId).catch((err) => {
-      logger.warn("Failed to clear pending draft after commit", {
-        sessionId: state.sessionId,
-        docId: state.docId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    clearInMemoryDraftDocs(state);
-    clearStaleReviewStreamLock(state);
+  if (reviewFinished) {
     yield* transitionAndProjectDocState(
       state,
       { kind: "editing" },

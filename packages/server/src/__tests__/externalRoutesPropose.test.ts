@@ -339,6 +339,45 @@ describe("external proposals", () => {
     expect(await pending.json()).toMatchObject({ code: "REVIEW_PENDING", seq: expect.any(Number) });
   });
 
+  it("结算残留候选不得让后续 strReplace 带入已提交正文之外的删除", async () => {
+    const sessionId = await createSession();
+    const prefix = "每次高温过程结束后，须召开复盘会形成书面记录，逐条核对改进清单的落实情况，";
+    const oldText = "未落实事项明确责任与期限，纳入下一轮跟踪。";
+    const newText = "未落实事项须明确责任人与完成期限，并纳入下一轮闭环跟踪。";
+    const committed = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: `${prefix}${oldText}` }],
+    });
+    expect(committed.status).toBe(200);
+
+    const session = (await getOrRestoreSession(sessionId))!;
+    const staleCandidate = structuredClone(session.doc!);
+    const paragraph = staleCandidate.content[0];
+    if (paragraph?.type !== "paragraph" || paragraph.content?.[0]?.type !== "text") {
+      throw new Error("测试文档未生成预期段落");
+    }
+    paragraph.content[0].text = oldText;
+    session.docDraftBaseDoc = structuredClone(session.doc!);
+    session.docDraftBaseVersion = session.docVersion;
+    session.docDraftCandidateDoc = staleCandidate;
+    session.suggestions.clear();
+    session.patchVerdicts.clear();
+
+    const replaced = await propose(sessionId, {
+      expectedDocVersion: session.docVersion,
+      ops: [{ kind: "strReplace", old: oldText, new: newText }],
+    });
+
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ status: "review", count: 4 });
+    expect(pmToPlainText(session.docDraftCandidateDoc!)).toBe(`${prefix}${newText}`);
+    expect([...session.suggestions.values()]).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        diffHunk: expect.objectContaining({ op: "delete", beforeText: prefix }),
+      }),
+    ]));
+  });
+
   it("streamId 非空时返回 AGENT_BUSY", async () => {
     const sessionId = await createSession();
     await propose(sessionId, {

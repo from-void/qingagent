@@ -1095,8 +1095,14 @@ export async function* handleDocWriteCommand(
         return;
       }
 
-      // 先在会话外纯计算整批；任一 op 失败时不能连空候选壳都留进 session。
-      const baseCandidate = session.docDraftCandidateDoc ?? clonePmDoc(currentPmDoc(session));
+      // pendingReview 已在上方拒绝；走到这里就是一轮新的 editing 提案，必须以
+      // canonical 正文为基线。结算尾声若残留旧 candidate，沿用它会把旧候选中
+      // 未提交/已拒绝的删除夹带进本轮局部 strReplace。
+      if (session.docDraftBaseDoc || session.docDraftCandidateDoc) {
+        await invalidateDraftStateAfterCanonicalWrite(session);
+      }
+      // 再以 canonical 副本纯计算整批；任一 op 失败时不留下空候选壳。
+      const baseCandidate = clonePmDoc(currentPmDoc(session));
       let workingDoc: PmDoc;
       if (qingmlDraft) {
         workingDoc = clonePmDoc(qingmlDraft.doc);

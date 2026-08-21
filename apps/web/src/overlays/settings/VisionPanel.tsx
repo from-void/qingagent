@@ -334,7 +334,9 @@ export function VisionPanel() {
             />
             DeepSeek
           </span>
-          {!deepseekConfigured && <small>先在 模型 设置中配置 DeepSeek 官方 API</small>}
+          <small>
+            {deepseekConfigured ? "使用 V4F Vision 模型识图" : "先在 模型 设置中配置 DeepSeek 官方 API"}
+          </small>
         </button>
         <button
           id="vision-source-kimi"
@@ -357,7 +359,9 @@ export function VisionPanel() {
             />
             Kimi
           </span>
-          {!kimiConfigured && <small>先在 模型 设置中配置 Kimi 官方 API</small>}
+          <small>
+            {kimiConfigured ? "使用 Kimi 原生多模态识图" : "先在 模型 设置中配置 Kimi 官方 API"}
+          </small>
         </button>
         <button
           id="vision-source-custom"
@@ -371,6 +375,9 @@ export function VisionPanel() {
           onClick={() => void handleSourceChange("custom")}
         >
           <span>自定义</span>
+          <small>
+            {saved?.enabled && saved.model ? `当前:${saved.model}` : "接入 OpenAI/Anthropic 兼容模型"}
+          </small>
         </button>
       </div>
 

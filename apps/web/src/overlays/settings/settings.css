@@ -669,6 +669,11 @@
 /* DeepSeek 原生项:整卡置灰占位 */
 .settings-vision .sm-disabled{opacity:.55}
 .settings-vision .sm-setup-tab-label{display:flex;align-items:center;gap:6px}
+/* 选中态增亮:共享样式的选中色 --qj-cinnabar(#c8a96a) 在暗底上比未选中的 --qj-ink 更暗,
+   选中反而显灰;本面板内选中主标签回到最亮墨色,副标签同步提亮一档。 */
+.settings-vision .sm-setup-tab.sm-active .sm-setup-tab-label,
+.settings-vision .sm-setup-tab.sm-active span{color:var(--qj-ink)}
+.settings-vision .sm-setup-tab.sm-active small{color:var(--qj-switch-text)}
 /* 表单字段(复刻 modelDashboard.css 的 sm-field*) */
 .settings-vision .sm-field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
 .settings-vision .sm-field-label{font-size:11px;letter-spacing:.04em;color:var(--qj-header-sub)}

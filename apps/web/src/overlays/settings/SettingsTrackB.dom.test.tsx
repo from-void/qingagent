@@ -1349,7 +1349,7 @@ describe("Settings Track B", () => {
 
   it.each([
     [false, "先在 模型 设置中配置 Kimi 官方 API"],
-    [true, null],
+    [true, "使用 Kimi 原生多模态识图"],
   ])("Kimi 原生识图 Tab 按官方 key 配置状态启用：configured=%s", async (configured, status) => {
     await setSelectedModelProvider("kimi");
     if (configured) await setVisitorModelKey("kimi", "kimi-vision-key");
@@ -1357,8 +1357,7 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="kimi"]');
-    if (status) expect(tab?.textContent).toContain(status);
-    else expect(tab?.querySelector("small")).toBeNull();
+    expect(tab?.textContent).toContain(status);
     expect(tab?.disabled).toBe(!configured);
   });
 
@@ -1377,9 +1376,10 @@ describe("Settings Track B", () => {
     expect(tabs?.[1]?.querySelector("img")?.getAttribute("src")).toBe(VENDOR_META.kimi.logo);
     expect(tabs?.[1]?.textContent).toContain("先在 模型 设置中配置 Kimi 官方 API");
     expect((tabs?.[1] as HTMLButtonElement).disabled).toBe(true);
-    expect(tabs?.[2]?.textContent).toBe("自定义");
+    expect(tabs?.[2]?.textContent).toContain("自定义");
+    expect(tabs?.[2]?.textContent).toContain("接入 OpenAI/Anthropic 兼容模型");
     expect(tabs?.[2]?.querySelector("img")).toBeNull();
-    expect(tabs?.[2]?.querySelector("small")).toBeNull();
+    expect(tabs?.[2]?.textContent).toContain("接入 OpenAI/Anthropic 兼容模型");
     expect(host?.textContent).toContain("选择图像识别使用的视觉模型链路;与主模型相互独立。");
   });
 
@@ -1422,7 +1422,7 @@ describe("Settings Track B", () => {
 
   it.each([
     [false, "先在 模型 设置中配置 DeepSeek 官方 API"],
-    [true, null],
+    [true, "使用 V4F Vision 模型识图"],
   ])("DeepSeek 原生识图 Tab 按官方 key 配置状态启用：configured=%s", async (configured, status) => {
     await setSelectedModelProvider("deepseek");
     if (configured) await setVisitorModelKey("deepseek", "deepseek-vision-key");
@@ -1430,9 +1430,14 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="deepseek"]');
-    if (status) expect(tab?.textContent).toContain(status);
-    else expect(tab?.querySelector("small")).toBeNull();
+    expect(tab?.textContent).toContain(status);
     expect(tab?.disabled).toBe(!configured);
+  });
+
+  it("自定义 Tab 副标签:未配置显示通用说明,已保存启用配置显示所配模型名", async () => {
+    await render(<VisionPanel />);
+    const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="custom"]');
+    expect(tab?.textContent).toContain("接入 OpenAI/Anthropic 兼容模型");
   });
 
   it("DeepSeek 自定义中转不能解锁仅接受官方 key 的原生识图 Tab", async () => {
@@ -1477,7 +1482,7 @@ describe("Settings Track B", () => {
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="kimi"]');
     expect(tab?.disabled).toBe(false);
     expect(tab?.classList.contains("sm-active")).toBe(true);
-    expect(tab?.querySelector("small")).toBeNull();
+    expect(tab?.textContent).toContain("使用 Kimi 原生多模态识图");
   });
 
   it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {

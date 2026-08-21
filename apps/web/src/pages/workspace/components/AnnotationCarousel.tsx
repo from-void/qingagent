@@ -71,7 +71,8 @@ export function resolveAnnotationSuggestion(
     : suggestion;
 }
 
-const SEVERITY_LABELS = { error: "严重", warn: "建议", info: "提示" } as const;
+// 用户裁定:批注分级用优先级词(高优/中优/低优),不用「严重」这类成文口吻。
+const SEVERITY_LABELS = { error: "高优", warn: "中优", info: "低优" } as const;
 
 const REVIEW_TYPE_LABELS: Readonly<Record<ReviewType, string>> = {
   sensitive: "敏感词",

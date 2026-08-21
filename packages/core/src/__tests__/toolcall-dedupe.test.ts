@@ -221,6 +221,10 @@ describe("toolCall part 去重", () => {
     expect(parts).toHaveLength(1);
     expect(parts[0]?.status.kind).toBe("done");
     expect(parts[0]?.result).toEqual({ kind: "genericText", data: "图片里是一份手写提纲。" });
+    expect(parts[0]?.body.kind).toBe("readImageCard");
+    if (parts[0]?.body.kind === "readImageCard") {
+      expect(parts[0].body.data.excerpt).toBe("图片里是一份手写提纲。");
+    }
   });
 
   it("readImage progress + result 更新只刷新同一张卡", STREAM_TEST_TIMEOUT, async () => {
@@ -244,6 +248,10 @@ describe("toolCall part 去重", () => {
     expect(updates.some((spec) => spec.body.kind === "readImageCard" && spec.body.data.excerpt === "正在识别图中文字")).toBe(true);
     expect(updates.at(-1)?.status.kind).toBe("done");
     expect(updates.at(-1)?.result).toEqual({ kind: "genericText", data: "最终识别结果" });
+    expect(updates.at(-1)?.body.kind).toBe("readImageCard");
+    if (updates.at(-1)?.body.kind === "readImageCard") {
+      expect(updates.at(-1)?.body.data.excerpt).toBe("最终识别结果");
+    }
   });
 
   it("readImage 成功识别素材后写回 visionSummary 并截断 500 字", STREAM_TEST_TIMEOUT, async () => {

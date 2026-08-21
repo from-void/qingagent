@@ -42,12 +42,18 @@ function annotationGroupIdsAtTarget(
   return ids;
 }
 
+/** 打码可能吃掉尾部括注的内容与闭括号(如「…泄露（模式类）」→「…泄露（」),
+ *  残缺标点进指令后 chip 面板与发送气泡都会展示孤立开括号(评测 r7 实证)。 */
+function stripDanglingOpenBracket(text: string): string {
+  return text.replace(/[（(「『【[“]+\s*$/u, "").trim();
+}
+
 export function buildAnnotationInstruction(group: AnnotationGroup, editedSuggestion?: string): string {
   const safeGroup = maskSensitiveAnnotationGroup(group);
   const anchor = safeGroup.anchors[0];
   const quoteChars = Array.from(compactAnnotationText(anchor?.quote ?? ""));
   const quote = quoteChars.length > 30 ? `${quoteChars.slice(0, 30).join("")}…` : quoteChars.join("");
-  const summary = compactAnnotationText(safeGroup.summary);
+  const summary = stripDanglingOpenBracket(compactAnnotationText(safeGroup.summary));
   const suggestion = compactAnnotationText(resolveAnnotationSuggestion(safeGroup, editedSuggestion));
   if (!suggestion) return "";
   const action = summary ? `${summary}——${suggestion}` : suggestion;
@@ -284,10 +290,6 @@ export function AnnotationCarousel(props: {
   const storedSuggestion = resolveAnnotationSuggestion(group);
   const suggestion = suggestions[group.id] ?? storedSuggestion;
   const resolvedSuggestion = resolveAnnotationSuggestion(group, suggestion);
-  // 用户裁定(与插件批注 chip 面板同款交互):按钮默认置灰,修改意见内容与初值
-  // 不一致时才点亮;置灰 hover 提示引导先修改。
-  const initialSuggestion = resolveAnnotationSuggestion(group, undefined);
-  const suggestionChanged = resolvedSuggestion.trim() !== initialSuggestion.trim();
   const hasSuggestedChange = storedSuggestion.length > 0;
 
   const keepOpen = () => {
@@ -386,9 +388,9 @@ export function AnnotationCarousel(props: {
         <button
           className="ahc-accept"
           type="button"
-          title={suggestionChanged && resolvedSuggestion ? "将追加到输入框，由你确认发送" : "请先修改内容"}
-          disabled={!resolvedSuggestion || !suggestionChanged}
-          onClick={() => { if (resolvedSuggestion && suggestionChanged && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
+          title="将追加到输入框，由你确认发送"
+          disabled={!resolvedSuggestion}
+          onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) closeCard(); }}
         >生成修改</button>
       </div> : null}
     </footer>

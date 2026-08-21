@@ -410,6 +410,35 @@ describe("Settings Track B", () => {
     expect(legend[1]).toContain("40%");
   });
 
+  it("计费图例把视觉实验模型显示为 V4F Vision，不泄露原始 id", async () => {
+    await setVisitorModelKey("deepseek", "deepseek-local-key");
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=total")) {
+        return json({
+          rows: [
+            usageRow(
+              "total",
+              "deepseek-v4-flash-vision-exp",
+              1200,
+              300,
+              0.003,
+            ),
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    await render(<ModelSettingsPanel />);
+
+    const legend = Array.from(host?.querySelectorAll(".md-legend-item") ?? [])
+      .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "")
+      .join(" ");
+    expect(legend).toContain("V4F Vision");
+    expect(legend).not.toContain("deepseek-v4-flash-vision-exp");
+  });
+
   it("看板花费卡只显示标签与金额", async () => {
     await setVisitorModelKey("deepseek", "deepseek-local-key");
     const today = localYmd(new Date());

@@ -318,6 +318,15 @@ export async function* handleSpecialToolResult(
         status: ok
           ? { kind: "done" }
           : { kind: "failed", data: { retriable: true, reason } },
+        body: originalPart.data.body.kind === "readImageCard"
+          ? {
+              ...originalPart.data.body,
+              data: {
+                ...originalPart.data.body.data,
+                excerpt: ok ? text : originalPart.data.body.data.excerpt,
+              },
+            }
+          : originalPart.data.body,
         result: { kind: "genericText", data: resultPreview },
       };
       updateToolCallInChatHistory(state, originalMessage.id, toolCallId, doneSpec);
@@ -333,6 +342,7 @@ export async function* handleSpecialToolResult(
           : { kind: "failed", data: { retriable: true, reason } },
         { kind: "genericText", data: resultPreview },
         thumbnailSrc,
+        ok ? text : null,
       );
       const seq = nextSeq(state, agentMessageId);
       const toolCallPart: MessagePart = { kind: "toolCall", data: spec };

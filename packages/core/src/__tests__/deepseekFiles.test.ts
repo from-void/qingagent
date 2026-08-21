@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Buffer } from "node:buffer";
+import { FormData as UndiciFormData } from "undici";
 import { OFFICIAL_DEEPSEEK_BASE_URL } from "../llm/modelBaseUrl.js";
 import {
   DEEPSEEK_FILE_SENTINEL_URL_RE,
@@ -75,11 +76,14 @@ describe("DeepSeek Files transport", () => {
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer sk-files-test");
     expect(new Headers(init.headers).has("content-type")).toBe(false);
-    const body = init.body as FormData;
+    expect(init.body).toBeInstanceOf(UndiciFormData);
+    const body = init.body as UndiciFormData;
     expect(body.get("purpose")).toBe("user_data");
     expect(body.get("expires_after[anchor]")).toBe("created_at");
     expect(body.get("expires_after[seconds]")).toBe("604800");
-    expect((body.get("file") as File).name).toBe("image.jpg");
+    const file = body.get("file");
+    if (!file || typeof file === "string") throw new TypeError("multipart file missing");
+    expect(file.name).toBe("image.jpg");
   });
 
   it("同 key 同图命中缓存，换 API key 不串 Files 归属", async () => {

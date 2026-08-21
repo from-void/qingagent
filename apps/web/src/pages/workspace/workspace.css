@@ -631,6 +631,22 @@
   /* per-kind 配色:引用=古铜金、附件=暖蓝(@提及色见下方 B6 专属块) */
   #view-workspace .chat-chip[data-kind="sel"]{background:rgba(200,169,106,.16);border-color:rgba(200,169,106,.40)}
   #view-workspace .chat-chip[data-kind="attach"] .c-ico{color:#8fb0c4}
+  #view-workspace .chat-edit:has(.chat-chip-image:hover){overflow:visible}
+  #view-workspace .chat-chip-image{position:relative}
+  #view-workspace .chat-chip .c-image-thumb{
+    width:18px;height:18px;flex:0 0 18px;display:block;object-fit:cover;
+    border:1px solid var(--line-2);border-radius:0;background:var(--bg-subtle);
+  }
+  #view-workspace .chat-chip .c-image-preview{
+    position:absolute;left:0;bottom:calc(100% + 8px);z-index:61;
+    width:240px;height:180px;box-sizing:border-box;padding:6px;
+    border:1px solid var(--line-2);border-radius:0;background:var(--bg-paper-deep);
+    box-shadow:0 12px 28px rgba(40,30,15,.24);white-space:normal;
+  }
+  #view-workspace .chat-chip .c-image-preview[hidden]{display:none}
+  #view-workspace .chat-chip .c-image-preview img{
+    display:block;width:100%;height:100%;object-fit:contain;border-radius:0;
+  }
 
   /* ============ 输入区多态 · AskUser overlay ============ */
   #view-workspace .ws-input-wrap{position:relative;display:flex;flex-direction:column}

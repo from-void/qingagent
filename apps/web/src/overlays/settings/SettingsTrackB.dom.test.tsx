@@ -8,6 +8,7 @@ import { resetDesktopUpdateStoreForTest } from "../../system/desktopUpdateStore"
 import { __resetClientPersistCacheForTests } from "./clientPersist";
 import { AboutPanel } from "./AboutPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
+import { VENDOR_META } from "./modelVendorMeta";
 import { SecretInput } from "./SecretInput";
 import { VisionPanel } from "./VisionPanel";
 import {
@@ -1347,8 +1348,8 @@ describe("Settings Track B", () => {
   });
 
   it.each([
-    [false, "先配置 Kimi 官方 API"],
-    [true, "原生多模态"],
+    [false, "先在 模型 设置中配置 Kimi 官方 API"],
+    [true, null],
   ])("Kimi 原生识图 Tab 按官方 key 配置状态启用：configured=%s", async (configured, status) => {
     await setSelectedModelProvider("kimi");
     if (configured) await setVisitorModelKey("kimi", "kimi-vision-key");
@@ -1356,7 +1357,8 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="kimi"]');
-    expect(tab?.textContent).toContain(status);
+    if (status) expect(tab?.textContent).toContain(status);
+    else expect(tab?.querySelector("small")).toBeNull();
     expect(tab?.disabled).toBe(!configured);
   });
 
@@ -1367,22 +1369,25 @@ describe("Settings Track B", () => {
     expect(tabs).toHaveLength(3);
     expect(host?.querySelector(".sm-setup-tabs")).not.toBeNull();
     expect(tabs?.[2]?.classList.contains("sm-active")).toBe(true);
-    expect(tabs?.[0]?.textContent).toContain("走 DeepSeek");
-    expect(tabs?.[0]?.textContent).toContain("先配置 DeepSeek 官方 API");
+    expect(tabs?.[0]?.querySelector(".sm-setup-tab-label")?.textContent).toBe("DeepSeek");
+    expect(tabs?.[0]?.querySelector("img")?.getAttribute("src")).toBe(VENDOR_META.deepseek.logo);
+    expect(tabs?.[0]?.textContent).toContain("先在 模型 设置中配置 DeepSeek 官方 API");
     expect((tabs?.[0] as HTMLButtonElement).disabled).toBe(true);
-    expect(tabs?.[1]?.textContent).toContain("走 Kimi");
-    expect(tabs?.[1]?.textContent).toContain("先配置 Kimi 官方 API");
+    expect(tabs?.[1]?.querySelector(".sm-setup-tab-label")?.textContent).toBe("Kimi");
+    expect(tabs?.[1]?.querySelector("img")?.getAttribute("src")).toBe(VENDOR_META.kimi.logo);
+    expect(tabs?.[1]?.textContent).toContain("先在 模型 设置中配置 Kimi 官方 API");
     expect((tabs?.[1] as HTMLButtonElement).disabled).toBe(true);
-    expect(tabs?.[2]?.textContent).toContain("走自定义");
-    expect(tabs?.[2]?.textContent).toContain("OpenAI/Anthropic 兼容");
-    expect(host?.textContent).toContain("识图模型与主模型相互独立,按下方选择走链路");
+    expect(tabs?.[2]?.textContent).toBe("自定义");
+    expect(tabs?.[2]?.querySelector("img")).toBeNull();
+    expect(tabs?.[2]?.querySelector("small")).toBeNull();
+    expect(host?.textContent).toContain("选择图像识别使用的视觉模型链路;与主模型相互独立。");
   });
 
   it("点击可用原生 Tab 后持久化 source，并由请求出口发送正确 header", async () => {
     await setVisitorModelKey("kimi", "kimi-vision-key");
     await render(<VisionPanel />);
 
-    await click(getButtonByText("走 Kimi"));
+    await click(getButtonByText("Kimi"));
 
     expect(readVisionSource()).toBe("kimi");
     expect(visitorKeyHeaders()).toMatchObject({
@@ -1397,7 +1402,7 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     expect(host?.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toContain("走 Kimi");
+      .toContain("Kimi");
     expect(readVisionSource()).toBeNull();
   });
 
@@ -1407,7 +1412,7 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     expect(host?.querySelector('input[placeholder="https://your-endpoint/v1"]')).toBeNull();
-    await click(getButtonByText("走自定义"));
+    await click(getButtonByText("自定义"));
 
     expect(readVisionSource()).toBe("custom");
     expect(getInputByPlaceholder("https://your-endpoint/v1")).not.toBeNull();
@@ -1416,8 +1421,8 @@ describe("Settings Track B", () => {
   });
 
   it.each([
-    [false, "先配置 DeepSeek 官方 API"],
-    [true, "原生识图·实验版"],
+    [false, "先在 模型 设置中配置 DeepSeek 官方 API"],
+    [true, null],
   ])("DeepSeek 原生识图 Tab 按官方 key 配置状态启用：configured=%s", async (configured, status) => {
     await setSelectedModelProvider("deepseek");
     if (configured) await setVisitorModelKey("deepseek", "deepseek-vision-key");
@@ -1425,7 +1430,8 @@ describe("Settings Track B", () => {
     await render(<VisionPanel />);
 
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="deepseek"]');
-    expect(tab?.textContent).toContain(status);
+    if (status) expect(tab?.textContent).toContain(status);
+    else expect(tab?.querySelector("small")).toBeNull();
     expect(tab?.disabled).toBe(!configured);
   });
 
@@ -1447,7 +1453,7 @@ describe("Settings Track B", () => {
 
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="deepseek"]');
     expect(tab?.disabled).toBe(true);
-    expect(tab?.textContent).toContain("先配置 DeepSeek 官方 API");
+    expect(tab?.textContent).toContain("先在 模型 设置中配置 DeepSeek 官方 API");
   });
 
   it("Kimi 原生识图复用服务端活动 provider 与 DB/env key 状态", async () => {
@@ -1471,7 +1477,7 @@ describe("Settings Track B", () => {
     const tab = host?.querySelector<HTMLButtonElement>('[role="tab"][data-vision-source="kimi"]');
     expect(tab?.disabled).toBe(false);
     expect(tab?.classList.contains("sm-active")).toBe(true);
-    expect(tab?.textContent).toContain("原生多模态");
+    expect(tab?.querySelector("small")).toBeNull();
   });
 
   it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {

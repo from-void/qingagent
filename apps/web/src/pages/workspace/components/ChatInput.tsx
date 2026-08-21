@@ -34,6 +34,7 @@ import {
   type FolderCapability,
 } from "../../../system";
 import { truncateFilenameMiddle, truncateLabel } from "../textUtils";
+import { desktopDataUrl } from "../../../system/desktopDataTransport";
 import {
   NoKeyTip,
   type ModelKeyGateSnapshot,
@@ -233,6 +234,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useEffect(() => () => {
     if (keyTipTimerRef.current) clearTimeout(keyTipTimerRef.current);
   }, []);
+  useEffect(() => () => revokeChatChipThumbnailUrls(editRef.current), []);
 
   const fallbackMaterialRows = fileResources.map(resourceToReadyRow);
   const effectiveMaterialRows = materialParseRows ?? fallbackMaterialRows;
@@ -356,6 +358,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       clear() {
         const edit = editRef.current;
         if (!edit) return;
+        revokeChatChipThumbnailUrls(edit);
         while (edit.firstChild) edit.removeChild(edit.firstChild);
         setAttachedFiles([]);
         replacementAttachmentIdRef.current = null;
@@ -377,6 +380,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         }
         const prev = chip.previousSibling;
         if (prev?.nodeName === "BR") prev.remove();
+        revokeChatChipThumbnailUrl(chip);
         chip.remove();
         reportChange();
       },
@@ -738,7 +742,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         // Case 1: cursor at offset 0 of a text node whose previousSibling is a chip
         if (offset === 0 && n.nodeType === Node.TEXT_NODE && isChip(n.previousSibling)) {
           e.preventDefault();
-          n.previousSibling.remove();
+          const chip = n.previousSibling;
+          revokeChatChipThumbnailUrl(chip);
+          chip.remove();
           // Clean up if current node is an orphaned spacer
           if (isSpacer(n)) n.parentNode?.removeChild(n);
           reportChange();
@@ -756,6 +762,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           e.preventDefault();
           const chip = n.previousSibling;
           n.parentNode?.removeChild(n);
+          revokeChatChipThumbnailUrl(chip);
           chip.remove();
           reportChange();
           return;
@@ -767,10 +774,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           const childBefore = n.childNodes[offset - 1];
           if (isChip(childBefore ?? null)) {
             e.preventDefault();
+            const chip = childBefore as HTMLElement;
             // Also remove a trailing spacer after the chip if present
-            const nextSib = childBefore!.nextSibling;
+            const nextSib = chip.nextSibling;
             if (isSpacer(nextSib)) nextSib!.parentNode?.removeChild(nextSib!);
-            childBefore!.remove();
+            revokeChatChipThumbnailUrl(chip);
+            chip.remove();
             reportChange();
             return;
           }
@@ -783,6 +792,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             e.preventDefault();
             const chip = childBefore.previousSibling;
             childBefore.parentNode?.removeChild(childBefore);
+            revokeChatChipThumbnailUrl(chip!);
             chip!.remove();
             reportChange();
             return;
@@ -879,6 +889,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               return;
             }
           }
+          revokeChatChipThumbnailUrl(chip);
           chip.remove();
           reportChange();
         }
@@ -917,7 +928,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           kind: "attach",
           label: file.name,
           attachmentId,
-        });
+          mimeType: file.type || undefined,
+        }, file);
         setLocalAttachmentChipState(chip, "validating");
         range.insertNode(chip);
         const space = document.createTextNode(" ");
@@ -1103,7 +1115,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         reportChange();
         return;
       }
-      const chip = makeChatChipNode({ kind: "attach", label, resourceId });
+      const chip = makeChatChipNode({
+        kind: "attach",
+        label,
+        resourceId,
+        mimeType: reference.mimeType,
+        thumbnailSrc: reference.thumbnailSrc,
+      });
       const hasContent = !!(edit.textContent && edit.textContent.trim().length > 0);
       if (hasContent) edit.appendChild(document.createElement("br"));
       edit.appendChild(chip);
@@ -1382,7 +1400,7 @@ function resourceToReadyRow(resource: Resource): MaterialParseRow {
   };
 }
 
-function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
+function makeChatChipNode(spec: ChatChipSpec, localFile?: File): HTMLSpanElement {
   // 长文本小条:统一走共享 builder(单行小条 + hover 预览 + data-text),与气泡一致。
   if (spec.kind === "longtext") return buildLongTextChip(spec.text ?? "");
 
@@ -1404,6 +1422,8 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
     chip.dataset.attachmentId = spec.attachmentId;
   }
   if (spec.resourceId !== undefined) chip.dataset.resourceId = spec.resourceId;
+  if (spec.mimeType !== undefined) chip.dataset.mimeType = spec.mimeType;
+  if (spec.thumbnailSrc !== undefined) chip.dataset.thumbnailSrc = spec.thumbnailSrc;
   if (spec.text !== undefined) chip.dataset.text = spec.text;
   if (spec.selectionRefs && spec.selectionRefs.length > 0) {
     chip.dataset.selectionRefs = JSON.stringify(spec.selectionRefs);
@@ -1432,6 +1452,47 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
     ico.innerHTML = QUOTE_ICON_SVG;
   }
   chip.appendChild(ico);
+
+  const imageSource = resolveChatChipImageSource(spec, localFile);
+  if (imageSource) {
+    chip.classList.add("chat-chip-image");
+    ico.hidden = true;
+    if (imageSource.owned) chip.dataset.ownedThumbnailUrl = imageSource.src;
+
+    const thumbnail = document.createElement("img");
+    thumbnail.className = "c-image-thumb";
+    thumbnail.src = imageSource.src;
+    thumbnail.alt = "";
+    thumbnail.setAttribute("aria-hidden", "true");
+    chip.insertBefore(thumbnail, ico);
+
+    const preview = document.createElement("span");
+    preview.className = "c-image-preview";
+    preview.setAttribute("contenteditable", "false");
+    preview.setAttribute("role", "img");
+    preview.setAttribute("aria-label", `预览图片：${spec.label}`);
+    preview.hidden = true;
+    const previewImage = document.createElement("img");
+    previewImage.src = imageSource.src;
+    previewImage.alt = spec.label;
+    preview.appendChild(previewImage);
+    chip.appendChild(preview);
+
+    const markPreviewFailed = () => {
+      thumbnail.hidden = true;
+      ico.hidden = false;
+      preview.hidden = true;
+      revokeChatChipThumbnailUrl(chip);
+    };
+    thumbnail.addEventListener("error", markPreviewFailed, { once: true });
+    previewImage.addEventListener("error", markPreviewFailed, { once: true });
+    chip.addEventListener("mouseenter", () => {
+      if (!thumbnail.hidden) preview.hidden = false;
+    });
+    chip.addEventListener("mouseleave", () => {
+      preview.hidden = true;
+    });
+  }
 
   if (spec.prefix) {
     const pre = document.createElement("span");
@@ -1490,6 +1551,40 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   x.innerHTML = CLOSE_ICON_SVG;
   chip.appendChild(x);
   return chip;
+}
+
+function resolveChatChipImageSource(
+  spec: ChatChipSpec,
+  localFile?: File,
+): { src: string; owned: boolean } | null {
+  const mimeType = (localFile?.type || spec.mimeType || "").toLowerCase();
+  if (spec.kind !== "attach" || !mimeType.startsWith("image/")) return null;
+  if (spec.thumbnailSrc) {
+    return { src: desktopDataUrl(spec.thumbnailSrc), owned: false };
+  }
+  if (!localFile || typeof URL.createObjectURL !== "function") return null;
+  try {
+    return { src: URL.createObjectURL(localFile), owned: true };
+  } catch {
+    return null;
+  }
+}
+
+function revokeChatChipThumbnailUrl(chip: HTMLElement): void {
+  const url = chip.dataset.ownedThumbnailUrl;
+  if (!url) return;
+  delete chip.dataset.ownedThumbnailUrl;
+  if (typeof URL.revokeObjectURL !== "function") return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // 对象 URL 回收失败不影响附件删除或图片图标回退。
+  }
+}
+
+function revokeChatChipThumbnailUrls(edit: HTMLElement | null): void {
+  edit?.querySelectorAll<HTMLElement>(".chat-chip[data-owned-thumbnail-url]")
+    .forEach(revokeChatChipThumbnailUrl);
 }
 
 type LocalAttachmentState = "validating" | "ready" | "error" | "upload-error";
@@ -1583,6 +1678,7 @@ function removeAttachChips(edit: HTMLElement, attachmentId: string): void {
       chip.dataset.kind === "attach" &&
       chip.dataset.attachmentId === attachmentId
     ) {
+      revokeChatChipThumbnailUrl(chip);
       chip.remove();
     }
   }
@@ -1671,6 +1767,7 @@ function serializeChatInputContent(edit: HTMLElement): {
 }
 
 function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot): void {
+  revokeChatChipThumbnailUrls(edit);
   while (edit.firstChild) edit.removeChild(edit.firstChild);
 
   const source = snapshot.richText || snapshot.text;
@@ -1683,7 +1780,10 @@ function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot):
     }
     const chip = snapshot.chips[part.index];
     if (chip) {
-      edit.appendChild(makeChatChipNode(chip));
+      const localFile = chip.attachmentId
+        ? snapshot.files.find((file) => attachmentFileKey(file) === chip.attachmentId)
+        : undefined;
+      edit.appendChild(makeChatChipNode(chip, localFile));
       const nextPart = parts[index + 1];
       const nextChar = nextPart?.kind === "text" ? nextPart.text[0] ?? "" : "";
       if (nextChar === "" || !/\s/.test(nextChar)) {
@@ -1694,7 +1794,10 @@ function restoreSnapshotContent(edit: HTMLElement, snapshot: ChatInputSnapshot):
   if (!matched && source === snapshot.text) {
     for (const chip of snapshot.chips) {
       if (edit.childNodes.length > 0) edit.appendChild(document.createElement("br"));
-      edit.appendChild(makeChatChipNode(chip));
+      const localFile = chip.attachmentId
+        ? snapshot.files.find((file) => attachmentFileKey(file) === chip.attachmentId)
+        : undefined;
+      edit.appendChild(makeChatChipNode(chip, localFile));
       edit.appendChild(document.createTextNode("\u00a0"));
     }
   }
@@ -1793,6 +1896,8 @@ function readChipNode(el: HTMLElement): ChatChipSpec {
     spec.attachmentId = el.dataset.attachmentId;
   }
   if (el.dataset.resourceId !== undefined) spec.resourceId = el.dataset.resourceId;
+  if (el.dataset.mimeType !== undefined) spec.mimeType = el.dataset.mimeType;
+  if (el.dataset.thumbnailSrc !== undefined) spec.thumbnailSrc = el.dataset.thumbnailSrc;
   if (el.dataset.text !== undefined) spec.text = el.dataset.text;
   const selectionRefs = parseSelectionRefs(el.dataset.selectionRefs);
   if (selectionRefs) spec.selectionRefs = selectionRefs;

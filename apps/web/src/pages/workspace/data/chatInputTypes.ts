@@ -34,6 +34,10 @@ export interface ChatChipSpec {
   attachmentId?: string;
   /** 已关联资源的稳定身份；文件夹子文件由 folderId + childRelPath 生成。 */
   resourceId?: string;
+  /** 附件的媒体类型，仅供输入框判断图片缩略图；不进入后端 chip 协议。 */
+  mimeType?: string;
+  /** 已上传/已关联图片的稳定预览地址；本地待上传图片从 File 临时生成，不写入此字段。 */
+  thumbnailSrc?: string;
   /**
    * 长文本折叠卡片(kind="longtext")承载完整原文；批注标记(kind="annotation")承载完整修改指令。
    * 发送时由 snapshot() 原位展开回 text 进入模型上下文；卡片本身只是输入区/气泡的短展示。

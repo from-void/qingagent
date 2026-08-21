@@ -651,6 +651,117 @@ describe("ChatInput", () => {
     expect(label?.title).toBe(longName);
   });
 
+  it("图片素材引用 chip 经桌面数据桥显示缩略图，hover 展开大图且加载失败回退文件图标", async () => {
+    vi.stubGlobal("electron", {
+      platform: "linux",
+      isDesktop: true,
+      dataOrigin: "qingagent-data://library",
+    } satisfies Pick<NonNullable<Window["electron"]>, "platform" | "isDesktop" | "dataOrigin">);
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={() => undefined}
+        materialParseRows={[readyMaterialRow("res-image-chip", "橙猫.png", "image/png")]}
+      />,
+    );
+
+    clickElement(getLinkedFilesBar());
+    const referenceButton = Array.from(rowByText("橙猫.png").querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("引用"));
+    if (!referenceButton) throw new Error("image reference button not found");
+    clickElement(referenceButton);
+
+    const chip = getEditor().querySelector<HTMLElement>('.chat-chip[data-kind="attach"]');
+    const thumbnail = chip?.querySelector<HTMLImageElement>(".c-image-thumb");
+    const fileIcon = chip?.querySelector<HTMLElement>(".c-ico");
+    const preview = chip?.querySelector<HTMLElement>(".c-image-preview");
+    expect(thumbnail?.getAttribute("src")).toBe(
+      "qingagent-data://library/api/v1/files/file-res-image-chip/%E6%A9%99%E7%8C%AB.png",
+    );
+    expect(fileIcon?.hidden).toBe(true);
+    expect(preview?.hidden).toBe(true);
+
+    act(() => chip?.dispatchEvent(new MouseEvent("mouseenter")));
+    expect(preview?.hidden).toBe(false);
+    expect(preview?.querySelector("img")?.getAttribute("src")).toBe(thumbnail?.getAttribute("src"));
+    act(() => chip?.dispatchEvent(new MouseEvent("mouseleave")));
+    expect(preview?.hidden).toBe(true);
+
+    act(() => thumbnail?.dispatchEvent(new Event("error")));
+    expect(thumbnail?.hidden).toBe(true);
+    expect(fileIcon?.hidden).toBe(false);
+    expect(preview?.hidden).toBe(true);
+  });
+
+  it("本地待上传图片使用对象 URL，清空时释放并在发送失败恢复时从 File 重建", async () => {
+    const ref = createRef<ChatInputHandle>();
+    const NativeUrl = URL;
+    const createObjectUrl = vi.fn()
+      .mockReturnValueOnce("blob:chat-image-first")
+      .mockReturnValueOnce("blob:chat-image-restored");
+    const revokeObjectUrl = vi.fn();
+    vi.stubGlobal("URL", class ChatInputTestUrl extends NativeUrl {
+      static createObjectURL = createObjectUrl;
+      static revokeObjectURL = revokeObjectUrl;
+    });
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const image = new File(
+      [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+      "本地截图.png",
+      { type: "image/png" },
+    );
+
+    await selectFile(image);
+
+    expect(getEditor().querySelector<HTMLImageElement>(".c-image-thumb")?.src)
+      .toBe("blob:chat-image-first");
+    const snapshot = ref.current?.snapshot();
+    expect(snapshot?.chips[0]).toMatchObject({
+      kind: "attach",
+      mimeType: "image/png",
+      attachmentId: expect.stringMatching(/^local-attachment-/),
+    });
+
+    act(() => ref.current?.clear());
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:chat-image-first");
+    act(() => ref.current?.restore(snapshot!));
+
+    expect(createObjectUrl).toHaveBeenCalledTimes(2);
+    expect(getEditor().querySelector<HTMLImageElement>(".c-image-thumb")?.src)
+      .toBe("blob:chat-image-restored");
+  });
+
+  it("非图片附件 chip 继续使用文件图标，不生成缩略图或 hover 预览", async () => {
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={() => undefined}
+        materialParseRows={[readyMaterialRow("res-pdf-chip", "报告.pdf")]}
+      />,
+    );
+
+    clickElement(getLinkedFilesBar());
+    const referenceButton = Array.from(rowByText("报告.pdf").querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("引用"));
+    if (!referenceButton) throw new Error("pdf reference button not found");
+    clickElement(referenceButton);
+
+    const chip = getEditor().querySelector<HTMLElement>('.chat-chip[data-kind="attach"]');
+    expect(chip?.querySelector(".c-ico")?.hasAttribute("hidden")).toBe(false);
+    expect(chip?.querySelector(".c-image-thumb")).toBeNull();
+    expect(chip?.querySelector(".c-image-preview")).toBeNull();
+    expect(chip?.querySelector(".c-x")).not.toBeNull();
+  });
+
   it("不同内容的同名附件保留独立对象与 chip，不再按文件名静默去重", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
@@ -1793,13 +1904,20 @@ function inputEvent(isComposing: boolean): Event {
   return event;
 }
 
-function readyMaterialRow(id: string, filename: string): MaterialParseRow {
-  const resource = resourceFor(id, filename, { fileId: `file-${id}` });
+function readyMaterialRow(
+  id: string,
+  filename: string,
+  mime = "application/pdf",
+): MaterialParseRow {
+  const resource = {
+    ...resourceFor(id, filename, { fileId: `file-${id}` }),
+    mime,
+  };
   return {
     id,
     fileId: `file-${id}`,
     filename,
-    mime: "application/pdf",
+    mime,
     state: "ready",
     parseError: null,
     resource,

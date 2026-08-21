@@ -18,6 +18,7 @@ import {
   type ModelProvider,
 } from "./visitorKeyStore";
 import { isModelProviderConfigured } from "./modelSettingsTypes";
+import { VENDOR_META } from "./modelVendorMeta";
 
 // 设置·技能·图像识别:副基模(多模态)配置面板。
 // 识图源与主模型解耦：DeepSeek / Kimi 原生官方链路，或显式第三方多模态模型。
@@ -308,7 +309,7 @@ export function VisionPanel() {
   return (
     <div className="settings-vision" data-wf="VisionPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>
-        识图模型与主模型相互独立,按下方选择走链路
+        选择图像识别使用的视觉模型链路;与主模型相互独立。
       </p>
 
       <div className="sm-setup-tabs" role="tablist" aria-label="图像识别链路">
@@ -324,8 +325,16 @@ export function VisionPanel() {
           disabled={!deepseekConfigured || persisting}
           onClick={() => void handleSourceChange("deepseek")}
         >
-          <span>走 DeepSeek</span>
-          <small>{deepseekConfigured ? "原生识图·实验版" : "先配置 DeepSeek 官方 API"}</small>
+          <span className="sm-setup-tab-label">
+            <img
+              className={`vd-logo${VENDOR_META.deepseek.logoBoxed ? " vd-logo--boxed" : ""}`}
+              src={VENDOR_META.deepseek.logo}
+              alt=""
+              aria-hidden="true"
+            />
+            DeepSeek
+          </span>
+          {!deepseekConfigured && <small>先在 模型 设置中配置 DeepSeek 官方 API</small>}
         </button>
         <button
           id="vision-source-kimi"
@@ -339,8 +348,16 @@ export function VisionPanel() {
           disabled={!kimiConfigured || persisting}
           onClick={() => void handleSourceChange("kimi")}
         >
-          <span>走 Kimi</span>
-          <small>{kimiConfigured ? "原生多模态" : "先配置 Kimi 官方 API"}</small>
+          <span className="sm-setup-tab-label">
+            <img
+              className={`vd-logo${VENDOR_META.kimi.logoBoxed ? " vd-logo--boxed" : ""}`}
+              src={VENDOR_META.kimi.logo}
+              alt=""
+              aria-hidden="true"
+            />
+            Kimi
+          </span>
+          {!kimiConfigured && <small>先在 模型 设置中配置 Kimi 官方 API</small>}
         </button>
         <button
           id="vision-source-custom"
@@ -353,8 +370,7 @@ export function VisionPanel() {
           disabled={persisting}
           onClick={() => void handleSourceChange("custom")}
         >
-          <span>走自定义</span>
-          <small>OpenAI/Anthropic 兼容</small>
+          <span>自定义</span>
         </button>
       </div>
 

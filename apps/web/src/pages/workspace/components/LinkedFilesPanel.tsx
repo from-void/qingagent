@@ -44,6 +44,8 @@ export interface LinkedFileReference {
   label: string;
   folderId?: string;
   childRelPath?: string;
+  mimeType?: string;
+  thumbnailSrc?: string;
 }
 
 interface LinkedFilesPanelProps {
@@ -529,7 +531,13 @@ function MaterialTreeRow({
               disabled={disabled}
               onClick={(event) => {
                 event.stopPropagation();
-                onReference({ label: row.filename });
+                onReference({
+                  label: row.filename,
+                  mimeType: row.mime ?? undefined,
+                  thumbnailSrc: row.fileId
+                    ? `/api/v1/files/${encodeURIComponent(row.fileId)}/${encodeURIComponent(row.filename)}`
+                    : undefined,
+                });
               }}
             >
               <RefIcon />
@@ -753,6 +761,10 @@ function DirChildren({
                     label: entry.name,
                     folderId: folderSource.id,
                     childRelPath,
+                    mimeType: previewSource?.mimeType,
+                    thumbnailSrc: previewSource?.preview?.kind === "url"
+                      ? previewSource.preview.url
+                      : undefined,
                   });
                 }}
               >

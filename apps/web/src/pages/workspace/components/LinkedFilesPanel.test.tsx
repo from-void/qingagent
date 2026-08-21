@@ -521,7 +521,11 @@ describe("LinkedFilesPanel", () => {
     click(getBar());
     click(buttonByText(rowByText("ready.pdf"), "引用"));
 
-    expect(onReference).toHaveBeenCalledWith({ label: "ready.pdf" });
+    expect(onReference).toHaveBeenCalledWith({
+      label: "ready.pdf",
+      mimeType: "application/pdf",
+      thumbnailSrc: "/api/v1/files/file-res-ready/ready.pdf",
+    });
     expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).not.toBeNull();
     expect(rowByText("ready.pdf")).not.toBeNull();
   });

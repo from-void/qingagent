@@ -668,6 +668,7 @@
 .qj-root:not([data-theme="paper"]) .settings-vision .ss-quota{color:#f0c24f;background:rgba(240,194,79,.12);border-color:rgba(240,194,79,.4)}
 /* DeepSeek 原生项:整卡置灰占位 */
 .settings-vision .sm-disabled{opacity:.55}
+.settings-vision .sm-setup-tab-label{display:flex;align-items:center;gap:6px}
 /* 表单字段(复刻 modelDashboard.css 的 sm-field*) */
 .settings-vision .sm-field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
 .settings-vision .sm-field-label{font-size:11px;letter-spacing:.04em;color:var(--qj-header-sub)}

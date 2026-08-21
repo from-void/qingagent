@@ -596,6 +596,31 @@ describe("UReadImage", () => {
     );
   });
 
+  it("从运行态切到完成态后移除推理缓冲，并渲染完整结果的编号、嵌套列表与行内加粗", () => {
+    const reasoningExcerpt = "个毛线球…… *优化: * **最终输出确定:";
+    const finalResult = [
+      "1. **画面主体**: 一只橙猫",
+      "   - **姿态**: 蜷卧",
+      "   - 环境: 窗边",
+      "2. **文字内容**: 今日晴朗",
+    ].join("\n");
+
+    renderReadImage({ prompt: "识别图片", thumbnailSrc: null, excerpt: reasoningExcerpt }, "running");
+    expect(host.textContent).toContain(reasoningExcerpt);
+
+    renderReadImage({ prompt: "识别图片", thumbnailSrc: null, excerpt: finalResult }, "done");
+    openCard();
+
+    const scrollContent = host.querySelector<HTMLElement>(".u-scrollbox--output .u-scrollbox-pre");
+    expect(scrollContent?.textContent).not.toContain(reasoningExcerpt);
+    expect(scrollContent?.textContent).toContain("画面主体: 一只橙猫");
+    expect(scrollContent?.querySelectorAll(":scope > ol > li")).toHaveLength(2);
+    expect(scrollContent?.querySelectorAll("ol ul li")).toHaveLength(2);
+    expect(Array.from(scrollContent?.querySelectorAll("strong") ?? []).map((node) => node.textContent))
+      .toEqual(["画面主体", "姿态", "文字内容"]);
+    expect(scrollContent?.textContent).not.toContain("**");
+  });
+
   it("运行态把流式 excerpt 放进四行 ScrollBox", () => {
     renderReadImage({
       prompt: "读取图中表格",

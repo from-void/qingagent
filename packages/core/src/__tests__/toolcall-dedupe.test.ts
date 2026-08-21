@@ -229,6 +229,12 @@ describe("toolCall part 去重", () => {
 
   it("readImage progress + result 更新只刷新同一张卡", STREAM_TEST_TIMEOUT, async () => {
     const toolCallId = "call_read_image_progress_result";
+    const finalText = [
+      "1. **完整最终识别结果**:",
+      "   - 第一项",
+      "   - 第二项",
+      "识别正文".repeat(220),
+    ].join("\n");
     const { state, frames } = await runChunks(
       [
         toolCallInputStart(toolCallId, "readImage"),
@@ -236,7 +242,7 @@ describe("toolCall part 去重", () => {
         readImageProgress(toolCallId, "正在识别图中文字"),
         readImageResult(toolCallId, {
           ok: true,
-          text: "最终识别结果",
+          text: finalText,
         }),
       ],
       "read-image-progress-result-dedupe",
@@ -247,11 +253,11 @@ describe("toolCall part 去重", () => {
     const updates = toolCallUpdatedSpecs(frames, toolCallId);
     expect(updates.some((spec) => spec.body.kind === "readImageCard" && spec.body.data.excerpt === "正在识别图中文字")).toBe(true);
     expect(updates.at(-1)?.status.kind).toBe("done");
-    expect(updates.at(-1)?.result).toEqual({ kind: "genericText", data: "最终识别结果" });
-    expect(updates.at(-1)?.body.kind).toBe("readImageCard");
-    if (updates.at(-1)?.body.kind === "readImageCard") {
-      expect(updates.at(-1)?.body.data.excerpt).toBe("最终识别结果");
-    }
+    expect(updates.at(-1)?.result).toEqual({ kind: "genericText", data: finalText });
+    expect(updates.at(-1)?.body).toEqual(expect.objectContaining({
+      kind: "readImageCard",
+      data: expect.objectContaining({ excerpt: finalText }),
+    }));
   });
 
   it("readImage 成功识别素材后写回 visionSummary 并截断 500 字", STREAM_TEST_TIMEOUT, async () => {

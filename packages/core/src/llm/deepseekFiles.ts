@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { FormData } from "undici";
 import { isOfficialDeepseekBaseUrl } from "./modelBaseUrl.js";
 import { modelFetch } from "./modelTransport.js";
 
@@ -99,6 +100,7 @@ async function uploadFile(
     controller.abort(new DOMException("DeepSeek Files upload timed out", "TimeoutError"));
   }, FILE_UPLOAD_TIMEOUT_MS);
 
+  // 必须与 modelFetch 底层 undici 同源；全局 FormData 跨实现会产生 Invalid boundary 400。
   const body = new FormData();
   body.append(
     "file",
@@ -115,7 +117,8 @@ async function uploadFile(
       response = await modelFetch(`${config.baseUrl}/files`, {
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}` },
-        body,
+        // modelFetch 的兼容签名仍是全局 fetch；运行时与这里实际都使用 npm undici。
+        body: body as unknown as BodyInit,
         signal: controller.signal,
       });
       signal?.throwIfAborted();

@@ -4,11 +4,14 @@ import {
   clearVisionProvider,
   isHttpUrl,
   readVisionProvider,
+  readVisionSource,
   repairBaseUrlScheme,
   visionKeyHeaders,
+  writeVisionSource,
   writeVisionProvider,
   type VisionProvider,
 } from "./visionProviderStore";
+import { setVisitorModelKey, visitorKeyHeaders } from "./visitorKeyStore";
 
 // 图像识别副基模配置 store:read/write/clear + header 透传。
 // 重点测脏形态(不可信 localStorage):坏 JSON、缺字段、enabled 缺省/关闭。
@@ -135,5 +138,57 @@ describe("visionProviderStore", () => {
     expect(visionKeyHeaders()).toEqual({});
     writeVisionProvider({ ...VALID, enabled: false });
     expect(visionKeyHeaders()).toEqual({});
+  });
+
+  it("source 与旧自定义配置共用同一存储对象并互不覆盖", async () => {
+    await writeVisionProvider(VALID);
+    await writeVisionSource("deepseek");
+    expect(readVisionSource()).toBe("deepseek");
+    expect(readVisionProvider()).toEqual(VALID);
+
+    const raw = JSON.parse(window.localStorage.getItem(KEY) ?? "{}") as Record<string, unknown>;
+    expect(raw.source).toBe("deepseek");
+    expect(window.localStorage).toHaveLength(1);
+  });
+
+  it("DeepSeek/Kimi source 只发送 source 与对应官方 visitor key", async () => {
+    await setVisitorModelKey("deepseek", "deepseek-official-key");
+    await setVisitorModelKey("kimi", "kimi-official-key");
+
+    await writeVisionSource("deepseek");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-vision-source": "deepseek",
+      "x-vision-key": "deepseek-official-key",
+    });
+    expect(visitorKeyHeaders()).not.toHaveProperty("x-vision-base-url");
+    expect(visitorKeyHeaders()).not.toHaveProperty("x-vision-model");
+
+    await writeVisionSource("kimi");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-vision-source": "kimi",
+      "x-vision-key": "kimi-official-key",
+    });
+    expect(visitorKeyHeaders()).not.toHaveProperty("x-vision-base-url");
+    expect(visitorKeyHeaders()).not.toHaveProperty("x-vision-model");
+  });
+
+  it("custom source 沿用旧三件套；source 缺省时 header 行为逐字不变", async () => {
+    await writeVisionProvider(VALID);
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-vision-key": VALID.apiKey,
+      "x-vision-base-url": VALID.baseUrl,
+      "x-vision-model": VALID.model,
+      "x-vision-protocol": VALID.protocol,
+    });
+    expect(visitorKeyHeaders()).not.toHaveProperty("x-vision-source");
+
+    await writeVisionSource("custom");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-vision-source": "custom",
+      "x-vision-key": VALID.apiKey,
+      "x-vision-base-url": VALID.baseUrl,
+      "x-vision-model": VALID.model,
+      "x-vision-protocol": VALID.protocol,
+    });
   });
 });

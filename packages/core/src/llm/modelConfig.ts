@@ -28,6 +28,7 @@ export {
   DEEPSEEK_BASE_URL,
   KIMI_BASE_URL,
   MODEL_OVERRIDES_CONTEXT_KEY,
+  OFFICIAL_DEEPSEEK_BASE_URL,
   isOfficialDeepseekBaseUrl,
   resolveBaseUrl,
   resolveModelProvider,
@@ -35,7 +36,9 @@ export {
   type ModelProvider,
 } from "./modelBaseUrl.js";
 import {
+  KIMI_BASE_URL,
   MODEL_OVERRIDES_CONTEXT_KEY,
+  OFFICIAL_DEEPSEEK_BASE_URL,
   isOfficialDeepseekBaseUrl,
   resolveBaseUrl,
   resolveModelProvider,
@@ -848,6 +851,8 @@ export interface ModelOverrides {
   visitorApiKey?: string;
   /** 设置页保存的全局兜底 key(global-db 层);server 入口从 app_settings 读出注入。 */
   globalApiKey?: string;
+  /** 非主厂商识图 source 的全局 key；仅由 server 按所选厂商定向注入。 */
+  globalApiKeys?: Partial<Record<ModelProvider, string>>;
   /** 采样参数覆盖;字段缺省 = 不覆盖(走调用点各自默认)。 */
   params?: ModelParamOverrides;
   /** 当前 provider 的自定义 baseURL(第三方中转);缺省走该厂商官方地址。 */
@@ -860,12 +865,15 @@ export interface ModelOverrides {
   protocol?: ModelProtocol;
   /** 图像识别副基模(多模态)独立配置;缺省=未配置。 */
   vision?: {
+    source?: VisionSource;
     apiKey?: string;
     baseUrl?: string;
     model?: string;
     protocol?: ModelProtocol;
   };
 }
+
+export type VisionSource = ModelProvider | "custom";
 
 export interface ModelParamOverrides {
   temperature?: number;
@@ -897,6 +905,35 @@ export function resolveModelAuth(requestContext?: RequestContext): ResolvedModel
     return { apiKey: overrides.globalApiKey, origin: "global-db" };
   }
   const envKey = resolveModelProvider(requestContext) === "kimi"
+    ? process.env.KIMI_API_KEY ?? ""
+    : process.env.DEEPSEEK_API_KEY ?? "";
+  return { apiKey: envKey, origin: envKey ? "env" : "none" };
+}
+
+/**
+ * 原生识图按目标厂商取 key：x-vision-key > 同厂商主模型鉴权 > 该厂商 DB > env。
+ * 与主模型一样，打包 desktop 只保留 visitor 层，不读取 DB/env。
+ */
+export function resolveModelAuthForProvider(
+  requestContext: RequestContext | undefined,
+  provider: ModelProvider,
+): ResolvedModelAuth {
+  const overrides = readOverrides(requestContext);
+  if (overrides?.vision?.source === provider && overrides.vision.apiKey) {
+    return { apiKey: overrides.vision.apiKey, origin: "visitor" };
+  }
+  if (resolveModelProvider(requestContext) === provider) {
+    const mainAuth = resolveModelAuth(requestContext);
+    if (mainAuth.apiKey) return mainAuth;
+  }
+  if (!allowGlobalModelFallback()) {
+    return { apiKey: "", origin: "none" };
+  }
+  const globalApiKey = overrides?.globalApiKeys?.[provider];
+  if (globalApiKey) {
+    return { apiKey: globalApiKey, origin: "global-db" };
+  }
+  const envKey = provider === "kimi"
     ? process.env.KIMI_API_KEY ?? ""
     : process.env.DEEPSEEK_API_KEY ?? "";
   return { apiKey: envKey, origin: envKey ? "env" : "none" };
@@ -1076,6 +1113,58 @@ export async function resolveVisionConfig(
     | AbortSignal
     | undefined;
   const vision = readOverrides(requestContext)?.vision;
+  const source = vision?.source;
+  if (source === "custom" && vision) {
+    const apiKey = vision.apiKey?.trim();
+    const baseUrl = sanitizeBaseUrl(vision.baseUrl);
+    const model = sanitizeModelId(vision.model);
+    if (!apiKey || !baseUrl || !model) return null;
+    const checkedUrl = await validateFetchUrl(baseUrl, {
+      signal: contextualAbortSignal,
+    });
+    return {
+      apiKey,
+      baseUrl: checkedUrl.toString().replace(/\/+$/, ""),
+      model,
+      protocol: vision.protocol === "anthropic" ? "anthropic" : "openai",
+      keyOrigin: "vision",
+      provider: "custom",
+      reuseMainModel: false,
+    };
+  }
+  if (source === "deepseek" && vision) {
+    const { apiKey, origin } = resolveModelAuthForProvider(requestContext, "deepseek");
+    if (!apiKey) return null;
+    return {
+      apiKey,
+      baseUrl: OFFICIAL_DEEPSEEK_BASE_URL,
+      model: NATIVE_VISION_MODEL.deepseek,
+      protocol: "openai",
+      keyOrigin: origin,
+      provider: "deepseek",
+      reuseMainModel:
+        resolveModelProvider(requestContext) === "deepseek" && !vision.apiKey,
+    };
+  }
+  if (source === "kimi" && vision) {
+    const { apiKey, origin } = resolveModelAuthForProvider(requestContext, "kimi");
+    if (!apiKey) return null;
+    const reuseMainModel = resolveModelProvider(requestContext) === "kimi";
+    return {
+      apiKey,
+      baseUrl: reuseMainModel
+        ? resolveBaseUrl(requestContext).replace(/\/+$/, "")
+        : KIMI_BASE_URL,
+      model: reuseMainModel
+        ? resolveModelId(requestContext, "flash")
+        : KIMI_MODEL_IDS.flash,
+      protocol: "openai",
+      keyOrigin: origin,
+      provider: "kimi",
+      reuseMainModel,
+    };
+  }
+  // source 缺省是旧客户端路径：显式三件套优先，其余维持主厂商原生自动语义。
   if (vision) {
     const apiKey = vision.apiKey?.trim();
     const baseUrl = sanitizeBaseUrl(vision.baseUrl);

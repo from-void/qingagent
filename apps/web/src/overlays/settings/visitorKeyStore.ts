@@ -286,7 +286,10 @@ export function visitorKeyHeaders(): Record<string, string> {
     return {};
   }
   const storedProvider = getStoredModelProvider();
-  const vision = visionKeyHeaders();
+  const vision = visionKeyHeaders({
+    deepseek: getVisitorModelKey("deepseek"),
+    kimi: getVisitorModelKey("kimi"),
+  });
   const localSnapshot = storedProvider ? null : readLocalModelKeySnapshot();
   const provider = storedProvider
     ?? (localSnapshot?.providers.deepseek.configured

@@ -55,6 +55,35 @@ describe("vision provider construction", () => {
     expect(options.transformRequestBody).toBeTypeOf("function");
   });
 
+  it("Kimi 主模型选择 DeepSeek source 时仍构造 Files API 视觉 transport", async () => {
+    const resolved = await getVisionModelWithConfig(requestContext({
+      provider: "kimi",
+      visitorApiKey: "sk-kimi-main",
+      vision: { source: "deepseek", apiKey: "sk-deepseek-vision" },
+    }), { callSite: "readImage" });
+
+    expect(resolved?.config).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-v4-flash-vision-exp",
+    });
+    expect(compatibleOptions[0]?.name).toBe("deepseek");
+    expect(compatibleOptions[0]?.supportedUrls).toBeTypeOf("function");
+    expect(compatibleOptions[0]?.transformRequestBody).toBeTypeOf("function");
+  });
+
+  it("DeepSeek 主模型选择 Kimi source 时仍挂载 Kimi transform", async () => {
+    const resolved = await getVisionModelWithConfig(requestContext({
+      provider: "deepseek",
+      visitorApiKey: "sk-deepseek-main",
+      vision: { source: "kimi", apiKey: "sk-kimi-vision" },
+    }));
+
+    expect(resolved?.config.provider).toBe("kimi");
+    expect(compatibleOptions[0]?.name).toBe("kimi");
+    expect(compatibleOptions[0]?.supportedUrls).toBeUndefined();
+    expect(compatibleOptions[0]?.transformRequestBody).toBeTypeOf("function");
+  });
+
   it("Kimi 保留专属 transform，custom 不声明哨兵 supportedUrls", async () => {
     await getVisionModelWithConfig(requestContext({
       provider: "kimi",

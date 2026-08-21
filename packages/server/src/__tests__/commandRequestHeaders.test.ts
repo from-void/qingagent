@@ -25,6 +25,7 @@ describe("commands 敏感模型头审计清单", () => {
       "x-model-pro",
       "x-model-tier",
       "x-model-protocol",
+      "x-vision-source",
       "x-vision-key",
       "x-vision-base-url",
       "x-vision-model",

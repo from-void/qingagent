@@ -4,7 +4,9 @@ import {
   DEEPSEEK_MODEL_IDS,
   KIMI_BASE_URL,
   KIMI_MODEL_IDS,
+  OFFICIAL_DEEPSEEK_BASE_URL,
   resolveModelAuth,
+  resolveModelAuthForProvider,
   resolveBaseUrl,
   resolveModelId,
   resolveModelProvider,
@@ -231,6 +233,108 @@ describe("modelConfig", () => {
     ]);
 
     await expect(resolveVisionConfig(rc)).resolves.toBeNull();
+  });
+
+  it("resolveModelAuthForProvider 按 vision visitor > 同主厂商 auth > 厂商 DB > 厂商 env 解析", () => {
+    process.env.DEEPSEEK_API_KEY = "deepseek-env-key";
+    process.env.KIMI_API_KEY = "kimi-env-key";
+
+    expect(resolveModelAuthForProvider(requestContext([["modelOverrides", {
+      provider: "kimi",
+      visitorApiKey: "kimi-main-visitor",
+      globalApiKeys: { deepseek: "deepseek-db-key" },
+      vision: { source: "deepseek", apiKey: "deepseek-vision-visitor" },
+    }]]), "deepseek")).toEqual({
+      apiKey: "deepseek-vision-visitor",
+      origin: "visitor",
+    });
+
+    expect(resolveModelAuthForProvider(requestContext([["modelOverrides", {
+      provider: "deepseek",
+      visitorApiKey: "deepseek-main-visitor",
+      vision: { source: "deepseek" },
+    }]]), "deepseek")).toEqual({
+      apiKey: "deepseek-main-visitor",
+      origin: "visitor",
+    });
+
+    expect(resolveModelAuthForProvider(requestContext([["modelOverrides", {
+      provider: "kimi",
+      globalApiKeys: { deepseek: "deepseek-db-key" },
+      vision: { source: "deepseek" },
+    }]]), "deepseek")).toEqual({
+      apiKey: "deepseek-db-key",
+      origin: "global-db",
+    });
+
+    expect(resolveModelAuthForProvider(requestContext([["modelOverrides", {
+      provider: "deepseek",
+      vision: { source: "kimi" },
+    }]]), "kimi")).toEqual({
+      apiKey: "kimi-env-key",
+      origin: "env",
+    });
+  });
+
+  it("显式 custom source 仅在 key/baseUrl/model 齐全时生效", async () => {
+    const complete = requestContext([["modelOverrides", {
+      provider: "deepseek",
+      visitorApiKey: "deepseek-main-key",
+      vision: {
+        source: "custom",
+        apiKey: "custom-vision-key",
+        baseUrl: "https://1.1.1.1/v1",
+        model: "custom-vision",
+        protocol: "anthropic",
+      },
+    }]]);
+    await expect(resolveVisionConfig(complete)).resolves.toEqual({
+      apiKey: "custom-vision-key",
+      baseUrl: "https://1.1.1.1/v1",
+      model: "custom-vision",
+      protocol: "anthropic",
+      keyOrigin: "vision",
+      provider: "custom",
+      reuseMainModel: false,
+    });
+
+    await expect(resolveVisionConfig(requestContext([["modelOverrides", {
+      provider: "deepseek",
+      visitorApiKey: "deepseek-main-key",
+      vision: { source: "custom", apiKey: "custom-vision-key" },
+    }]]))).resolves.toBeNull();
+  });
+
+  it("DeepSeek source 与 Kimi 主模型解耦并强制官方视觉链路", async () => {
+    const rc = requestContext([["modelOverrides", {
+      provider: "kimi",
+      visitorApiKey: "kimi-main-key",
+      vision: { source: "deepseek", apiKey: "deepseek-vision-key" },
+    }]]);
+
+    await expect(resolveVisionConfig(rc)).resolves.toMatchObject({
+      apiKey: "deepseek-vision-key",
+      baseUrl: OFFICIAL_DEEPSEEK_BASE_URL,
+      model: "deepseek-v4-flash-vision-exp",
+      protocol: "openai",
+      provider: "deepseek",
+    });
+  });
+
+  it("Kimi source 与 DeepSeek 主模型解耦并使用官方 flash 链路", async () => {
+    const rc = requestContext([["modelOverrides", {
+      provider: "deepseek",
+      visitorApiKey: "deepseek-main-key",
+      vision: { source: "kimi", apiKey: "kimi-vision-key" },
+    }]]);
+
+    await expect(resolveVisionConfig(rc)).resolves.toMatchObject({
+      apiKey: "kimi-vision-key",
+      baseUrl: KIMI_BASE_URL,
+      model: KIMI_MODEL_IDS.flash,
+      protocol: "openai",
+      provider: "kimi",
+    });
   });
 
   it("厂商原生 vision 复用主 key/baseUrl，显式 vision 仍优先", async () => {

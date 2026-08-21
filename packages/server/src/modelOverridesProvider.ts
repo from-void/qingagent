@@ -13,6 +13,7 @@ import {
   type DeepseekTier,
   type ModelProtocol,
   type ModelParamOverrides,
+  type VisionSource,
 } from "@qingagent/core";
 
 const CACHE_TTL_MS = 30_000;
@@ -57,6 +58,13 @@ function sanitizeModelTier(raw: string | undefined | null): DeepseekTier | undef
 function sanitizeModelProvider(raw: string | undefined | null): ModelProvider | undefined {
   const value = raw?.trim().toLowerCase();
   return value === "deepseek" || value === "kimi" ? value : undefined;
+}
+
+function sanitizeVisionSource(raw: string | undefined | null): VisionSource | undefined {
+  const value = raw?.trim().toLowerCase();
+  return value === "deepseek" || value === "kimi" || value === "custom"
+    ? value
+    : undefined;
 }
 
 async function validateVisitorBaseUrl(raw: string | undefined): Promise<string | undefined> {
@@ -161,6 +169,7 @@ export interface RequestModelHeaders {
   modelPro?: string | null;
   modelTier?: string | null;
   protocol?: string | null;
+  visionSource?: string | null;
   visionKey?: string | null;
   visionBaseUrl?: string | null;
   visionModel?: string | null;
@@ -197,30 +206,44 @@ export async function resolveRequestModelOverrides(
     modelFlash || modelPro
       ? { ...(modelFlash ? { flash: modelFlash } : {}), ...(modelPro ? { pro: modelPro } : {}) }
       : undefined;
+  const visionSource = sanitizeVisionSource(headers.visionSource);
   const visionApiKey = sanitizeApiKey(headers.visionKey);
-  const visionBaseUrl = visionApiKey
+  // 原生厂商 source 的端点与模型由 core 固定；只有 custom/旧客户端可提交三件套。
+  const acceptsVisionEndpoint = visionSource === undefined || visionSource === "custom";
+  const visionBaseUrl = visionApiKey && acceptsVisionEndpoint
     ? sanitizeBaseUrl(sanitizeHeaderValue(headers.visionBaseUrl, 300))
     : undefined;
-  const visionModel = visionApiKey
+  const visionModel = visionApiKey && acceptsVisionEndpoint
     ? sanitizeModelId(sanitizeHeaderValue(headers.visionModel, 120))
     : undefined;
   const visionProtocol: ModelProtocol | undefined =
-    visionApiKey && (headers.visionProtocol === "openai" || headers.visionProtocol === "anthropic")
+    visionApiKey && acceptsVisionEndpoint &&
+      (headers.visionProtocol === "openai" || headers.visionProtocol === "anthropic")
       ? headers.visionProtocol
       : undefined;
-  const vision = visionApiKey
+  const vision = visionSource || visionApiKey
     ? {
-        apiKey: visionApiKey,
+        ...(visionSource ? { source: visionSource } : {}),
+        ...(visionApiKey ? { apiKey: visionApiKey } : {}),
         ...(visionBaseUrl ? { baseUrl: visionBaseUrl } : {}),
         ...(visionModel ? { model: visionModel } : {}),
         ...(visionProtocol ? { protocol: visionProtocol } : {}),
       }
     : undefined;
+  const visionGlobalApiKey =
+    allowGlobalFallback &&
+      (visionSource === "deepseek" || visionSource === "kimi") &&
+      visionSource !== provider
+      ? settings.globalApiKeys?.[visionSource]
+      : undefined;
   return {
     provider,
     ...(visitorApiKey ? { visitorApiKey } : {}),
     ...(allowGlobalFallback && settings.globalApiKeys?.[provider]
       ? { globalApiKey: settings.globalApiKeys[provider] }
+      : {}),
+    ...(visionGlobalApiKey && visionSource
+      ? { globalApiKeys: { [visionSource]: visionGlobalApiKey } }
       : {}),
     ...(settings.params ? { params: settings.params } : {}),
     ...(baseUrl ? { baseUrl } : {}),

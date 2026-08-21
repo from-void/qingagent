@@ -6,20 +6,22 @@ import {
   clearVisionProvider,
   isHttpUrl,
   readVisionProvider,
+  readVisionSource,
+  writeVisionSource,
   writeVisionProvider,
   type VisionProvider,
+  type VisionSource,
 } from "./visionProviderStore";
 import {
   getVisitorModelKey,
-  readCustomProvider,
   resolveModelRequestProvider,
-  visitorKeyHeaders,
   type ModelProvider,
 } from "./visitorKeyStore";
+import { isModelProviderConfigured } from "./modelSettingsTypes";
 
 // 设置·技能·图像识别:副基模(多模态)配置面板。
-// 顶部原生项复用当前厂商主模型 key，显式第三方配置仍保持更高优先级；
-// 下方接入第三方多模态模型——复刻"其他云厂商"表单(协议/BaseURL/key/模型名)+ 测试并保存。
+// 识图源与主模型解耦：DeepSeek / Kimi 原生官方链路，或显式第三方多模态模型。
+// 自定义 Tab 复刻"其他云厂商"表单(协议/BaseURL/key/模型名)+ 测试并保存。
 // 配置只存本浏览器(visionProviderStore),随对话请求以 x-vision-* header 透传,服务端不落盘。
 
 type VisionTestErrorKind =
@@ -76,16 +78,23 @@ export function VisionPanel() {
   const [serverModelSettings, setServerModelSettings] =
     useState<VisionModelSettingsResponse | null>(null);
   const modelProvider = resolveModelRequestProvider(serverModelSettings?.provider);
-  const modelRequestHeaders = visitorKeyHeaders();
-  const deepseekCustomBaseUrlActive =
-    modelProvider === "deepseek" &&
-    modelRequestHeaders["x-model-provider"] === "deepseek" &&
-    Boolean(modelRequestHeaders["x-model-base-url"]);
-  const nativeVisionKeyConfigured =
-    Boolean(getVisitorModelKey(modelProvider)) ||
-    Boolean(readCustomProvider(modelProvider)) ||
-    (serverModelSettings?.providers[modelProvider].apiKeyConfigured ?? false);
   const [saved, setSaved] = useState<VisionProvider | null>(() => readVisionProvider());
+  // null 表示升级用户尚未明确选择：只按旧自动语义展示，不静默写入 source。
+  const [source, setSource] = useState<VisionSource | null>(() => readVisionSource());
+  const officialKeyConfigured = (provider: ModelProvider) =>
+    isModelProviderConfigured({
+      localConfigured: Boolean(getVisitorModelKey(provider)),
+      serverConfigured: serverModelSettings?.providers[provider]?.apiKeyConfigured,
+    });
+  const deepseekConfigured = officialKeyConfigured("deepseek");
+  const kimiConfigured = officialKeyConfigured("kimi");
+  // source 缺省时逐字保持旧优先级：启用的显式视觉配置 > 主厂商原生 > 配置表单。
+  const automaticSource: VisionSource = saved?.enabled
+    ? "custom"
+    : officialKeyConfigured(modelProvider)
+      ? modelProvider
+      : "custom";
+  const activeSource = source ?? automaticSource;
   const [protocol, setProtocol] = useState<"openai" | "anthropic">(
     () => readVisionProvider()?.protocol ?? "openai",
   );
@@ -132,6 +141,23 @@ export function VisionPanel() {
     })();
     return () => controller.abort();
   }, []);
+
+  const handleSourceChange = async (nextSource: VisionSource) => {
+    if (nextSource === "deepseek" && !deepseekConfigured) return;
+    if (nextSource === "kimi" && !kimiConfigured) return;
+    invalidateTest();
+    const revision = testRevisionRef.current;
+    setPersisting(true);
+    const persisted = await writeVisionSource(nextSource);
+    if (!mountedRef.current || testRevisionRef.current !== revision) return;
+    setPersisting(false);
+    if (!persisted) {
+      setMessage(visionPersistFailureMessage());
+      return;
+    }
+    setSource(nextSource);
+    setMessage(null);
+  };
 
   // 测试并保存:先调后端 test 路由(代理避免 CORS、做真实 image part 连通性检查),通了再落本机。
   const handleTestAndSave = async () => {
@@ -282,48 +308,64 @@ export function VisionPanel() {
   return (
     <div className="settings-vision" data-wf="VisionPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>
-        {modelProvider === "kimi"
-          ? nativeVisionKeyConfigured
-            ? "当前 Kimi 主模型原生支持图片识别，默认复用当前档位、API 地址与 key。"
-            : "当前已选择 Kimi，但尚未配置 key；配置后可自动复用主模型进行图片识别。"
-          : "当前 DeepSeek 主模型已支持原生图片识别(实验版),默认复用主模型 key。"}
-        {" "}下方独立视觉配置保存在
-        {typeof window !== "undefined" && window.electron?.isDesktop ? "本机" : "本浏览器"}，
-        启用后会优先于主模型复用配置。
+        识图模型与主模型相互独立,按下方选择走链路
       </p>
 
-      <section className="ss-card">
-        <div className="ss-head">
-          <div className="ss-titleline">
-            <h3 className="sm-title">
-              {modelProvider === "kimi" ? "Kimi 原生图像识别" : "DeepSeek 原生图像识别"}
-            </h3>
-            <span className={`ss-badge ${
-              nativeVisionKeyConfigured && !deepseekCustomBaseUrlActive ? "ss-ok" : "ss-quota"
-            }`}>
-              {modelProvider === "kimi"
-                ? nativeVisionKeyConfigured ? "自动启用" : "未配置"
-                : deepseekCustomBaseUrlActive
-                  ? "未启用"
-                  : nativeVisionKeyConfigured ? "自动启用" : "未配置"}
-            </span>
-          </div>
-        </div>
-        <p className="ss-meta">
-          {modelProvider === "kimi"
-            ? nativeVisionKeyConfigured
-              ? "识图请求直接走当前 K2.7 Code / K3 主模型，无需重复配置；下方显式配置仍可覆盖。"
-              : "请先在模型设置中填写 Kimi key；下方也可显式配置独立视觉模型。"
-            : deepseekCustomBaseUrlActive
-              ? "当前使用自定义 API 地址,原生识图(实验版)仅在 DeepSeek 官方地址下启用;可在下方显式配置独立视觉模型。"
-              : nativeVisionKeyConfigured
-              ? "识图请求自动使用 deepseek-v4-flash-vision-exp(实验版),复用主模型 key,无需重复配置;下方显式配置仍可覆盖。"
-              : "请先在模型设置中填写 DeepSeek key;下方也可显式配置独立视觉模型。"}
-        </p>
-      </section>
+      <div className="sm-setup-tabs" role="tablist" aria-label="图像识别链路">
+        <button
+          id="vision-source-deepseek"
+          type="button"
+          role="tab"
+          data-vision-source="deepseek"
+          aria-selected={activeSource === "deepseek"}
+          className={`sm-setup-tab${activeSource === "deepseek" ? " sm-active" : ""}${
+            !deepseekConfigured ? " sm-disabled" : ""
+          }`}
+          disabled={!deepseekConfigured || persisting}
+          onClick={() => void handleSourceChange("deepseek")}
+        >
+          <span>走 DeepSeek</span>
+          <small>{deepseekConfigured ? "原生识图·实验版" : "先配置 DeepSeek 官方 API"}</small>
+        </button>
+        <button
+          id="vision-source-kimi"
+          type="button"
+          role="tab"
+          data-vision-source="kimi"
+          aria-selected={activeSource === "kimi"}
+          className={`sm-setup-tab${activeSource === "kimi" ? " sm-active" : ""}${
+            !kimiConfigured ? " sm-disabled" : ""
+          }`}
+          disabled={!kimiConfigured || persisting}
+          onClick={() => void handleSourceChange("kimi")}
+        >
+          <span>走 Kimi</span>
+          <small>{kimiConfigured ? "原生多模态" : "先配置 Kimi 官方 API"}</small>
+        </button>
+        <button
+          id="vision-source-custom"
+          type="button"
+          role="tab"
+          data-vision-source="custom"
+          aria-selected={activeSource === "custom"}
+          aria-controls="vision-custom-panel"
+          className={`sm-setup-tab${activeSource === "custom" ? " sm-active" : ""}`}
+          disabled={persisting}
+          onClick={() => void handleSourceChange("custom")}
+        >
+          <span>走自定义</span>
+          <small>OpenAI/Anthropic 兼容</small>
+        </button>
+      </div>
 
       {/* 接入第三方多模态模型 */}
-      <section className="ss-card">
+      {activeSource === "custom" && (
+        <section
+          id="vision-custom-panel"
+          className="ss-card"
+          role="tabpanel"
+          aria-labelledby="vision-source-custom"
+        >
         <div className="ss-head">
           <div className="ss-titleline">
             <h3 className="sm-title">接入第三方多模态模型</h3>
@@ -434,7 +476,8 @@ export function VisionPanel() {
             </button>
           )}
         </div>
-      </section>
+        </section>
+      )}
 
       {message && <p className="sm-message">{message}</p>}
     </div>

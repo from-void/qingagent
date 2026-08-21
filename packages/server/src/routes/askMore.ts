@@ -159,6 +159,7 @@ askMoreRoutes.post("/ask-more", async (c) => {
     modelPro: headers["x-model-pro"],
     modelTier: headers["x-model-tier"],
     protocol: headers["x-model-protocol"],
+    visionSource: headers["x-vision-source"],
     visionKey: headers["x-vision-key"],
     visionBaseUrl: headers["x-vision-base-url"],
     visionModel: headers["x-vision-model"],

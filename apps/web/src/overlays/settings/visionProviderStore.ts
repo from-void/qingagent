@@ -9,6 +9,8 @@ const VISION_PROVIDER_KEY = "qingagent.vision_provider";
 
 const DEFAULT_PROTOCOL = "openai";
 
+export type VisionSource = "deepseek" | "kimi" | "custom";
+
 /** 副基模配置(契约 C)。enabled 关闭时 header 不透传、Agent 视为未配置。 */
 export interface VisionProvider {
   enabled: boolean;
@@ -16,6 +18,21 @@ export interface VisionProvider {
   baseUrl: string;
   apiKey: string;
   model: string;
+}
+
+type VisionProviderRecord = Partial<VisionProvider> & { source?: unknown };
+
+function readVisionProviderRecord(): VisionProviderRecord | null {
+  try {
+    const raw = readPersisted(VISION_PROVIDER_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as unknown;
+    return value !== null && typeof value === "object"
+      ? value as VisionProviderRecord
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeProtocol(raw: unknown): "openai" | "anthropic" {
@@ -62,9 +79,7 @@ export function repairBaseUrlScheme(value: string): string | null {
 
 export function readVisionProvider(): VisionProvider | null {
   try {
-    const raw = readPersisted(VISION_PROVIDER_KEY);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as Partial<VisionProvider>;
+    const o = readVisionProviderRecord();
     if (
       !o ||
       typeof o.baseUrl !== "string" ||
@@ -90,17 +105,61 @@ export function readVisionProvider(): VisionProvider | null {
   }
 }
 
+/** source 与自定义表单共用 qingagent.vision_provider，不引入新的顶层持久化键。 */
+export function readVisionSource(): VisionSource | null {
+  const source = readVisionProviderRecord()?.source;
+  return source === "deepseek" || source === "kimi" || source === "custom"
+    ? source
+    : null;
+}
+
 export function writeVisionProvider(v: VisionProvider): Promise<boolean> {
-  return writePersistedAwaited(VISION_PROVIDER_KEY, JSON.stringify(v));
+  const source = readVisionSource();
+  return writePersistedAwaited(
+    VISION_PROVIDER_KEY,
+    JSON.stringify({ ...v, ...(source ? { source } : {}) }),
+  );
+}
+
+export function writeVisionSource(source: VisionSource): Promise<boolean> {
+  const custom = readVisionProvider();
+  return writePersistedAwaited(
+    VISION_PROVIDER_KEY,
+    JSON.stringify({ ...(custom ?? {}), source }),
+  );
 }
 
 export function clearVisionProvider(): Promise<boolean> {
-  return writePersistedAwaited(VISION_PROVIDER_KEY, null);
+  const source = readVisionSource();
+  return writePersistedAwaited(
+    VISION_PROVIDER_KEY,
+    source ? JSON.stringify({ source }) : null,
+  );
 }
 
-/** 给请求层用:仅当已配置且启用时,返回要附加的 x-vision-* header(契约 A)。 */
-export function visionKeyHeaders(): Record<string, string> {
+/** 给请求层用：source 缺省保持旧 header；原生 source 只附对应官方 visitor key。 */
+export function visionKeyHeaders(
+  officialKeys: Partial<Record<"deepseek" | "kimi", string | null | undefined>> = {},
+): Record<string, string> {
+  const source = readVisionSource();
+  if (source === "deepseek" || source === "kimi") {
+    const apiKey = officialKeys[source]?.trim();
+    return {
+      "x-vision-source": source,
+      ...(apiKey ? { "x-vision-key": apiKey } : {}),
+    };
+  }
   const v = readVisionProvider();
+  if (source === "custom") {
+    if (!v || !v.enabled) return { "x-vision-source": "custom" };
+    return {
+      "x-vision-source": "custom",
+      "x-vision-key": v.apiKey,
+      "x-vision-base-url": v.baseUrl,
+      "x-vision-model": v.model,
+      "x-vision-protocol": v.protocol,
+    };
+  }
   if (!v || !v.enabled) return {};
   return {
     "x-vision-key": v.apiKey,

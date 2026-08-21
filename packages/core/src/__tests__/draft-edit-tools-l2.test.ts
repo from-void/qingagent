@@ -293,11 +293,11 @@ describe("draft edit tools L2 carrier", () => {
       groupMode: "independent",
       anchor: {
         blockId: "title-block",
-        quote: "旧",
+        quote: "旧标题",
       },
       preview: {
-        deleteText: "旧",
-        insertText: "新",
+        deleteText: "旧标题",
+        insertText: "新标题",
       },
     });
     expect(suggestion.diffHunk).toMatchObject({

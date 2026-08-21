@@ -496,8 +496,8 @@ describe("commitReviewGroups", () => {
     expect(hunks).toHaveLength(1);
     expect(hunks[0]).toMatchObject({
       anchor: { blockId: "title-block" },
-      beforeText: "速写—r81A席乙",
-      afterText: "",
+      beforeText: "晚灯书屋速写—r81A席乙",
+      afterText: "晚灯书屋",
     });
     expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
     expect(docText(state.doc)).toBe("晚灯书屋\n正文保持不变。");

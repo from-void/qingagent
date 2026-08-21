@@ -800,6 +800,14 @@ function appendMatchedBlockHunks(input: {
     return;
   }
 
+  // 标题块按整块候选:标题短,字符级 diff 保留公共子串会把「换个标题」拆成
+  // 前插+后删两个 patch(评测 0822-r1 实证「XX义诊活动通知→家门口的健康义诊」
+  // 拆成 2 处裁决);用户视角换标题就是一处改动。
+  if (baseBlock.type === "heading") {
+    input.hunks.push(createBlockReplaceHunk(input));
+    return;
+  }
+
   const dmp = new DiffMatchPatch();
   // 弃用 diff_cleanupSemantic:它两头都坏——既把真锚点吞进改动区(晚风案:公共"晚风"
   // 被并入删除,造出假"新增晚风",正文绿字与卡片说法自相矛盾),又对中文短公共串清不

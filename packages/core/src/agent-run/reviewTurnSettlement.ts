@@ -38,6 +38,16 @@ export function settleReviewActionCard(
   if (partIndex < 0) return null;
   const part = message.parts[partIndex];
   if (!part || part.kind !== "actionCard") return null;
+  // sent 快照卡不携带任务状态机:结束/中止都不改卡,只保留系统事实注入。
+  if (part.data.status === "sent") {
+    if (outcome !== "ok") {
+      state.messages.push({
+        role: "system",
+        content: incompleteReviewModelNote(reviewContext, outcome),
+      });
+    }
+    return null;
+  }
 
   const card: ActionCardData = {
     ...part.data,

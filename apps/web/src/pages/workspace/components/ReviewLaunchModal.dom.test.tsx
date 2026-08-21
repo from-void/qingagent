@@ -454,7 +454,7 @@ describe("ReviewLaunchModal", () => {
     expect(textarea.value).not.toContain("## 已确认忽略");
     expect(buildReviewActionCard("custom", "自定义审查", stored)).toEqual({
       title: "自定义审查",
-      status: "running",
+      status: "sent",
       lines: [
         { label: "模板", value: "自定义审查" },
         { label: "补充", value: "用户原要求" },
@@ -672,7 +672,7 @@ describe("ReviewLaunchModal", () => {
     expect(query).toContain(template.prompt);
     expect(query).toBe(assembleReviewQuery("source", template, "重点核对月活"));
     expect(query).toContain("文档级补充要求（只适用于当前文档）：重点核对月活");
-    expect(card).toEqual({ title: "来源核查（仅对照已关联素材）", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }], status: "running" });
+    expect(card).toEqual({ title: "来源核查（仅对照已关联素材）", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }], status: "sent" });
     expect(reviewContext).toEqual({ type: "source", templateId: "source-default", templateName: "标准来源核查" });
     expect(JSON.stringify(card)).not.toContain(template.prompt);
 

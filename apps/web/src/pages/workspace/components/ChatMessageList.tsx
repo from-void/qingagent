@@ -1416,22 +1416,27 @@ function AskUserAnswerCard({ data }: { data: AskUserAnswerCardPart }) {
 
 function ActionCard({ data }: { data: ActionCardData }) {
   const status = data.status;
-  const statusLabel = status === "running"
-    ? "审查中"
-    : status === "done"
-      ? "审查已完成"
-      : status === "aborted"
-        ? "审查已中止"
-        : status === "failed"
-          ? "审查未完成"
-          : null;
-  const statusIcon = status === "done"
-    ? <CheckIcon size={13} />
+  const statusLabel = status === "sent"
+    ? "已发起"
     : status === "running"
-      ? <span className="chat-loading-dots"><span /><span /><span /></span>
-      : status === "aborted"
-        ? <StatusSquareIcon size={8} />
-        : <CloseIcon size={10} />;
+      ? "审查中"
+      : status === "done"
+        ? "审查已完成"
+        : status === "aborted"
+          ? "审查已中止"
+          : status === "failed"
+            ? "审查未完成"
+            : null;
+  // sent 是纯快照:无进度 icon 无动画(用户裁定「发出去就结束」,与 DSH 卡一致)。
+  const statusIcon = status === "sent"
+    ? null
+    : status === "done"
+      ? <CheckIcon size={13} />
+      : status === "running"
+        ? <span className="chat-loading-dots"><span /><span /><span /></span>
+        : status === "aborted"
+          ? <StatusSquareIcon size={8} />
+          : <CloseIcon size={10} />;
   return (
     <div
       className="askuser-card askuser-card--answers"

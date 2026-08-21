@@ -134,7 +134,7 @@ export function buildReviewActionCard(
         ? [{ label: "补充", value: oneLine(visibleSupplement) }]
         : []),
     ],
-    status: "running",
+    status: "sent",
   };
 }
 

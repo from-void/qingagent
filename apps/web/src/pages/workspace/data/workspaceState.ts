@@ -290,6 +290,11 @@ function workspaceReducerMut(
       reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
     }
+    case "chatChipsResolved": {
+      const message = draft.messages.find((item) => item.id === action.messageId);
+      if (message) message.chips = action.chips;
+      return;
+    }
     case "chatMessageAppended":
       drainAppendQueueMut(draft, action.data.messageId, [action]);
       reduceAgentBusyMut(draft, { kind: "activityObserved" });

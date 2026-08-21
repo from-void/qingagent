@@ -3525,6 +3525,9 @@ export type WorkspaceLocalAction =
       agentBusy: boolean;
     }
   | { kind: "forceUnlockReview" }
+  /** 附件上传落定后回填乐观用户气泡的 chips:user 帧 reducer 先到先赢,服务端回帧不覆盖,
+   * 发送瞬间生成的占位 resourceRef(att-时间戳)会让图片 chip 的缩略图地址永远 404。 */
+  | { kind: "chatChipsResolved"; messageId: string; chips: import("@qingagent/contract-ts").ChatChip[] }
   | { kind: "rewindChat"; keepMessageCount: number };
 
 export type WorkspaceFrame = BridgeFrame;

@@ -15,6 +15,7 @@ import type {
   Command,
 } from "@qingagent/contract-ts";
 import type { ChatInputHandle } from "../data/chatInputTypes";
+import { attachmentFileKey } from "../components/ChatInput";
 import {
   canRetryStreamError,
   shouldStickStreamErrorToast,
@@ -348,7 +349,26 @@ export function useWorkspaceChatActions(input: {
               }
               const fileIds = uploadedAssets.map((asset) => asset.fileId);
 
-              const contractChips = snap.chips.map(toContractChip);
+              // 上传已落定:把真实 fileId 回填进 attach chip 的 resourceRef,
+              // 出站命令与乐观气泡同源(乐观帧先到先赢,服务端回帧不再覆盖,
+              // 留着 att- 占位 id 会让气泡图片缩略图永远 404)。
+              const uploadedByKey = new Map(
+                filesToUpload.map((file, index) => [
+                  attachmentFileKey(file),
+                  uploadedAssets[index]?.fileId,
+                ]),
+              );
+              const resolvedSpecs = snap.chips.map((spec) => {
+                if (spec.kind !== "attach" || spec.resourceId || !spec.attachmentId) return spec;
+                const fileId = uploadedByKey.get(spec.attachmentId);
+                return fileId ? { ...spec, resourceId: fileId } : spec;
+              });
+              const contractChips = resolvedSpecs.map(toContractChip);
+              dispatch({
+                kind: "chatChipsResolved",
+                messageId: clientMessageId,
+                chips: contractChips,
+              });
 
               if (
                 !isWorkspaceTurnDispatchCurrent(

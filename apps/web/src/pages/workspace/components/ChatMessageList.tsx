@@ -1564,6 +1564,11 @@ function ImageAttachChipBadge({ chip, inline }: { chip: ChatChip; inline?: boole
   const src = desktopDataUrl(
     `/api/v1/files/${chip.resourceRef!.id}/${encodeURIComponent(chip.label)}`,
   );
+  // 上传落定后 chatChipsResolved 会换成真实 fileId 地址;src 一变就重试加载,
+  // 否则占位 id 404 置下的失败态会把已经可用的缩略图焊死在文件图标。
+  useEffect(() => {
+    setThumbFailed(false);
+  }, [src]);
   return (
     <span
       className={`chat-chip${thumbFailed ? "" : " chat-chip-image"}`}

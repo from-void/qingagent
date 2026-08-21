@@ -1642,7 +1642,7 @@ function hasSubmittableChatInput(edit: HTMLElement): boolean {
 const attachmentFileIds = new WeakMap<File, string>();
 let attachmentFileIdSequence = 0;
 
-function attachmentFileKey(file: File): string {
+export function attachmentFileKey(file: File): string {
   const existing = attachmentFileIds.get(file);
   if (existing) return existing;
   attachmentFileIdSequence += 1;

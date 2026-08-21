@@ -55,6 +55,7 @@ import {
   aiBlocksToQingml,
   countDocVisibleChars,
   getPmContentHash,
+  hasExportableDocContent,
   markdownToPm,
   normalizePmDoc,
   pmToAiIr,
@@ -603,9 +604,9 @@ externalRoutes.get("/sessions/:id/export", async (c) => {
           "先写入文档内容，再重新导出",
         );
       }
-      // 空稿闸:与客户端导出按钮 gating 同款(可见字数为零即「还没有可导出的内容」),
-      // 判定与 external read 的 charCount 同源,否则清空后的稿仍能导出空 PDF。
-      if (countDocVisibleChars(session.doc) === 0) {
+      // 空稿闸:正文可见字与 external read 的 charCount 同源；同时放行导出器
+      // 支持的媒体/结构块，避免纯图片、图表或表格文档被误判为空稿。
+      if (!hasExportableDocContent(session.doc)) {
         return externalError(
           c,
           409,

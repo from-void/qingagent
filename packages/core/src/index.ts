@@ -407,11 +407,13 @@ export { validateFetchUrl } from "@qingagent/doc-render/browser";
 export {
   EXTERNAL_PLUGIN_REVIEW_ORIGIN,
   annotationGroupInputSchema,
-  createAnnotationGroupsReadyFrame,
   createAnnotationGroupsInputSchema,
-  writeAnnotationGroups,
   type AnnotationGroupInput,
   type CreateAnnotationGroupsInput,
+} from "./tools/annotationGroups.js";
+export {
+  createAnnotationGroupsReadyFrame,
+  writeAnnotationGroups,
   type WriteAnnotationGroupsOptions,
   type WriteAnnotationGroupsResult,
-} from "./tools/annotationGroups.js";
+} from "./session/annotationGroups.js";

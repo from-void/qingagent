@@ -48,7 +48,7 @@ import {
   flushSensitiveReviewReasoning,
   flushSensitiveReviewText,
 } from "./sensitiveReviewMasking.js";
-import { createAnnotationGroupsReadyFrame } from "../tools/annotationGroups.js";
+import { createAnnotationGroupsReadyFrame } from "../session/annotationGroups.js";
 
 const logger = mastra.getLogger();
 const ANNOTATION_MUTATION_NO_PATCH_NOTICE = "未能生成修改，可再试或手动编辑。";

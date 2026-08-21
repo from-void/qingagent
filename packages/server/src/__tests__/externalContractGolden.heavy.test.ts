@@ -391,6 +391,7 @@ describe("external API v1 golden contract", () => {
       "agentBusy",
       "baseVersion",
       "suggestions",
+      "annotations",
     ]);
     expect(body).toEqual({
       sessionId,
@@ -399,6 +400,7 @@ describe("external API v1 golden contract", () => {
       agentBusy: false,
       baseVersion: 0,
       suggestions: [],
+      annotations: [],
     });
   });
 

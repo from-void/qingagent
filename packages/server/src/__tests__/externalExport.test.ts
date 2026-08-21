@@ -112,6 +112,38 @@ describe("GET /api/v1/external/sessions/:id/export", () => {
       nextStep: "先写入文档内容，再重新导出",
     });
   });
+
+  it("纯图片文档可以导出", async () => {
+    const { sessionId } = await createSession();
+    const write = await request(`/sessions/${sessionId}/proposals`, {
+      method: "POST",
+      body: JSON.stringify({
+        expectedDocVersion: 0,
+        ops: [{ kind: "fullDraft", markdown: "建立可导出文档。" }],
+      }),
+    });
+    expect(write.status).toBe(200);
+    const session = getSession(sessionId);
+    expect(session).toBeTruthy();
+    session!.doc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "image",
+        attrs: {
+          blockId: "image-only",
+          src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/image.svg",
+          alt: "纯图片",
+        },
+      }],
+    };
+
+    const response = await request(`/sessions/${sessionId}/export?format=markdown`);
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toContain(
+      "![纯图片](http://localhost/api/v1/files/550e8400-e29b-41d4-a716-446655440000/image.svg)",
+    );
+  });
 });
 
 async function createSession(): Promise<ExternalSessionCreateResponse> {

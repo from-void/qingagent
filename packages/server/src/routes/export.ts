@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { truncateGraphemes } from "@qingagent/contract-ts";
 import { hasCanonicalDoc, loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
-import { countDocVisibleChars, type PmDoc } from "@qingagent/pm-schema";
+import { hasExportableDocContent, type PmDoc } from "@qingagent/pm-schema";
 import {
   getBrowserCapabilityState,
   hasSpecializedDiagramOverlayFallback,
@@ -86,7 +86,7 @@ exportRoutes.get("/export/:sessionId", async (c) => {
         return c.json({ error: "当前会话没有可导出的文档" }, 409);
       }
       // 空稿闸:与工作区导出按钮 gating 同款文案;UI 禁用挡不住直接打端点的调用方。
-      if (countDocVisibleChars(session.doc) === 0) {
+      if (!hasExportableDocContent(session.doc)) {
         return c.json({ error: "还没有可导出的内容" }, 409);
       }
       return {

@@ -107,10 +107,8 @@ import {
   MATERIAL_CONTEXT_MAX_CHARS,
 } from "../tools/materialContextBudget.js";
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
-import {
-  createAnnotationGroupsInputSchema,
-  writeAnnotationGroups,
-} from "../tools/annotationGroups.js";
+import { createAnnotationGroupsInputSchema } from "../tools/annotationGroups.js";
+import { writeAnnotationGroups } from "./annotationGroups.js";
 import type { Material } from "../types/material.js";
 import {
   applyBlockEdits,

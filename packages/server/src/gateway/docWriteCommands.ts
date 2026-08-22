@@ -63,6 +63,7 @@ import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { USER_VERSION_WINDOW_MS } from "./docWriteConfig";
 import { getOrRestoreSession } from "./sessionLifecycle";
+import { reconcileCachedSessionDocFromDb } from "./restoreFrames";
 
 function docWriteReason(
   clientMutationId: string,
@@ -703,6 +704,12 @@ export async function* handleDocWriteCommand(
         return;
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      // 外部读接口以 documents 为 canonical；提案也必须先对齐同一权威源。
+      // 不能只比较 docVersion：commit 尾声可能留下「版本已推进、doc 引用仍旧」的
+      // 同版本撕裂，随后 strReplace 就会在陈旧文本上生成候选。
+      if (await reconcileCachedSessionDocFromDb(session)) {
+        await persistSessionMetadata(session);
+      }
       const structuralOpIdentity = externalStructuralOpIdentity(command.data);
       const structuralOpSource = structuralOpIdentity?.source ?? null;
       const fullDraftOp = command.data.ops.find((op) => op.kind === "fullDraft") ?? null;
@@ -1101,8 +1108,10 @@ export async function* handleDocWriteCommand(
       if (session.docDraftBaseDoc || session.docDraftCandidateDoc) {
         await invalidateDraftStateAfterCanonicalWrite(session);
       }
-      // 再以 canonical 副本纯计算整批；任一 op 失败时不留下空候选壳。
-      const baseCandidate = clonePmDoc(currentPmDoc(session));
+      // 同步钉住 base/candidate 后再进入异步操作。此前先算 workingDoc、await 后才
+      // ensure base，会允许两者跨过一次 canonical 换代，最终把「完整 base → 陈旧候选」
+      // 误渲染成吞掉相邻正文。失败时清掉这份空候选壳即可。
+      const baseCandidate = clonePmDoc(ensureDraftCandidateDoc(session));
       let workingDoc: PmDoc;
       if (qingmlDraft) {
         workingDoc = clonePmDoc(qingmlDraft.doc);
@@ -1110,12 +1119,12 @@ export async function* handleDocWriteCommand(
         workingDoc = baseCandidate;
         const applied = await applyExternalProposalOps(workingDoc, contentOps);
         if (!applied.ok) {
+          await invalidateDraftStateAfterCanonicalWrite(session);
           yield docWriteReason(clientMutationId, "validation_error", undefined, applied.error);
           return;
         }
         workingDoc = applied.doc;
       }
-      ensureDraftCandidateDoc(session);
       replaceDraftCandidateDoc(
         session,
         workingDoc,

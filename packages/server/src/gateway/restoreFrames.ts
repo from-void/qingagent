@@ -8,6 +8,7 @@ import type {
 import {
   appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
   buildDocumentSnapshot,
+  currentPmDoc,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
@@ -18,6 +19,7 @@ import {
   getActiveSuspensionOwner,
   getDocumentVersionCommittedAt,
   hasCanonicalDoc,
+  invalidateDraftStateAfterCanonicalWrite,
   interruptQuestionnaireSpecForRestore,
   isWholeDocumentSuggestionBatchId,
   isQuestionnaireTool,
@@ -28,6 +30,7 @@ import {
   transitionDocState,
   type SessionState,
 } from "./bridgeCore";
+import { getPmContentHash } from "@qingagent/pm-schema";
 import { persistMappedAnnotationGroups } from "@qingagent/db";
 import { folderSourcesChangedFrame } from "./folderSourceFrames";
 import { takeConfirmRecoveryFrames } from "./confirmRecovery";
@@ -122,7 +125,15 @@ function* emitReadOnlyRestoreDocState(session: SessionState): Generator<BridgeFr
 export async function reconcileCachedSessionDocFromDb(session: SessionState): Promise<boolean> {
   try {
     const docRow = await documentRepo.load(session.docId);
-    if (docRow && docRow.docVersion > session.docVersion) {
+    const cachedHash = getPmContentHash(currentPmDoc(session));
+    const persistedHash = docRow
+      ? docRow.contentHash ?? getPmContentHash(docRow.pmDoc)
+      : null;
+    const persistedVersionWins = docRow && docRow.docVersion > session.docVersion;
+    const sameVersionDiverged = docRow
+      && docRow.docVersion === session.docVersion
+      && persistedHash !== cachedHash;
+    if (docRow && (persistedVersionWins || sameVersionDiverged)) {
       session.docVersion = docRow.docVersion;
       session.doc = docRow.pmDoc;
       try {
@@ -134,17 +145,10 @@ export async function reconcileCachedSessionDocFromDb(session: SessionState): Pr
       } catch {
         // 正文已 DB-win 时仍需返回 true 并持久化；时间查询失败不能吞掉该信号。
       }
-      // DB-win 说明正文已前进到内存 session 版本之后:此前基于旧版本锚点的 review/draft 态全部失效。
-      // 必须清掉,否则 restore 会同时发 documentSnapshotWritten(新版) 与 docDiffReady(旧 base),
-      // 前端拿旧锚点套新正文(冷恢复 threadPersistence 有此校验/清理,热恢复此前缺失 → 冷热不一致)。
-      session.suggestions.clear();
-      session.patchVerdicts.clear();
-      session.suggestionBaseDoc = null;
-      session.suggestionBaseVersion = null;
-      // 清 draft scratch(等价 core 的 clearInMemoryDraftDocs,直接清字段免动 core 公共导出)
-      session.docDraftBaseVersion = null;
-      session.docDraftBaseDoc = null;
-      session.docDraftCandidateDoc = null;
+      // documents 是 canonical 权威源。版本前进以及「版本相同但正文 hash 分叉」都说明
+      // 热 session 发生了撕裂；此前基于旧正文的 review/draft 态全部失效。统一走 core
+      // 失效入口，同时推进 draft mutation revision，避免异步候选写回覆盖新 canonical。
+      await invalidateDraftStateAfterCanonicalWrite(session);
       // 同时终止 chatHistory 里 reviewable 的 docSuggestion toolCall:否则 emitRestoreFrames 的
       // chatHistory 重放(step4)会把 status="reviewing" 的旧建议发给前端,显示成可操作 review,
       // 但后端 suggestions 已清空 → accept/reject 找不到 patch。改成 failed 终止态使其不可操作。

@@ -17,6 +17,7 @@ import {
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 import insertAfterBlockW1 from "./fixtures/insert-after-block-w1.json";
+import strReplaceAdjacentR8 from "./fixtures/strreplace-adjacent-r8.json";
 
 const dirs: string[] = [];
 let token = "";
@@ -376,6 +377,171 @@ describe("external proposals", () => {
         diffHunk: expect.objectContaining({ op: "delete", beforeText: prefix }),
       }),
     ]));
+  });
+
+  it("0822-r8：段落交换并连续提交后 strReplace 不得吞掉相邻正文", async () => {
+    type ReplayOp =
+      | { kind: "strReplace"; old: string; new: string }
+      | { kind: "deleteBlock"; locator: string }
+      | { kind: "insertAfterBlock"; locator: string; markdown: string };
+    const replay = strReplaceAdjacentR8 as Array<{
+      name: string;
+      args: { qingml?: string; ops?: ReplayOp[] };
+    }>;
+    expect(replay).toHaveLength(12);
+    const sessionId = await createSession();
+    const initial = await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "qingmlDraft", qingml: replay[0]!.args.qingml! }],
+    });
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toMatchObject({ status: "committed", docVersion: 1 });
+
+    const resolveOps = async (ops: ReplayOp[]) => {
+      const read = await app.request(
+        `/api/v1/external/sessions/${sessionId}/doc?format=pm`,
+        { headers: authHeaders() },
+      );
+      expect(read.status).toBe(200);
+      const { pmDoc } = await read.json() as { pmDoc: PmDoc };
+      const blockIdAt = (locator: string): string => {
+        const line = Number(/^L(\d+)$/.exec(locator)?.[1]);
+        const blockId = pmDoc.content[line - 1]?.attrs.blockId;
+        if (!blockId) throw new Error(`现场 locator ${locator} 未命中当前块`);
+        return blockId;
+      };
+      return ops.map((op) => {
+        if (op.kind === "strReplace") return op;
+        if (op.kind === "deleteBlock") {
+          return { kind: op.kind, blockId: blockIdAt(op.locator) };
+        }
+        return {
+          kind: op.kind,
+          blockId: blockIdAt(op.locator),
+          markdown: op.markdown,
+        };
+      });
+    };
+
+    // 现场前两次跨块逐字替换未命中；保留原始失败调用，确认它们不改变版本。
+    for (const call of replay.slice(1, 3)) {
+      const failed = await propose(sessionId, {
+        expectedDocVersion: 1,
+        ops: await resolveOps(call.args.ops!),
+      });
+      expect(failed.status).toBe(400);
+      expect(await failed.json()).toMatchObject({ code: "VALIDATION" });
+    }
+
+    // 两次段落交换和前五次小改均严格按「读当前稿 → 提案 → commit → 下一轮」执行。
+    for (const [offset, call] of replay.slice(3, 10).entries()) {
+      const before = (await getOrRestoreSession(sessionId))!;
+      const beforeVersion = before.docVersion;
+      const ops = await resolveOps(call.args.ops!);
+      const proposal = await propose(sessionId, {
+        expectedDocVersion: beforeVersion,
+        ...(ops.some((op) => op.kind !== "strReplace")
+          ? { opId: `0822-r8-structural-${offset + 1}` }
+          : {}),
+        ops,
+      });
+      expect(proposal.status).toBe(200);
+      expect(await proposal.json()).toMatchObject({ status: "review" });
+      const review = await app.request(
+        `/api/v1/external/sessions/${sessionId}/review?format=render-model`,
+        { headers: authHeaders() },
+      );
+      expect(review.status).toBe(200);
+      const accepted = await app.request(
+        `/api/v1/external/sessions/${sessionId}/review/commit`,
+        {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            expectedDocVersion: beforeVersion,
+            action: "commit",
+          }),
+        },
+      );
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toMatchObject({
+        status: "reviewed",
+        docVersion: beforeVersion + 1,
+        remainingCount: 0,
+      });
+    }
+
+    const targetCall = replay[10]!;
+    const targetOp = targetCall.args.ops![0]!;
+    if (targetOp.kind !== "strReplace") throw new Error("现场第 10 次 edit 不是 strReplace");
+    expect(targetOp).toEqual({
+      kind: "strReplace",
+      old: "这周，还去吗？",
+      new: "下周末，还来吗？",
+    });
+    const beforeTarget = (await getOrRestoreSession(sessionId))!;
+    const canonicalText = pmToPlainText(beforeTarget.doc!);
+    expect(canonicalText).toContain(
+      "可我知道，下个周末，还会有人先问一句：这周，还去吗？",
+    );
+
+    // 现场竞态窗口压缩：commit 已把完整 canonical 落进 documents，但热 session 的
+    // doc 引用发生同版本撕裂，只留下目标 literal。外部读接口会用 DB 权威快照，因此
+    // 此刻仍必须读到完整正文；下一次 proposal 也必须从同一份权威快照起算。
+    const tornDoc = structuredClone(beforeTarget.doc!);
+    const lastParagraph = tornDoc.content.at(-1);
+    if (lastParagraph?.type !== "paragraph") {
+      throw new Error("现场末段不是预期 paragraph");
+    }
+    lastParagraph.content = [{ type: "text", text: targetOp.old }];
+    beforeTarget.doc = tornDoc;
+    expect(pmToPlainText(beforeTarget.doc)).not.toContain("可我知道，下个");
+
+    const authoritativeRead = await app.request(
+      `/api/v1/external/sessions/${sessionId}/doc?format=pm`,
+      { headers: authHeaders() },
+    );
+    expect(authoritativeRead.status).toBe(200);
+    const authoritativeBody = await authoritativeRead.json() as { pmDoc: PmDoc };
+    expect(pmToPlainText(authoritativeBody.pmDoc)).toBe(canonicalText);
+    expect(getPmContentHash(beforeTarget.doc)).not.toBe(
+      getPmContentHash(authoritativeBody.pmDoc),
+    );
+
+    const targetProposal = await propose(sessionId, {
+      expectedDocVersion: beforeTarget.docVersion,
+      ops: await resolveOps(targetCall.args.ops!),
+    });
+    expect(targetProposal.status).toBe(200);
+    expect(await targetProposal.json()).toMatchObject({ status: "review" });
+
+    const pending = (await getOrRestoreSession(sessionId))!;
+    expect(pmToPlainText(pending.docDraftCandidateDoc!)).toBe(
+      canonicalText.replace(targetOp.old, targetOp.new),
+    );
+    expect(pmToPlainText(pending.doc!)).toBe(canonicalText);
+    expect(pmToPlainText(pending.docDraftCandidateDoc!)).toContain(
+      "可我知道，下个周末，还会有人先问一句：下周末，还来吗？",
+    );
+
+    const render = await app.request(
+      `/api/v1/external/sessions/${sessionId}/review?format=render-model`,
+      { headers: authHeaders() },
+    );
+    expect(render.status).toBe(200);
+    const renderBody = await render.json() as {
+      editedDoc: PmDoc;
+      suggestions: Array<{ preview: { deleteText: string; insertText: string } }>;
+    };
+    expect(pmToPlainText(renderBody.editedDoc)).toBe(
+      canonicalText.replace(targetOp.old, targetOp.new),
+    );
+    expect(renderBody.suggestions.map((suggestion) => suggestion.preview)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ deleteText: "可我知道，下个" }),
+        expect.objectContaining({ deleteText: "会有人先问一句：这周，还去" }),
+      ]),
+    );
   });
 
   it("streamId 非空时返回 AGENT_BUSY", async () => {
